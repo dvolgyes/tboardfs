@@ -1,8 +1,12 @@
-"""TensorBoard event file parser."""
+"""TensorBoard event file parser.
+
+This parser supports TensorFlow v2 event file format where all data types
+(scalars, images, histograms, audio) are stored as tensors. Text data is
+identified by checking tensor dtype == 7 (DT_STRING).
+"""
 
 from dataclasses import dataclass
 
-import tensorflow as tf
 from tensorboard.backend.event_processing import event_accumulator
 from tensorboard.util import tensor_util
 from tqdm import tqdm
@@ -85,7 +89,11 @@ class TensorBoardParser:
         self.ea.Reload()
 
     def list_scalars(self) -> list[str]:
-        """List all scalar tags in the event file."""
+        """List all scalar tags in the event file.
+
+        Note: In TensorFlow v2 format, scalars may be stored as tensors
+        and this list might be empty.
+        """
         return list(self.ea.Tags()["scalars"])
 
     def list_images(self) -> list[str]:
@@ -105,15 +113,18 @@ class TensorBoardParser:
         return list(self.ea.Tags().get("audio", []))
 
     def list_text(self) -> list[str]:
-        """List all text tags in the event file."""
+        """List all text tags in the event file.
+
+        In TensorFlow v2 format, text is stored as tensors with dtype=7 (DT_STRING).
+        This method identifies text tensors by checking their dtype.
+        """
         # Text is stored as tensors with plugin metadata
         text_tags = []
         for tag in self.list_tensors():
             try:
                 events = self.ea.Tensors(tag)
                 if (
-                    events
-                    and events[0].tensor_proto.dtype == tf.string.as_datatype_enum
+                    events and events[0].tensor_proto.dtype == 7  # DT_STRING enum value
                 ):
                     text_tags.append(tag)
             except Exception:
@@ -183,7 +194,7 @@ class TensorBoardParser:
         try:
             tensor_events = self.ea.Tensors(tag)
             for event in tensor_events:
-                if event.tensor_proto.dtype == tf.string.as_datatype_enum:
+                if event.tensor_proto.dtype == 7:  # DT_STRING enum value
                     # Decode the text from tensor
                     text_value = tensor_util.make_ndarray(event.tensor_proto)
                     if text_value.size > 0:

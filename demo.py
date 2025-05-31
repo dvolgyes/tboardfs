@@ -3,7 +3,6 @@
 
 import tempfile
 from pathlib import Path
-from tboardfs.test_generator import generate_test_tensorboard_log
 from tboardfs.parser import TensorBoardParser
 from loguru import logger
 import sys
@@ -26,11 +25,13 @@ def main():
 
         print("=== TensorBoard FS Demo ===\n")
 
-        # Generate test data
-        print("1. Generating test TensorBoard log with all data types...")
-        log_dir = temp_path / "demo_log"
-        event_file = generate_test_tensorboard_log(str(log_dir), num_iterations=5)
-        print(f"   Created: {event_file}\n")
+        # Use pre-generated test data
+        print("1. Using pre-generated TensorBoard event file...")
+        event_file = "tests/example-data/log_5_iterations/events.out.tfevents.1748727851.FG-OSL-WS122.7152.2.v2"
+        if not Path(event_file).exists():
+            # Fallback to example logs if test data not available
+            event_file = "example-logs/martijn_original/events.out.tfevents.1737033457.FG-PROC-SURE01.2930639.0"
+        print(f"   Using: {event_file}\n")
 
         # Parse and display content
         print("2. Parsing TensorBoard event file...")

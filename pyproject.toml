@@ -3,9 +3,8 @@ name = "tboardfs"
 version = "0.1.0"
 description = "FUSE filesystem interface for TensorBoard logs"
 readme = "README.md"
-requires-python = ">=3.9,<3.13"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "tensorflow>=2.0.0",
     "tensorboard>=2.0.0",
     "fusepy>=3.0.0",
     "click>=8.0.0",
@@ -20,6 +19,7 @@ tboardfs = "tboardfs.cli:main"
 
 [project.optional-dependencies]
 test = [
+    "coverage>=7.8.2",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
 ]
@@ -30,3 +30,6 @@ dev = [
     "pytest>=8.3.5",
     "pytest-cov>=6.1.1",
 ]
+
+[tool.uv]
+package = true

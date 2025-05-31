@@ -43,7 +43,12 @@ def setup_logging(logfile: str | None = None):
 @click.option("--logfile", type=click.Path(), help="Log file path")
 @click.pass_context
 def main(ctx, logfile: str | None):
-    """TensorBoard filesystem interface CLI."""
+    """TensorBoard filesystem interface CLI.
+
+    This CLI tool works with TensorFlow v2 event file format where data is stored
+    as tensors. The tool extracts and organizes the data into a logical filesystem
+    structure for easy access.
+    """
     setup_logging(logfile)
     # Store in context for access by subcommands
     ctx.ensure_object(dict)
