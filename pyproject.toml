@@ -9,9 +9,24 @@ dependencies = [
     "tensorboard>=2.0.0",
     "fusepy>=3.0.0",
     "click>=8.0.0",
-    "numpy>=1.19.0",
+    "numpy>2.0",
     "Pillow>=8.0.0",
+    "loguru>=0.7.0",
+    "tqdm>=4.65.0",
 ]
 
 [project.scripts]
 tboardfs = "tboardfs.cli:main"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "coverage>=7.8.2",
+    "pytest>=8.3.5",
+    "pytest-cov>=6.1.1",
+]
