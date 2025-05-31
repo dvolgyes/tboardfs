@@ -321,9 +321,9 @@ class TensorBoardParser:
         for tag in audio_iterator:
             safe_tag = tag.replace("/", "_")
             audio_data = self.get_audio_data(tag)
-            for data in audio_data:
-                ext = self.get_audio_extension(data.content_type)
-                padded_step = str(data.step).zfill(digits)
+            for audio_item in audio_data:
+                ext = self.get_audio_extension(audio_item.content_type)
+                padded_step = str(audio_item.step).zfill(digits)
                 paths.append(f"audio/{safe_tag}/{padded_step}.{ext}")
 
         # Text paths
@@ -336,8 +336,8 @@ class TensorBoardParser:
         for tag in text_iterator:
             safe_tag = tag.replace("/", "_")
             text_data = self.get_text_data(tag)
-            for data in text_data:
-                padded_step = str(data.step).zfill(digits)
+            for text_item in text_data:
+                padded_step = str(text_item.step).zfill(digits)
                 paths.append(f"text/{safe_tag}/{padded_step}.txt")
 
         # Add directories
@@ -424,12 +424,12 @@ class TensorBoardParser:
             tag_dir.mkdir(exist_ok=True)
 
             image_data = self.get_image_data(tag)
-            for data in image_data:
-                ext = self.get_image_extension(data.encoded_image_string)
-                padded_step = str(data.step).zfill(digits)
+            for image_item in image_data:
+                ext = self.get_image_extension(image_item.encoded_image_string)
+                padded_step = str(image_item.step).zfill(digits)
                 image_file = tag_dir / f"{padded_step}.{ext}"
                 with image_file.open("wb") as f:
-                    f.write(data.encoded_image_string)
+                    f.write(image_item.encoded_image_string)
 
         # Extract histograms
         histogram_tags = self.list_histograms()
@@ -462,12 +462,12 @@ class TensorBoardParser:
             tag_dir.mkdir(exist_ok=True)
 
             audio_data = self.get_audio_data(tag)
-            for data in audio_data:
-                ext = self.get_audio_extension(data.content_type)
-                padded_step = str(data.step).zfill(digits)
+            for audio_item in audio_data:
+                ext = self.get_audio_extension(audio_item.content_type)
+                padded_step = str(audio_item.step).zfill(digits)
                 audio_file = tag_dir / f"{padded_step}.{ext}"
                 with audio_file.open("wb") as f:
-                    f.write(data.encoded_audio_string)
+                    f.write(audio_item.encoded_audio_string)
 
         # Extract text
         text_tags = self.list_text()
@@ -484,11 +484,11 @@ class TensorBoardParser:
             tag_dir.mkdir(exist_ok=True)
 
             text_data = self.get_text_data(tag)
-            for data in text_data:
-                padded_step = str(data.step).zfill(digits)
+            for text_item in text_data:
+                padded_step = str(text_item.step).zfill(digits)
                 text_file = tag_dir / f"{padded_step}.txt"
                 with text_file.open("w", encoding="utf-8") as f:
-                    f.write(data.text)
+                    f.write(text_item.text)
 
         # Sort scalar files if requested
         if sort_scalars and scalar_files:

@@ -141,7 +141,9 @@ def _list_directory(directory: Path):
         logger.info(f"  - {file.name}")
 
 
-def _list_directory_recursive(directory: Path, digits: int = 6, context: dict | None = None):
+def _list_directory_recursive(
+    directory: Path, digits: int = 6, context: dict | None = None
+):
     """List TensorBoard files recursively in a directory."""
     event_files = list(directory.rglob("*.tfevents.*"))
     if not event_files:

@@ -71,6 +71,7 @@ repos:
         additional_dependencies:
           - types-click
           - types-pillow
+          - types-tqdm
         args: [--ignore-missing-imports, --install-types, --non-interactive]
 
 ci:
