@@ -15,7 +15,7 @@ def generate_test_tensorboard_log(output_dir: str, num_iterations: int = 11):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Create TensorBoard writer
+    # Use TensorFlow's proper summary API
     writer = tf.summary.create_file_writer(str(output_path))
 
     with writer.as_default():
@@ -32,7 +32,6 @@ def generate_test_tensorboard_log(output_dir: str, num_iterations: int = 11):
             )
 
             # Images (create simple synthetic images)
-            # RGB image
             rgb_image = np.zeros((100, 100, 3), dtype=np.uint8)
             rgb_image[:, :, 0] = int(255 * (step / num_iterations))  # Red gradient
             rgb_image[:, :, 1] = int(128 + 127 * np.sin(step))  # Green wave
@@ -40,8 +39,7 @@ def generate_test_tensorboard_log(output_dir: str, num_iterations: int = 11):
             tf.summary.image("sample_images/rgb", rgb_image[np.newaxis, ...], step=step)
 
             # Grayscale image
-            gray_image = np.zeros((64, 64, 1), dtype=np.uint8)
-            gray_image[:, :, 0] = np.uint8(255 * np.random.rand(64, 64))
+            gray_image = np.random.randint(0, 256, (64, 64, 1), dtype=np.uint8)
             tf.summary.image(
                 "sample_images/grayscale", gray_image[np.newaxis, ...], step=step
             )
@@ -66,7 +64,7 @@ def generate_test_tensorboard_log(output_dir: str, num_iterations: int = 11):
             audio_data = audio_data.astype(np.float32)
             tf.summary.audio(
                 "sounds/sine_wave",
-                audio_data[np.newaxis, np.newaxis, :],
+                audio_data[np.newaxis, :, np.newaxis],  # [batch, time, channels]
                 sample_rate=sample_rate,
                 step=step,
             )
