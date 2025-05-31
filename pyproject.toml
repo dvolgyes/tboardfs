@@ -1,0 +1,17 @@
+[project]
+name = "tboardfs"
+version = "0.1.0"
+description = "FUSE filesystem interface for TensorBoard logs"
+readme = "README.md"
+requires-python = ">=3.9,<3.13"
+dependencies = [
+    "tensorflow>=2.0.0",
+    "tensorboard>=2.0.0",
+    "fusepy>=3.0.0",
+    "click>=8.0.0",
+    "numpy>=1.19.0",
+    "Pillow>=8.0.0",
+]
+
+[project.scripts]
+tboardfs = "tboardfs.cli:main"
