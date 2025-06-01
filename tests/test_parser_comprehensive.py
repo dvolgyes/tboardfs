@@ -201,12 +201,12 @@ class TestTensorBoardParserErrorHandling:
         """Test image extension detection for various formats."""
         parser = TensorBoardParser.__new__(TensorBoardParser)  # Create without __init__
 
-        # Test PNG detection
-        png_bytes = b"\x89PNG\r\n\x1a\n"
+        # Test PNG detection with proper header
+        png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
         assert parser.get_image_extension(png_bytes) == "png"
 
-        # Test JPEG detection
-        jpg_bytes = b"\xff\xd8\xff"
+        # Test JPEG detection with proper header
+        jpg_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb\x00C"
         assert parser.get_image_extension(jpg_bytes) == "jpg"
 
         # Test unknown format

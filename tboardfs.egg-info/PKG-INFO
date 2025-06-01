@@ -11,6 +11,7 @@ Requires-Dist: numpy>2.0
 Requires-Dist: Pillow>=8.0.0
 Requires-Dist: loguru>=0.7.0
 Requires-Dist: tqdm>=4.65.0
+Requires-Dist: python-magic>=0.4.27
 Provides-Extra: test
 Requires-Dist: coverage>=7.8.2; extra == "test"
 Requires-Dist: pytest>=7.0.0; extra == "test"
@@ -19,6 +20,8 @@ Requires-Dist: pytest-cov>=4.0.0; extra == "test"
 # tboardfs
 
 A FUSE filesystem interface for TensorBoard logs that allows mounting TensorBoard event files as a virtual filesystem.
+
+**Note:** This tool is designed for TensorFlow v2 event file format. In v2, all data (scalars, images, histograms, audio) is stored as tensors in the event files. The tool correctly handles this format and extracts the appropriate data types.
 
 ## Features
 
@@ -105,7 +108,14 @@ tboardfs extract path/to/events.out.tfevents.xxx -o output_directory --digits 4
 
 ## Virtual Filesystem Structure
 
-The virtual filesystem organizes TensorBoard data as follows:
+The virtual filesystem organizes TensorBoard data as follows.
+
+**Note for TensorFlow v2:** In v2 format, data may be organized differently. For example:
+
+- Scalar data might not appear in the `scalars/` directory if stored as tensors
+- All data types are internally stored as tensors but are still exposed through their logical virtual paths when possible
+
+The structure below shows the ideal organization:
 
 ```
 scalars/
@@ -149,24 +159,9 @@ uv run pytest --cov=tboardfs
 uv run pytest tests/test_parser.py
 ```
 
-### Test Data Generation
+### Test Data
 
-The package includes a test data generator that creates TensorBoard event files with all supported data types:
-
-```python
-from tboardfs.test_generator import generate_test_tensorboard_log
-
-# Generate test event file with 11 iterations
-event_file = generate_test_tensorboard_log("./test_logs", num_iterations=11)
-```
-
-This creates dummy data for:
-
-- Scalars: loss, accuracy, learning_rate, metrics
-- Images: RGB and grayscale samples
-- Histograms: normal/uniform distributions, model weights
-- Audio: sine wave samples
-- Text: iteration logs, model architecture
+The test suite uses pre-generated TensorBoard event files in TensorFlow v2 format, located in `tests/example-data/`. These files contain various data types stored as tensors, which is the standard format for TensorFlow v2.
 
 ## Future Work
 

@@ -2,8 +2,8 @@ README.md
 pyproject.toml
 tboardfs/__init__.py
 tboardfs/cli.py
+tboardfs/efficient_parser.py
 tboardfs/parser.py
-tboardfs/test_generator.py
 tboardfs.egg-info/PKG-INFO
 tboardfs.egg-info/SOURCES.txt
 tboardfs.egg-info/dependency_links.txt
