@@ -26,15 +26,18 @@ def create_parser_with_progress(
     file_path: str, show_progress: bool = False
 ) -> TensorBoardParser:
     """Create a TensorBoardParser with optional progress display."""
+    logger.debug(f"Creating parser for file: {file_path} (progress: {show_progress})")
     return TensorBoardParser(file_path, show_progress=show_progress)
 
 
 def validate_and_exit_on_error(tensorboard_path: str) -> Path:
     """Validate TensorBoard file path and exit with error if invalid."""
+    logger.debug(f"Validating TensorBoard file: {tensorboard_path}")
     path = Path(tensorboard_path)
     if not validate_tensorboard_file(path):
         logger.error(f"{tensorboard_path} is not a valid TensorBoard event file")
         sys.exit(1)
+    logger.debug(f"File validation passed: {path}")
     return path
 
 

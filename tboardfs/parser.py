@@ -74,19 +74,88 @@ class TensorBoardParser:
 
     def __init__(self, event_file_path: str, show_progress: bool = False):
         """Initialize parser with event file path."""
+        from pathlib import Path
+        import os
+        
+        logger.debug(f"Initializing TensorBoardParser for file: {event_file_path}")
         self.event_file_path = event_file_path
         self.show_progress = show_progress
+        
+        # Check file size and warn if large
+        file_size = Path(event_file_path).stat().st_size
+        file_size_mb = file_size / (1024 * 1024)
+        logger.debug(f"TensorBoard file size: {file_size_mb:.1f} MB")
+        
+        if file_size_mb > 100:
+            logger.info(f"Large TensorBoard file detected ({file_size_mb:.1f} MB). Loading may take several minutes...")
+        
+        logger.debug("Creating EventAccumulator with memory-efficient settings")
+        # Use smaller size guidance for memory efficiency with large files
+        size_guidance = {
+            event_accumulator.SCALARS: 10000,  # Limit scalars to reduce memory
+            event_accumulator.IMAGES: 100,     # Limit images significantly
+            event_accumulator.HISTOGRAMS: 1000,
+            event_accumulator.TENSORS: 1000,
+            event_accumulator.AUDIO: 100,
+        } if file_size_mb > 50 else {
+            event_accumulator.SCALARS: 0,
+            event_accumulator.IMAGES: 0,
+            event_accumulator.HISTOGRAMS: 0,
+            event_accumulator.TENSORS: 0,
+            event_accumulator.AUDIO: 0,
+        }
+        
         self.ea = event_accumulator.EventAccumulator(
             event_file_path,
-            size_guidance={
-                event_accumulator.SCALARS: 0,
-                event_accumulator.IMAGES: 0,
-                event_accumulator.HISTOGRAMS: 0,
-                event_accumulator.TENSORS: 0,
-                event_accumulator.AUDIO: 0,
-            },
+            size_guidance=size_guidance,
         )
-        self.ea.Reload()
+        
+        logger.debug("Loading events from file (this may take time for large files)")
+        if file_size_mb > 100:
+            logger.info("Loading large file... Please be patient, this may take several minutes")
+        
+        # Load with progress indication for large files
+        if file_size_mb > 50 and self.show_progress:
+            self._reload_with_progress()
+        else:
+            self.ea.Reload()
+        
+        logger.debug("EventAccumulator initialized and events loaded")
+
+    def _reload_with_progress(self):
+        """Reload EventAccumulator with progress indication."""
+        import threading
+        import time
+        
+        logger.info("Loading file with progress indication...")
+        
+        # Flag to track if loading is complete
+        loading_complete = threading.Event()
+        
+        def load_data():
+            try:
+                self.ea.Reload()
+                loading_complete.set()
+            except Exception as e:
+                logger.error(f"Error loading TensorBoard file: {e}")
+                loading_complete.set()
+                raise
+        
+        # Start loading in a separate thread
+        load_thread = threading.Thread(target=load_data)
+        load_thread.daemon = True
+        load_thread.start()
+        
+        # Show progress dots while loading
+        start_time = time.time()
+        while not loading_complete.is_set():
+            elapsed = time.time() - start_time
+            logger.info(f"Still loading... ({elapsed:.0f}s elapsed)")
+            loading_complete.wait(timeout=30)  # Update every 30 seconds
+        
+        # Wait for thread to complete
+        load_thread.join()
+        logger.info("File loading completed")
 
     def list_scalars(self) -> list[str]:
         """List all scalar tags in the event file.
@@ -381,10 +450,13 @@ class TensorBoardParser:
         """Extract all data to a directory structure."""
         from pathlib import Path
 
+        logger.debug(f"Starting extraction to directory: {output_dir}")
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
+        logger.debug(f"Output directory created: {output_path}")
 
         # Create subdirectories
+        logger.debug("Creating subdirectories")
         scalars_dir = output_path / "scalars"
         images_dir = output_path / "images"
         histograms_dir = output_path / "histograms"
@@ -396,11 +468,18 @@ class TensorBoardParser:
         histograms_dir.mkdir(exist_ok=True)
         audio_dir.mkdir(exist_ok=True)
         text_dir.mkdir(exist_ok=True)
+        logger.debug("All subdirectories created")
 
         scalar_files = {}
 
+        # Get content counts for debug info
+        content = self.list_all_content()
+        logger.debug(f"Content found - scalars: {len(content['scalars'])}, images: {len(content['images'])}, histograms: {len(content['histograms'])}, audio: {len(content['audio'])}, text: {len(content['text'])}, tensors: {len(content['tensors'])}")
+
         # Extract scalars - append data as we go
+        logger.debug("Starting scalar extraction")
         scalar_tags = self.list_scalars()
+        logger.debug(f"Found {len(scalar_tags)} scalar tags: {scalar_tags}")
         if self.show_progress:
             logger.info(f"Extracting {len(scalar_tags)} scalar tags...")
         scalar_iterator = (
@@ -408,10 +487,12 @@ class TensorBoardParser:
             if self.show_progress
             else scalar_tags
         )
-        for tag in scalar_iterator:
+        for i, tag in enumerate(scalar_iterator):
+            logger.debug(f"Processing scalar tag {i+1}/{len(scalar_tags)}: {tag}")
             safe_tag = tag.replace("/", "_")
             scalar_file = scalars_dir / f"{safe_tag}.txt"
             scalar_data = self.get_scalar_data(tag)
+            logger.debug(f"Retrieved {len(scalar_data)} data points for tag {tag}")
 
             with scalar_file.open("w") as f:
                 for data in scalar_data:
@@ -419,9 +500,13 @@ class TensorBoardParser:
 
             if sort_scalars:
                 scalar_files[scalar_file] = True
+            logger.debug(f"Completed scalar tag: {tag}")
+        logger.debug("Scalar extraction completed")
 
         # Extract images
+        logger.debug("Starting image extraction")
         image_tags = self.list_images()
+        logger.debug(f"Found {len(image_tags)} image tags: {image_tags}")
         if self.show_progress and image_tags:
             logger.info(f"Extracting {len(image_tags)} image tags...")
         image_iterator = (
@@ -429,21 +514,29 @@ class TensorBoardParser:
             if self.show_progress
             else image_tags
         )
-        for tag in image_iterator:
+        for i, tag in enumerate(image_iterator):
+            logger.debug(f"Processing image tag {i+1}/{len(image_tags)}: {tag}")
             safe_tag = tag.replace("/", "_")
             tag_dir = images_dir / safe_tag
             tag_dir.mkdir(exist_ok=True)
 
             image_data = self.get_image_data(tag)
-            for image_item in image_data:
+            logger.debug(f"Retrieved {len(image_data)} images for tag {tag}")
+            for j, image_item in enumerate(image_data):
+                logger.debug(f"Processing image {j+1}/{len(image_data)} for tag {tag}, step {image_item.step}")
                 ext = self.get_image_extension(image_item.encoded_image_string)
                 padded_step = str(image_item.step).zfill(digits)
                 image_file = tag_dir / f"{padded_step}.{ext}"
                 with image_file.open("wb") as f:
                     f.write(image_item.encoded_image_string)
+                logger.debug(f"Wrote image file: {image_file}")
+            logger.debug(f"Completed image tag: {tag}")
+        logger.debug("Image extraction completed")
 
         # Extract histograms
+        logger.debug("Starting histogram extraction")
         histogram_tags = self.list_histograms()
+        logger.debug(f"Found {len(histogram_tags)} histogram tags: {histogram_tags}")
         if self.show_progress and histogram_tags:
             logger.info(f"Extracting {len(histogram_tags)} histogram tags...")
         histogram_iterator = (
@@ -451,15 +544,20 @@ class TensorBoardParser:
             if self.show_progress
             else histogram_tags
         )
-        for tag in histogram_iterator:
+        for i, tag in enumerate(histogram_iterator):
+            logger.debug(f"Processing histogram tag {i+1}/{len(histogram_tags)}: {tag}")
             safe_tag = tag.replace("/", "_")
             histogram_file = histograms_dir / f"{safe_tag}.txt"
             histogram_text = self.export_histogram_to_text(tag)
             with histogram_file.open("w") as f:
                 f.write(histogram_text)
+            logger.debug(f"Completed histogram tag: {tag}")
+        logger.debug("Histogram extraction completed")
 
         # Extract audio
+        logger.debug("Starting audio extraction")
         audio_tags = self.list_audio()
+        logger.debug(f"Found {len(audio_tags)} audio tags: {audio_tags}")
         if self.show_progress and audio_tags:
             logger.info(f"Extracting {len(audio_tags)} audio tags...")
         audio_iterator = (
@@ -467,21 +565,29 @@ class TensorBoardParser:
             if self.show_progress
             else audio_tags
         )
-        for tag in audio_iterator:
+        for i, tag in enumerate(audio_iterator):
+            logger.debug(f"Processing audio tag {i+1}/{len(audio_tags)}: {tag}")
             safe_tag = tag.replace("/", "_")
             tag_dir = audio_dir / safe_tag
             tag_dir.mkdir(exist_ok=True)
 
             audio_data = self.get_audio_data(tag)
-            for audio_item in audio_data:
+            logger.debug(f"Retrieved {len(audio_data)} audio files for tag {tag}")
+            for j, audio_item in enumerate(audio_data):
+                logger.debug(f"Processing audio {j+1}/{len(audio_data)} for tag {tag}, step {audio_item.step}")
                 ext = self.get_audio_extension(audio_item.content_type)
                 padded_step = str(audio_item.step).zfill(digits)
                 audio_file = tag_dir / f"{padded_step}.{ext}"
                 with audio_file.open("wb") as f:
                     f.write(audio_item.encoded_audio_string)
+                logger.debug(f"Wrote audio file: {audio_file}")
+            logger.debug(f"Completed audio tag: {tag}")
+        logger.debug("Audio extraction completed")
 
         # Extract text
+        logger.debug("Starting text extraction")
         text_tags = self.list_text()
+        logger.debug(f"Found {len(text_tags)} text tags: {text_tags}")
         if self.show_progress and text_tags:
             logger.info(f"Extracting {len(text_tags)} text tags...")
         text_iterator = (
@@ -489,23 +595,33 @@ class TensorBoardParser:
             if self.show_progress
             else text_tags
         )
-        for tag in text_iterator:
+        for i, tag in enumerate(text_iterator):
+            logger.debug(f"Processing text tag {i+1}/{len(text_tags)}: {tag}")
             safe_tag = tag.replace("/", "_")
             tag_dir = text_dir / safe_tag
             tag_dir.mkdir(exist_ok=True)
 
             text_data = self.get_text_data(tag)
-            for text_item in text_data:
+            logger.debug(f"Retrieved {len(text_data)} text items for tag {tag}")
+            for j, text_item in enumerate(text_data):
+                logger.debug(f"Processing text {j+1}/{len(text_data)} for tag {tag}, step {text_item.step}")
                 padded_step = str(text_item.step).zfill(digits)
                 text_file = tag_dir / f"{padded_step}.txt"
                 with text_file.open("w", encoding="utf-8") as f:
                     f.write(text_item.text)
+                logger.debug(f"Wrote text file: {text_file}")
+            logger.debug(f"Completed text tag: {tag}")
+        logger.debug("Text extraction completed")
 
         # Sort scalar files if requested
         if sort_scalars and scalar_files:
+            logger.debug(f"Starting scalar file sorting for {len(scalar_files)} files")
             if self.show_progress:
                 logger.info("Sorting scalar files by iteration number...")
             self._sort_scalar_files(scalar_files.keys())
+            logger.debug("Scalar file sorting completed")
+        
+        logger.debug("All extraction completed successfully")
 
     def _sort_scalar_files(self, scalar_files):
         """Sort scalar files by iteration number (first column)."""

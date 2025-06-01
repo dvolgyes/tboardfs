@@ -15,16 +15,19 @@ from .commands.extract_command import extract_tensorboard_data
 from .commands.export_command import export_virtual_path
 
 
-def setup_logging(logfile: str | None = None):
+def setup_logging(logfile: str | None = None, debug: bool = False):
     """Configure loguru logger."""
     # Remove default handler
     logger.remove()
 
-    # Add stderr handler with INFO level
+    # Set log level based on debug flag
+    log_level = "DEBUG" if debug else "INFO"
+
+    # Add stderr handler with appropriate level
     logger.add(
         sys.stderr,
         format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
-        level="INFO",
+        level=log_level,
         colorize=True,
     )
 
@@ -41,18 +44,20 @@ def setup_logging(logfile: str | None = None):
 
 @click.group()
 @click.option("--logfile", type=click.Path(), help="Log file path")
+@click.option("--debug", is_flag=True, help="Enable debug logging")
 @click.pass_context
-def main(ctx, logfile: str | None):
+def main(ctx, logfile: str | None, debug: bool):
     """TensorBoard filesystem interface CLI.
 
     This CLI tool works with TensorFlow v2 event file format where data is stored
     as tensors. The tool extracts and organizes the data into a logical filesystem
     structure for easy access.
     """
-    setup_logging(logfile)
+    setup_logging(logfile, debug)
     # Store in context for access by subcommands
     ctx.ensure_object(dict)
     ctx.obj["logfile"] = logfile
+    ctx.obj["debug"] = debug
 
 
 @main.command()
@@ -67,6 +72,7 @@ def main(ctx, logfile: str | None):
 @click.pass_context
 def list(ctx, tensorboard_path: str, recursive: bool, digits: int):
     """List contents of TensorBoard log file(s)."""
+    logger.info(f"Listing contents of {tensorboard_path}")
     path = Path(tensorboard_path)
     context = setup_cli_context(ctx)
 
@@ -122,6 +128,7 @@ def extract(ctx, tensorboard_path: str, output: str, no_sort: bool, digits: int)
 @click.pass_context
 def export(ctx, tensorboard_path: str, virtual_path: str, output: str | None):
     """Export a specific item from TensorBoard log."""
+    logger.info(f"Exporting {virtual_path} from {tensorboard_path}")
     context = setup_cli_context(ctx)
 
     try:
