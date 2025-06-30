@@ -259,7 +259,7 @@ class TensorBoardParser:
             for tag in self.list_scalars():
                 safe_tag = tag.replace("/", "_")
                 paths.append(f"scalars/{safe_tag}.txt")
-        except:
+        except Exception:
             pass
 
         # Image paths
@@ -273,9 +273,9 @@ class TensorBoardParser:
                         ext = self.get_image_extension(data.encoded_image_string)
                         padded_step = str(data.step).zfill(digits)
                         paths.append(f"images/{safe_tag}/{padded_step}.{ext}")
-                except:
+                except Exception:
                     pass
-        except:
+        except Exception:
             pass
 
         # Histogram paths
@@ -283,7 +283,7 @@ class TensorBoardParser:
             for tag in self.list_histograms():
                 safe_tag = tag.replace("/", "_")
                 paths.append(f"histograms/{safe_tag}.txt")
-        except:
+        except Exception:
             pass
 
         # Audio paths
@@ -297,9 +297,9 @@ class TensorBoardParser:
                         ext = self.get_audio_extension(data.content_type)
                         padded_step = str(data.step).zfill(digits)
                         paths.append(f"audio/{safe_tag}/{padded_step}.{ext}")
-                except:
+                except Exception:
                     pass
-        except:
+        except Exception:
             pass
 
         # Text paths
@@ -312,9 +312,9 @@ class TensorBoardParser:
                     for data in text_data:
                         padded_step = str(data.step).zfill(digits)
                         paths.append(f"text/{safe_tag}/{padded_step}.txt")
-                except:
+                except Exception:
                     pass
-        except:
+        except Exception:
             pass
 
         return sorted(set(paths))

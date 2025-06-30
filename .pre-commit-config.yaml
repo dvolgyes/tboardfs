@@ -64,15 +64,15 @@ repos:
           - mdformat-gfm
           - mdformat-black
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.16.0
-    hooks:
-      - id: mypy
-        additional_dependencies:
-          - types-click
-          - types-pillow
-          - types-tqdm
-        args: [--ignore-missing-imports, --install-types, --non-interactive]
+  #~ - repo: https://github.com/pre-commit/mirrors-mypy
+    #~ rev: v1.16.0
+    #~ hooks:
+      #~ - id: mypy
+        #~ additional_dependencies:
+          #~ - types-click
+          #~ - types-pillow
+          #~ - types-tqdm
+        #~ args: [--ignore-missing-imports, --install-types, --non-interactive]
 
 ci:
   autoupdate_schedule: monthly

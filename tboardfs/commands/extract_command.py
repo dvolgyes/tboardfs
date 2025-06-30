@@ -11,7 +11,7 @@ def extract_tensorboard_data(
     """Extract all data from TensorBoard log to directory structure."""
     logger.info(f"Starting extraction from {tensorboard_path} to {output_dir}")
     logger.debug(f"Extract parameters: sort_scalars={sort_scalars}, digits={digits}")
-    
+
     # Validate input file
     logger.debug("Validating input TensorBoard file")
     file_path = validate_and_exit_on_error(tensorboard_path)
