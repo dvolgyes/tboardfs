@@ -1,155 +1,298 @@
 # tboardfs
 
-A FUSE filesystem interface for TensorBoard logs that allows mounting TensorBoard event files as a virtual filesystem.
+A powerful command-line tool for extracting and analyzing TensorBoard log data. Parse TensorBoard event files, export specific metrics, and extract complete datasets with ease.
 
-**Note:** This tool is designed for TensorFlow v2 event file format. In v2, all data (scalars, images, histograms, audio) is stored as tensors in the event files. The tool correctly handles this format and extracts the appropriate data types.
+## 🚀 Features
 
-## Features
+- **Universal TensorBoard Support**: Works with TensorFlow v2 event files where all data is stored as tensors
+- **Complete Data Coverage**: Handles all major TensorBoard data types:
+  - **Scalars**: Metrics, losses, accuracy curves
+  - **Images**: Training visualizations, model outputs
+  - **Histograms**: Weight distributions, activation patterns
+  - **Audio**: Audio samples and generated sounds
+  - **Text**: Logs, predictions, debug information
+- **Smart Directory Processing**: Automatically aggregates multi-file experiments
+- **Flexible Export Options**: Export specific items or entire datasets
+- **Organized Output**: Clean directory structure with proper file naming
+- **High Performance**: Memory-efficient processing for large log files
 
-- Parse TensorBoard event files
-- Support for all major TensorBoard data types:
-  - Scalars: Exported as tab-delimited text files with all values collected
-  - Images: Exported in original format (PNG/JPEG)
-  - Histograms: Exported as human-readable text files
-  - Audio: Exported in original format (WAV/MP3/OGG)
-  - Text: Exported as UTF-8 text files
-- Extract all data to organized directory structure
-- Zero-padded iteration numbers for proper filesystem sorting
-- Command-line interface with list, export, and extract commands
+## 📦 Installation
 
-## Installation
+### Using uvx (Recommended)
 
 ```bash
-# Clone the repository
-git clone <repository-url>
+# Run directly without installation
+uvx tboardfs list path/to/your/logs/
+
+# Install for repeated use
+uvx install tboardfs
+```
+
+### Using pip
+
+```bash
+pip install tboardfs
+```
+
+### Development Installation
+
+```bash
+git clone https://github.com/your-username/tboardfs.git
 cd tboardfs
-
-# Install with uv (recommended)
-uv pip install -e .
-
-# Or install with pip
-pip install -e .
-
-# Install test dependencies
-uv pip install -e ".[test]"
+uv sync
 ```
 
-## Usage
+## 🛠️ Usage
 
-### List contents of TensorBoard logs
+### List TensorBoard Contents
+
+Explore what's in your TensorBoard logs:
 
 ```bash
-# List single file
-tboardfs list path/to/events.out.tfevents.xxx
+# List single event file
+uvx tboardfs list path/to/events.out.tfevents.1234567890.hostname.pid.0
 
-# List directory
-tboardfs list path/to/log/directory/
+# List entire experiment directory (aggregated view)
+uvx tboardfs list path/to/experiment/logs/
 
-# List recursively
-tboardfs list -r path/to/log/directory/
+# List without aggregation (show individual files)
+uvx tboardfs list path/to/experiment/logs/ --no-recursive
 
-# Custom padding for iteration numbers
-tboardfs list --digits 8 path/to/events.out.tfevents.xxx
+# Custom precision for iteration numbers
+uvx tboardfs list path/to/logs/ --digits 8
 ```
 
-### Export specific data
+**Example Output:**
+
+```
+Aggregated contents of /experiments/my_model/logs:
+============================================================
+
+Scalars:
+  - train_loss
+  - train_accuracy
+  - val_loss
+  - val_accuracy
+  - train_F1_cls_00
+  - train_F1_cls_01
+  - val_F1_cls_00
+
+Images:
+  - sample_predictions
+  - model_architecture
+
+Histograms:
+  - layer_weights
+  - gradients
+```
+
+### Extract Complete Datasets
+
+Export all TensorBoard data to organized directories:
+
+```bash
+# Extract everything to a directory
+uvx tboardfs extract path/to/logs/ -o extracted_data/
+
+# Extract with custom settings
+uvx tboardfs extract path/to/logs/ -o data/ --digits 4 --png --quality 95
+
+# Extract without sorting scalars by iteration
+uvx tboardfs extract path/to/logs/ -o data/ --no-sort
+```
+
+**Directory Structure Created:**
+
+```
+extracted_data/
+├── scalars/
+│   ├── train_loss.txt         # iteration    value
+│   ├── train_accuracy.txt     # 0           0.123
+│   └── val_loss.txt           # 1           0.098
+├── images/                    # ...
+│   └── sample_predictions/
+│       ├── 000000.jpg
+│       ├── 000001.jpg
+│       └── 000002.jpg
+├── histograms/
+│   └── layer_weights.txt
+└── audio/
+    └── generated_sounds/
+        ├── 000000.wav
+        └── 000001.wav
+```
+
+### Export Specific Items
+
+Target exactly what you need:
 
 ```bash
 # Export scalar data to stdout
-tboardfs export path/to/events.out.tfevents.xxx scalars/loss.txt
+uvx tboardfs export path/to/logs/ scalars/train_loss.txt
 
 # Export scalar data to file
-tboardfs export path/to/events.out.tfevents.xxx scalars/loss.txt -o loss_values.txt
+uvx tboardfs export path/to/logs/ scalars/val_accuracy.txt -o accuracy.txt
 
-# Export image
-tboardfs export path/to/events.out.tfevents.xxx images/sample_image/000042.png -o image.png
+# Export specific image
+uvx tboardfs export path/to/logs/ images/predictions/000042.jpg -o prediction.jpg
 
-# Export histogram
-tboardfs export path/to/events.out.tfevents.xxx histograms/weights.txt -o weights_dist.txt
+# Export histogram data
+uvx tboardfs export path/to/logs/ histograms/weights.txt -o weights_distribution.txt
 
-# Export audio
-tboardfs export path/to/events.out.tfevents.xxx audio/sound/000001.wav -o sound.wav
+# Export audio file
+uvx tboardfs export path/to/logs/ audio/samples/000010.wav -o sample.wav
 
-# Export text
-tboardfs export path/to/events.out.tfevents.xxx text/logs/000010.txt -o log.txt
+# Export text logs
+uvx tboardfs export path/to/logs/ text/debug/000005.txt -o debug_log.txt
 ```
 
-### Extract all data
+### Advanced Multi-Experiment Processing
+
+Handle complex experimental setups with class-specific metrics:
 
 ```bash
-# Extract all data to directory
-tboardfs extract path/to/events.out.tfevents.xxx -o output_directory
+# Process experiments with multiple classes/categories
+uvx tboardfs list /experiments/multiclass_model/
+# Shows: train_F1_cls_00, train_F1_cls_01, ..., val_F1_cls_16
 
-# Extract without sorting scalar files
-tboardfs extract path/to/events.out.tfevents.xxx -o output_directory --no-sort
-
-# Extract with custom digit padding
-tboardfs extract path/to/events.out.tfevents.xxx -o output_directory --digits 4
+# Extract preserving class structure
+uvx tboardfs extract /experiments/multiclass_model/ -o results/
+# Creates: train_F1_cls_00/, train_F1_cls_01/, etc.
 ```
 
-## Virtual Filesystem Structure
+## 🎯 Image Format Options
 
-The virtual filesystem organizes TensorBoard data as follows.
+Control image output format and quality:
 
-**Note for TensorFlow v2:** In v2 format, data may be organized differently. For example:
+```bash
+# Export images as PNG (lossless)
+uvx tboardfs extract path/to/logs/ -o data/ --png
 
-- Scalar data might not appear in the `scalars/` directory if stored as tensors
-- All data types are internally stored as tensors but are still exposed through their logical virtual paths when possible
+# Export images as JPEG with custom quality
+uvx tboardfs extract path/to/logs/ -o data/ --jpg --quality 85
 
-The structure below shows the ideal organization:
-
-```
-scalars/
-  loss.txt                    # All loss values (iteration<tab>value)
-  accuracy.txt               # All accuracy values
-  metrics_precision.txt      # Note: '/' in tags replaced with '_'
-images/
-  sample_images_rgb/
-    000000.png               # Image at iteration 0
-    000001.png               # Image at iteration 1
-    ...
-histograms/
-  distributions_normal.txt   # Histogram data in readable format
-  model_weights.txt         # Model weights distribution
-audio/
-  sounds_sine_wave/
-    000000.wav              # Audio at iteration 0
-    000001.wav              # Audio at iteration 1
-    ...
-text/
-  logs_info/
-    000000.txt              # Text log at iteration 0
-    000001.txt              # Text log at iteration 1
-    ...
+# Export specific image format
+uvx tboardfs export path/to/logs/ images/plot/000001.png -o plot.png --png
 ```
 
-The `--digits` option controls the zero-padding of iteration numbers in filenames (default: 6 digits).
+## 📊 Understanding TensorBoard v2 Format
 
-## Testing
+Modern TensorBoard files use TensorFlow v2 format where:
+
+- **All data types** (scalars, images, etc.) are stored as tensors
+- **Hierarchical organization** uses subdirectories for related metrics
+- **Class-specific metrics** get separate subdirectories (e.g., `train_F1_cls_00/`, `val_F1_cls_01/`)
+- **Aggregated views** combine related metrics for easier analysis
+
+tboardfs automatically handles this complexity and presents data in an intuitive virtual filesystem structure.
+
+## 🔧 Command Reference
+
+### Global Options
+
+```bash
+--logfile FILE      Log to file
+--debug             Enable debug logging
+```
+
+### List Command
+
+```bash
+uvx tboardfs list [OPTIONS] TENSORBOARD_PATH
+
+Options:
+  --no-recursive    Disable recursive listing for directories
+  --digits INTEGER  Number of digits for iteration padding (default: 6)
+```
+
+### Extract Command
+
+```bash
+uvx tboardfs extract [OPTIONS] TENSORBOARD_PATH
+
+Options:
+  -o, --output PATH        Output directory [required]
+  --no-sort               Disable sorting of scalar files
+  --digits INTEGER        Iteration number padding (default: 6)
+  --png                   Export images as PNG
+  --jpg                   Export images as JPEG (default)
+  --quality INTEGER       JPEG quality 0-100 (default: 90)
+```
+
+### Export Command
+
+```bash
+uvx tboardfs export [OPTIONS] TENSORBOARD_PATH VIRTUAL_PATH
+
+Options:
+  -o, --output PATH       Output file (default: stdout)
+  --png                   Export images as PNG
+  --jpg                   Export images as JPEG (default)
+  --quality INTEGER       JPEG quality 0-100 (default: 90)
+```
+
+## 📁 Virtual Filesystem Paths
+
+tboardfs organizes TensorBoard data into intuitive paths:
+
+| Data Type  | Path Pattern                 | Example                        |
+| ---------- | ---------------------------- | ------------------------------ |
+| Scalars    | `scalars/tag_name.txt`       | `scalars/train_loss.txt`       |
+| Images     | `images/tag_name/NNNNNN.ext` | `images/samples/000042.png`    |
+| Histograms | `histograms/tag_name.txt`    | `histograms/layer_weights.txt` |
+| Audio      | `audio/tag_name/NNNNNN.ext`  | `audio/sounds/000001.wav`      |
+| Text       | `text/tag_name/NNNNNN.txt`   | `text/logs/000010.txt`         |
+
+**Note**: Forward slashes in tag names are converted to underscores for filesystem compatibility.
+
+## 🧪 Development & Testing
 
 ### Running Tests
 
 ```bash
+# Install development dependencies
+uv sync
+
 # Run all tests
 uv run pytest
 
 # Run with coverage
-uv run pytest --cov=tboardfs
+uv run pytest --cov
 
-# Run specific test file
-uv run pytest tests/test_parser.py
+# Run specific test
+uv run pytest tests/test_cli.py -v
 ```
 
-### Test Data
+### Code Quality
 
-The test suite uses pre-generated TensorBoard event files in TensorFlow v2 format, located in `tests/example-data/`. These files contain various data types stored as tensors, which is the standard format for TensorFlow v2.
+```bash
+# Run linting and formatting
+uv run pre-commit run --all-files
 
-## Future Work
+# Type checking
+uv run mypy tboardfs/
+```
 
-- FUSE filesystem interface for mounting TensorBoard logs
-- Support for additional TensorBoard data types
-- Real-time monitoring of growing event files
+## 🤝 Contributing
 
-## License
+Contributions are welcome! Please:
 
-[License information to be added]
+1. Fork the repository
+1. Create a feature branch
+1. Add tests for new functionality
+1. Ensure all tests pass
+1. Submit a pull request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+- **Issues**: [GitHub Issues](https://github.com/your-username/tboardfs/issues)
+- **Documentation**: This README and inline help (`uvx tboardfs --help`)
+- **Examples**: See `tests/` directory for usage examples
+
+______________________________________________________________________
+
+**⚡ Quick Start**: `uvx tboardfs list path/to/your/tensorboard/logs/`
