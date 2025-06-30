@@ -83,11 +83,13 @@ repos:
           --warn-redundant-casts,
           --warn-unreachable,
           --show-error-codes,
+          --disallow-incomplete-defs,
           --strict-equality,
           --strict-bytes,
           --report-deprecated-as-note,
           --extra-checks,
-          --check-untyped-defs]
+          --check-untyped-defs,
+          --disallow-untyped-defs]
 
 ci:
   autoupdate_schedule: monthly

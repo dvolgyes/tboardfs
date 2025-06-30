@@ -6,6 +6,7 @@ loading everything into memory, making it much more efficient for large files.
 
 from pathlib import Path
 from collections.abc import Iterator
+from typing import Any
 
 from tensorboard.backend.event_processing.event_file_loader import EventFileLoader
 from tensorboard.util import tensor_util
@@ -90,7 +91,7 @@ class EfficientTensorBoardParser:
         loader = self._create_loader()
         yield from loader.Load()
 
-    def _is_image_tensor(self, tensor_proto, tag: str) -> bool:
+    def _is_image_tensor(self, tensor_proto: Any, tag: str) -> bool:
         """Check if a tensor seems to be an image."""
         try:
             # from tensorboard.util import tensor_util
@@ -357,7 +358,7 @@ class EfficientTensorBoardParser:
                                         f"Could not decode string tensor for tag '{tag}': {e}"
                                     )
 
-    def _decode_image_from_tensor(self, tensor_proto) -> bytes | None:
+    def _decode_image_from_tensor(self, tensor_proto: Any) -> bytes | None:
         """Decode an image from a tensor_proto."""
         try:
             import numpy as np
@@ -517,11 +518,11 @@ class EfficientTensorBoardParser:
     def _save_scalar(
         self,
         event: event_pb2.Event,
-        value,
+        value: Any,
         output_path: Path,
         sort_scalars: bool,
         scalar_buffers: dict[Path, list[tuple[int, float]]],
-    ):
+    ) -> None:
         """Save scalar data to file."""
         tag = value.tag
         safe_tag = tag.replace("/", "_")
@@ -563,12 +564,12 @@ class EfficientTensorBoardParser:
     def _save_image(
         self,
         event: event_pb2.Event,
-        value,
+        value: Any,
         output_path: Path,
         digits: int,
         image_format: str,
         image_quality: int,
-    ):
+    ) -> None:
         """Save image data to file, handling batches of pre-encoded images."""
         tag = value.tag
         safe_tag = tag.replace("/", "_")
@@ -634,7 +635,9 @@ class EfficientTensorBoardParser:
                 f"Could not extract image for tag '{tag}' at step {event.step}"
             )
 
-    def _save_histogram(self, event: event_pb2.Event, value, output_path: Path):
+    def _save_histogram(
+        self, event: event_pb2.Event, value: Any, output_path: Path
+    ) -> None:
         """Save histogram data to file."""
         tag = value.tag
         safe_tag = tag.replace("/", "_")
@@ -652,8 +655,8 @@ class EfficientTensorBoardParser:
             f.write("\n")
 
     def _save_audio(
-        self, event: event_pb2.Event, value, output_path: Path, digits: int
-    ):
+        self, event: event_pb2.Event, value: Any, output_path: Path, digits: int
+    ) -> None:
         """Save audio data to file."""
         tag = value.tag
         safe_tag = tag.replace("/", "_")
@@ -667,7 +670,9 @@ class EfficientTensorBoardParser:
         with audio_file.open("wb") as f:
             f.write(value.audio.encoded_audio_string)
 
-    def _save_text(self, event: event_pb2.Event, value, output_path: Path, digits: int):
+    def _save_text(
+        self, event: event_pb2.Event, value: Any, output_path: Path, digits: int
+    ) -> None:
         """Save text data to file."""
         tag = value.tag
         safe_tag = tag.replace("/", "_")
@@ -694,7 +699,7 @@ class EfficientTensorBoardParser:
         digits: int = 6,
         image_format: str = "jpg",
         image_quality: int = 90,
-    ):
+    ) -> None:
         """Extract all data to a directory structure using single-pass processing."""
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)

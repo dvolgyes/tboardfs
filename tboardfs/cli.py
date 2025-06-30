@@ -1,6 +1,7 @@
 """CLI interface for tboardfs."""
 
 import sys
+from typing import Any
 import click
 from pathlib import Path
 from loguru import logger
@@ -19,7 +20,7 @@ from .commands.extract_command import extract_tensorboard_data
 from .commands.export_command import export_virtual_path
 
 
-def setup_logging(logfile: str | None = None, debug: bool = False):
+def setup_logging(logfile: str | None = None, debug: bool = False) -> None:
     """Configure loguru logger."""
     # Remove default handler
     logger.remove()
@@ -50,7 +51,7 @@ def setup_logging(logfile: str | None = None, debug: bool = False):
 @click.option("--logfile", type=click.Path(), help="Log file path")
 @click.option("--debug", is_flag=True, help="Enable debug logging")
 @click.pass_context
-def main(ctx, logfile: str | None, debug: bool):
+def main(ctx: Any, logfile: str | None, debug: bool) -> None:
     """TensorBoard filesystem interface CLI.
 
     This CLI tool works with TensorFlow v2 event file format where data is stored
@@ -78,7 +79,7 @@ def main(ctx, logfile: str | None, debug: bool):
     help="Number of digits for padding iteration numbers (default: 6)",
 )
 @click.pass_context
-def list(ctx, tensorboard_path: str, no_recursive: bool, digits: int):
+def list(ctx: Any, tensorboard_path: str, no_recursive: bool, digits: int) -> None:
     """List contents of TensorBoard log file(s).
 
     For directories, recursively lists and aggregates all event files by default.
@@ -139,7 +140,7 @@ def list(ctx, tensorboard_path: str, no_recursive: bool, digits: int):
 )
 @click.pass_context
 def extract(
-    ctx,
+    ctx: Any,
     tensorboard_path: str,
     output: str,
     no_sort: bool,
@@ -147,7 +148,7 @@ def extract(
     png: bool,
     jpg: bool,
     quality: int,
-):
+) -> None:
     """Extract all data from TensorBoard log(s) to directory structure.
 
     For directories, automatically processes all event files recursively and
@@ -188,14 +189,14 @@ def extract(
 )
 @click.pass_context
 def export(
-    ctx,
+    ctx: Any,
     tensorboard_path: str,
     virtual_path: str,
     output: str | None,
     png: bool,
     jpg: bool,
     quality: int,
-):
+) -> None:
     """Export a specific item from TensorBoard log(s).
 
     For directories, automatically searches through all event files to find

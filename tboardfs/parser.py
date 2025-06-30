@@ -8,6 +8,7 @@ This implementation uses EventFileLoader for efficient streaming instead of
 EventAccumulator which loads everything into memory.
 """
 
+from typing import Any
 from tboardfs.efficient_parser import EfficientTensorBoardParser
 from tboardfs.core.data_types import (
     ScalarData,
@@ -275,13 +276,13 @@ class TensorBoardParser:
         digits: int = 6,
         image_format: str = "jpg",
         image_quality: int = 90,
-    ):
+    ) -> None:
         """Extract all data to a directory structure."""
         return self._efficient_parser.extract_all_to_directory(
             output_dir, sort_scalars, digits, image_format, image_quality
         )
 
-    def _sort_scalar_files(self, scalar_files):
+    def _sort_scalar_files(self, scalar_files: Any) -> None:
         """Sort scalar files by iteration number (first column). For backward compatibility."""
         from pathlib import Path
         from tqdm import tqdm

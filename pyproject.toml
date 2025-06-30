@@ -38,28 +38,3 @@ dev = [
 
 [tool.uv]
 package = true
-
-[tool.mypy]
-python_version = "3.12"
-warn_return_any = true
-warn_unused_configs = true
-# disallow_untyped_defs = true  # Temporarily disabled
-# disallow_incomplete_defs = true  # Temporarily disabled
-check_untyped_defs = true
-# disallow_untyped_decorators = true  # Temporarily disabled
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-strict_equality = true
-
-[[tool.mypy.overrides]]
-module = [
-    "tensorboard.*",
-    "loguru",
-    "magic",
-    "PIL",
-    "numpy",
-]
-ignore_missing_imports = true
