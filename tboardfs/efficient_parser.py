@@ -140,38 +140,38 @@ class EfficientTensorBoardParser:
         loader = self._create_loader()
         yield from loader.Load()
 
-    def _is_image_tensor(self, tensor_proto) -> bool:
+    def _is_image_tensor(self, tensor_proto, tag: str) -> bool:
         """Check if a tensor seems to be an image."""
         try:
             # from tensorboard.util import tensor_util
 
             arr = tensor_util.make_ndarray(tensor_proto)
             logger.debug(
-                f"Checking if tensor is image: shape={arr.shape}, ndim={arr.ndim}, dtype={arr.dtype}"
+                f"Checking if tensor '{tag}' is image: shape={arr.shape}, ndim={arr.ndim}, dtype={arr.dtype}"
             )
 
             # Check shape: (H, W, C) or (N, H, W, C) or (C, H, W) or (N, C, H, W)
             if arr.ndim < 2 or arr.ndim > 4:
-                logger.debug(f"Tensor is not image: ndim is {arr.ndim}")
+                logger.debug(f"Tensor '{tag}' is not image: ndim is {arr.ndim}")
                 return False
 
             # Check channels: last or second dimension should be 1, 3, or 4
             # For (H, W, C) or (N, H, W, C)
             if arr.shape[-1] in [1, 3, 4]:
-                logger.debug(f"Tensor is image: shape[-1] is {arr.shape[-1]}")
+                logger.debug(f"Tensor '{tag}' is image: shape[-1] is {arr.shape[-1]}")
                 return True
             # For (C, H, W) or (N, C, H, W)
             if arr.ndim > 2 and arr.shape[-3] in [1, 3, 4]:
-                logger.debug(f"Tensor is image: shape[-3] is {arr.shape[-3]}")
+                logger.debug(f"Tensor '{tag}' is image: shape[-3] is {arr.shape[-3]}")
                 return True
             if arr.ndim == 3 and arr.shape[0] in [1, 3, 4]:  # (C,H,W)
-                logger.debug(f"Tensor is image: shape[0] is {arr.shape[0]}")
+                logger.debug(f"Tensor '{tag}' is image: shape[0] is {arr.shape[0]}")
                 return True
 
-            logger.debug("Tensor is not image: no shape condition met")
+            logger.debug(f"Tensor '{tag}' is not image: no shape condition met")
             return False
         except Exception as e:
-            logger.debug(f"Tensor-to-image check failed: {e}")
+            logger.debug(f"Tensor '{tag}' to-image check failed: {e}")
             return False
 
     def _scan_tags(self) -> dict[str, list[str]]:
@@ -241,7 +241,7 @@ class EfficientTensorBoardParser:
                                 ):  # Check if it's text (DT_STRING = 7)
                                     tags["text"].add(tag)
                                 elif self._is_image_tensor(
-                                    value.tensor
+                                    value.tensor, tag
                                 ):  # Check if it's an image
                                     tags["images"].add(tag)
                                 else:
@@ -376,7 +376,7 @@ class EfficientTensorBoardParser:
                                 wall_time=event.wall_time,
                             )
                         elif value.HasField("tensor"):
-                            if self._is_image_tensor(value.tensor):
+                            if self._is_image_tensor(value.tensor, tag):
                                 decoded_image = self._decode_image_from_tensor(
                                     value.tensor
                                 )
@@ -393,7 +393,7 @@ class EfficientTensorBoardParser:
                                     arr = tensor_util.make_ndarray(value.tensor)
                                     for item in arr:
                                         if isinstance(item, bytes):
-                                            ext = self.get_image_extension(item)
+                                            ext = self.get_image_extension(item, tag)
                                             if ext != "bin":
                                                 yield ImageData(
                                                     step=event.step,
@@ -525,11 +525,13 @@ class EfficientTensorBoardParser:
             lines.append(f"{data.step}\t{data.value}")
         return "\n".join(lines)
 
-    def get_image_extension(self, image_bytes: bytes) -> str:
+    def get_image_extension(self, image_bytes: bytes, tag: str = "unknown") -> str:
         """Determine image extension from bytes using python-magic."""
         # Use python-magic to detect the actual file type
         mime_type = magic.from_buffer(image_bytes, mime=True)
-        logger.debug(f"MIME type for image bytes (len={len(image_bytes)}): {mime_type}")
+        logger.debug(
+            f"MIME type for image bytes (tag='{tag}', len={len(image_bytes)}): {mime_type}"
+        )
 
         # Map MIME types to extensions
         mime_to_ext = {
@@ -627,7 +629,7 @@ class EfficientTensorBoardParser:
         if value.HasField("image"):
             image_byte_list.append(value.image.encoded_image_string)
         elif value.HasField("tensor"):
-            if self._is_image_tensor(value.tensor):
+            if self._is_image_tensor(value.tensor, tag):
                 decoded_image = self._decode_image_from_tensor(value.tensor)
                 if decoded_image:
                     image_byte_list.append(decoded_image)
@@ -637,7 +639,7 @@ class EfficientTensorBoardParser:
                     for item in arr:
                         if isinstance(item, bytes):
                             # Filter out non-image data by checking extension
-                            ext = self.get_image_extension(item)
+                            ext = self.get_image_extension(item, tag)
                             if ext != "bin":
                                 image_byte_list.append(item)
                 except Exception as e:
@@ -790,30 +792,32 @@ class EfficientTensorBoardParser:
                             self._save_scalar(
                                 event, value, output_path, sort_scalars, scalar_buffers
                             )
-                        elif (
-                            plugin_name == "images"
-                            or value.HasField("image")
-                            or (
-                                value.HasField("tensor")
-                                and self._is_image_tensor(value.tensor)
-                            )
-                        ):
-                            self._save_image(
-                                event,
-                                value,
-                                output_path,
-                                digits,
-                                image_format,
-                                image_quality,
-                            )
-                        elif plugin_name == "histograms" or value.HasField("histo"):
-                            self._save_histogram(event, value, output_path)
-                        elif plugin_name == "audio" or value.HasField("audio"):
-                            self._save_audio(event, value, output_path, digits)
-                        elif plugin_name == "text" or (
-                            value.HasField("tensor") and value.tensor.dtype == 7
-                        ):
-                            self._save_text(event, value, output_path, digits)
+                        else:
+                            is_image = False
+                            if value.HasField("image"):
+                                is_image = True
+                            elif value.HasField("tensor") and self._is_image_tensor(
+                                value.tensor, value.tag
+                            ):
+                                is_image = True
+
+                            if plugin_name == "images" or is_image:
+                                self._save_image(
+                                    event,
+                                    value,
+                                    output_path,
+                                    digits,
+                                    image_format,
+                                    image_quality,
+                                )
+                            elif plugin_name == "histograms" or value.HasField("histo"):
+                                self._save_histogram(event, value, output_path)
+                            elif plugin_name == "audio" or value.HasField("audio"):
+                                self._save_audio(event, value, output_path, digits)
+                            elif plugin_name == "text" or (
+                                value.HasField("tensor") and value.tensor.dtype == 7
+                            ):
+                                self._save_text(event, value, output_path, digits)
                     except Exception as e:
                         logger.warning(
                             f"Failed to save data for tag '{value.tag}': {e}"
@@ -849,7 +853,7 @@ class EfficientTensorBoardParser:
         all_tags = self._detailed_tags
 
         # Add directories
-        paths.extend(["scalars/", "images/", "histograms/", "audio", "text/"])
+        paths.extend(["scalars/", "images/", "histograms/", "audio/", "text/"])
 
         # Scalar paths
         for tag in all_tags["scalars"]:
@@ -864,7 +868,7 @@ class EfficientTensorBoardParser:
             safe_tag = tag.replace("/", "_")
             paths.append(f"images/{safe_tag}/")
             for data in self.iterate_image_data(tag):
-                ext = self.get_image_extension(data.encoded_image_string)
+                ext = self.get_image_extension(data.encoded_image_string, tag)
                 padded_step = str(data.step).zfill(digits)
                 paths.append(f"images/{safe_tag}/{padded_step}.{ext}")
 

@@ -33,7 +33,7 @@ class TestCLI:
         result = runner.invoke(main, ["list", "--help"])
         assert result.exit_code == 0
         assert "List contents of TensorBoard log file(s)" in result.output
-        assert "--recursive" in result.output
+        assert "--no-recursive" in result.output
         assert "--digits" in result.output
 
     def test_list_single_file(self, runner, test_event_file):
@@ -65,18 +65,33 @@ class TestCLI:
         log_dir = Path(minimal_event_file).parent
         result = runner.invoke(main, ["list", str(log_dir)])
         assert result.exit_code == 0
-        assert "Found 1 TensorBoard event file(s)" in result.output
-        assert "events.out.tfevents" in result.output
+        # With the new default recursive behavior, it processes the single file and shows content
+        assert (
+            "Contents of" in result.output or "Aggregated contents of" in result.output
+        )
 
     def test_list_directory_recursive(
         self, runner, temp_dir, test_event_file, minimal_event_file
     ):
         """Test recursive listing."""
         # Use the tests/example-data directory which has multiple event files
-        result = runner.invoke(main, ["list", "-r", "tests/example-data"])
+        # Recursive is now default for directories
+        result = runner.invoke(main, ["list", "tests/example-data"])
         assert result.exit_code == 0
-        # Should show contents of multiple event files
-        assert result.output.count("Contents of") >= 2
+        # With aggregated view, should show "Aggregated contents of" instead of multiple "Contents of"
+        assert (
+            "Aggregated contents of" in result.output
+            or result.output.count("Contents of") >= 2
+        )
+
+    def test_list_directory_no_recursive(self, runner):
+        """Test non-recursive directory listing."""
+        result = runner.invoke(
+            main, ["list", "--no-recursive", "tests/example-data/full_log"]
+        )
+        assert result.exit_code == 0
+        # Should show list of files, not aggregated content
+        assert "Found" in result.output and "TensorBoard event file(s)" in result.output
 
     def test_list_invalid_path(self, runner):
         """Test listing with invalid path."""

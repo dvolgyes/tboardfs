@@ -62,7 +62,11 @@ def main(ctx, logfile: str | None, debug: bool):
 
 @main.command()
 @click.argument("tensorboard_path", type=click.Path(exists=True))
-@click.option("--recursive", "-r", is_flag=True, help="List recursively")
+@click.option(
+    "--no-recursive",
+    is_flag=True,
+    help="Disable recursive listing for directories (list event files only)",
+)
 @click.option(
     "--digits",
     type=int,
@@ -70,8 +74,12 @@ def main(ctx, logfile: str | None, debug: bool):
     help="Number of digits for padding iteration numbers (default: 6)",
 )
 @click.pass_context
-def list(ctx, tensorboard_path: str, recursive: bool, digits: int):
-    """List contents of TensorBoard log file(s)."""
+def list(ctx, tensorboard_path: str, no_recursive: bool, digits: int):
+    """List contents of TensorBoard log file(s).
+
+    For directories, recursively lists and aggregates all event files by default.
+    Use --no-recursive to only list the event files without processing content.
+    """
     logger.info(f"Listing contents of {tensorboard_path}")
     path = Path(tensorboard_path)
     context = setup_cli_context(ctx)
@@ -80,10 +88,10 @@ def list(ctx, tensorboard_path: str, recursive: bool, digits: int):
         if path.is_file() and "tfevents" in path.name:
             list_single_file(path, digits, context)
         elif path.is_dir():
-            if recursive:
-                list_directory_recursive(path, digits, context)
-            else:
+            if no_recursive:
                 list_directory(path)
+            else:
+                list_directory_recursive(path, digits, context)
         else:
             logger.error(
                 f"{tensorboard_path} is not a valid TensorBoard log file or directory"
@@ -136,7 +144,11 @@ def extract(
     jpg: bool,
     quality: int,
 ):
-    """Extract all data from TensorBoard log to directory structure."""
+    """Extract all data from TensorBoard log(s) to directory structure.
+
+    For directories, automatically processes all event files recursively and
+    organizes output by context (subdirectories for class-specific metrics).
+    """
     setup_cli_context(ctx)
 
     if png and jpg:
@@ -184,7 +196,11 @@ def export(
     jpg: bool,
     quality: int,
 ):
-    """Export a specific item from TensorBoard log."""
+    """Export a specific item from TensorBoard log(s).
+
+    For directories, automatically searches through all event files to find
+    the requested virtual path and exports from the correct source.
+    """
     logger.info(f"Exporting {virtual_path} from {tensorboard_path}")
     context = setup_cli_context(ctx)
 

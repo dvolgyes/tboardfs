@@ -19,6 +19,7 @@ def setup_cli_context(ctx: click.Context) -> dict[str, Any]:
     """Set up CLI context with common configuration."""
     ctx.ensure_object(dict)
     ctx.obj["cli_mode"] = True
+    ctx.obj["aggregated"] = True  # Enable TensorBoard-like aggregated view by default
     return ctx.obj
 
 
