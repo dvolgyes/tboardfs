@@ -2,7 +2,11 @@
 
 from pathlib import Path
 from loguru import logger
-from ..core.file_utils import validate_and_exit_on_error, create_parser_with_progress
+from ..core.file_utils import (
+    validate_and_exit_on_error,
+    create_parser_with_progress,
+    get_event_files_sorted,
+)
 from ..core.reporting import ContentReporter
 
 
@@ -92,17 +96,47 @@ def extract_directory_aggregated(
     logger.info(f"Starting aggregated extraction from directory {directory}")
 
     # Find all event files
-    event_files = list(directory.rglob("*.tfevents.*"))
+    event_files = get_event_files_sorted(directory)
     if not event_files:
-        logger.warning(f"No TensorBoard event files found in {directory}")
         return
 
     logger.info(f"Found {len(event_files)} event files to process")
 
-    # Create output directory
+    # Setup extraction environment
+    output_path = _setup_extraction_directory(output_dir)
+
+    # Process all files and track results
+    total_extracted = _process_all_event_files(
+        directory,
+        event_files,
+        output_path,
+        sort_scalars,
+        digits,
+        image_format,
+        image_quality,
+    )
+
+    # Display results
+    _display_extraction_summary(output_dir, total_extracted)
+
+
+def _setup_extraction_directory(output_dir: str) -> Path:
+    """Create and return the output directory path."""
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    return output_path
 
+
+def _process_all_event_files(
+    directory: Path,
+    event_files: list[Path],
+    output_path: Path,
+    sort_scalars: bool,
+    digits: int,
+    image_format: str,
+    image_quality: int,
+) -> dict[str, int]:
+    """Process all event files and return extraction statistics."""
     total_extracted = {
         "scalars": 0,
         "images": 0,
@@ -111,52 +145,83 @@ def extract_directory_aggregated(
         "text": 0,
     }
 
-    for file_path in sorted(event_files):
+    for file_path in event_files:
         try:
             logger.info(f"Processing {file_path.relative_to(directory)}")
 
-            # Create parser
-            parser = create_parser_with_progress(str(file_path), show_progress=True)
-
-            # Get directory context for naming
-            relative_path = file_path.relative_to(directory)
-            parent_dir = relative_path.parent
-
-            # Create context-specific output directory
-            if parent_dir.name and parent_dir.name != ".":
-                # Extract to subdirectory with contextual naming
-                context_output_dir = output_path / parent_dir.name
-                context_output_dir.mkdir(parents=True, exist_ok=True)
-                extract_output = str(context_output_dir)
-            else:
-                # Extract to main output directory
-                extract_output = output_dir
-
-            # Extract data
-            parser.extract_all_to_directory(
-                extract_output,
-                sort_scalars=sort_scalars,
-                digits=digits,
-                image_format=image_format,
-                image_quality=image_quality,
+            file_stats = _extract_single_file_with_context(
+                file_path,
+                directory,
+                output_path,
+                sort_scalars,
+                digits,
+                image_format,
+                image_quality,
             )
 
-            # Track what was extracted
-            content = parser.list_all_content()
-            for data_type, tags in content.items():
+            # Aggregate statistics
+            for data_type, count in file_stats.items():
                 if data_type in total_extracted:
-                    total_extracted[data_type] += len(tags)
+                    total_extracted[data_type] += count
 
         except Exception as e:
             logger.error(f"Error processing {file_path}: {e}")
 
-    # Display aggregated summary
+    return total_extracted
+
+
+def _extract_single_file_with_context(
+    file_path: Path,
+    directory: Path,
+    output_path: Path,
+    sort_scalars: bool,
+    digits: int,
+    image_format: str,
+    image_quality: int,
+) -> dict[str, int]:
+    """Extract data from a single file with directory context."""
+    # Create parser
+    parser = create_parser_with_progress(str(file_path), show_progress=True)
+
+    # Get directory context for naming
+    relative_path = file_path.relative_to(directory)
+    parent_dir = relative_path.parent
+
+    # Create context-specific output directory
+    extract_output = _get_context_output_directory(parent_dir, output_path)
+
+    # Extract data
+    parser.extract_all_to_directory(
+        extract_output,
+        sort_scalars=sort_scalars,
+        digits=digits,
+        image_format=image_format,
+        image_quality=image_quality,
+    )
+
+    # Count extracted items
+    content = parser.list_all_content()
+    return {data_type: len(tags) for data_type, tags in content.items()}
+
+
+def _get_context_output_directory(parent_dir: Path, output_path: Path) -> str:
+    """Get the appropriate output directory based on context."""
+    if parent_dir.name and parent_dir.name != ".":
+        # Extract to subdirectory with contextual naming
+        context_output_dir = output_path / parent_dir.name
+        context_output_dir.mkdir(parents=True, exist_ok=True)
+        return str(context_output_dir)
+    else:
+        # Extract to main output directory
+        return str(output_path)
+
+
+def _display_extraction_summary(
+    output_dir: str, total_extracted: dict[str, int]
+) -> None:
+    """Display the final extraction summary."""
     logger.success(f"Aggregated extraction completed to: {output_dir}")
     logger.info("Aggregated extraction summary:")
     for data_type, count in total_extracted.items():
         if count > 0:
             logger.info(f"  - {count} {data_type} tag(s)")
-
-    if sort_scalars:
-        logger.info("  - Scalar files sorted by iteration number")
-    logger.info("Data organized by context (subdirectories represent metric groups)")

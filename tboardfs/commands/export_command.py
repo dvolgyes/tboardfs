@@ -2,7 +2,11 @@
 
 from pathlib import Path
 from loguru import logger
-from ..core.file_utils import validate_and_exit_on_error, create_parser_with_progress
+from ..core.file_utils import (
+    validate_and_exit_on_error,
+    create_parser_with_progress,
+    get_event_files_sorted,
+)
 from ..core.virtual_paths import VirtualPathHandler
 
 
@@ -74,7 +78,7 @@ def export_from_directory(
     logger.info(f"Searching for '{virtual_path}' in directory {directory}")
 
     # Find all event files
-    event_files = list(directory.rglob("*.tfevents.*"))
+    event_files = get_event_files_sorted(directory)
     if not event_files:
         logger.error(f"No TensorBoard event files found in {directory}")
         raise FileNotFoundError(f"No event files in {directory}")
@@ -102,7 +106,7 @@ def export_from_directory(
             f"Searching through {len(event_files)} event files for '{virtual_path}'"
         )
 
-        for file_path in sorted(event_files):
+        for file_path in event_files:
             try:
                 parser = create_parser_with_progress(
                     str(file_path), show_progress=False

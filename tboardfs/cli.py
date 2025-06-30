@@ -5,7 +5,11 @@ import click
 from pathlib import Path
 from loguru import logger
 
-from .core.file_utils import setup_cli_context, handle_standard_error
+from .core.file_utils import (
+    setup_cli_context,
+    handle_standard_error,
+    validate_image_format_options,
+)
 from .commands.list_command import (
     list_single_file,
     list_directory,
@@ -151,11 +155,7 @@ def extract(
     """
     setup_cli_context(ctx)
 
-    if png and jpg:
-        logger.error("Cannot specify both --png and --jpg. Please choose one.")
-        sys.exit(1)
-
-    image_format = "png" if png else "jpg"
+    image_format = validate_image_format_options(png, jpg)
 
     try:
         sort_scalars = not no_sort
@@ -204,11 +204,7 @@ def export(
     logger.info(f"Exporting {virtual_path} from {tensorboard_path}")
     context = setup_cli_context(ctx)
 
-    if png and jpg:
-        logger.error("Cannot specify both --png and --jpg. Please choose one.")
-        sys.exit(1)
-
-    image_format = "png" if png else "jpg"
+    image_format = validate_image_format_options(png, jpg)
 
     try:
         show_progress = context.get("cli_mode", False)

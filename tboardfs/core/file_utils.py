@@ -61,3 +61,43 @@ def handle_standard_error(error: Exception, context: str) -> None:
     """Handle standard error logging and re-raise."""
     logger.exception(f"Error {context}: {error}")
     raise error
+
+
+def validate_image_format_options(png: bool, jpg: bool) -> str:
+    """Validate image format options and return the selected format.
+
+    Args:
+        png: Whether PNG format was requested
+        jpg: Whether JPG format was requested
+
+    Returns:
+        The selected image format as a string ("png" or "jpg")
+
+    Raises:
+        SystemExit: If both PNG and JPG are specified
+    """
+    if png and jpg:
+        logger.error("Cannot specify both --png and --jpg. Please choose one.")
+        sys.exit(1)
+
+    return "png" if png else "jpg"
+
+
+def get_event_files_sorted(directory: Path) -> list[Path]:
+    """Get all TensorBoard event files in a directory, sorted by path.
+
+    Args:
+        directory: The directory to search for event files
+
+    Returns:
+        A sorted list of paths to TensorBoard event files
+
+    Raises:
+        None, but logs a warning if no files are found
+    """
+    event_files = list(directory.rglob("*.tfevents.*"))
+    if not event_files:
+        logger.warning(f"No TensorBoard event files found in {directory}")
+        return []
+
+    return sorted(event_files)

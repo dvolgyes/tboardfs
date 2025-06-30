@@ -18,8 +18,10 @@ class ContentReporter:
         logger.info(f"Contents of {file_path}:")
         logger.info("=" * 60)
 
-    def display_content_by_type(self, content: dict[str, list[str]]) -> None:
-        """Display content organized by type with counts."""
+    def display_content_by_type(
+        self, content: dict[str, list[str]], show_step_counts: bool = True
+    ) -> None:
+        """Display content organized by type with optional step counts."""
         if content["scalars"]:
             logger.info("\nScalars:")
             for tag in content["scalars"]:
@@ -28,8 +30,11 @@ class ContentReporter:
         if content["images"]:
             logger.info("\nImages:")
             for tag in content["images"]:
-                image_data = self.parser.get_image_data(tag)
-                logger.info(f"  - {tag} ({len(image_data)} steps)")
+                if show_step_counts and self.parser:
+                    image_data = self.parser.get_image_data(tag)
+                    logger.info(f"  - {tag} ({len(image_data)} steps)")
+                else:
+                    logger.info(f"  - {tag}")
 
         if content["histograms"]:
             logger.info("\nHistograms:")
@@ -44,14 +49,20 @@ class ContentReporter:
         if content["audio"]:
             logger.info("\nAudio:")
             for tag in content["audio"]:
-                audio_data = self.parser.get_audio_data(tag)
-                logger.info(f"  - {tag} ({len(audio_data)} steps)")
+                if show_step_counts and self.parser:
+                    audio_data = self.parser.get_audio_data(tag)
+                    logger.info(f"  - {tag} ({len(audio_data)} steps)")
+                else:
+                    logger.info(f"  - {tag}")
 
         if content["text"]:
             logger.info("\nText:")
             for tag in content["text"]:
-                text_data = self.parser.get_text_data(tag)
-                logger.info(f"  - {tag} ({len(text_data)} steps)")
+                if show_step_counts and self.parser:
+                    text_data = self.parser.get_text_data(tag)
+                    logger.info(f"  - {tag} ({len(text_data)} steps)")
+                else:
+                    logger.info(f"  - {tag}")
 
     def display_virtual_paths(self, digits: int = 6) -> None:
         """Display virtual filesystem paths."""
@@ -105,6 +116,13 @@ class ContentReporter:
             logger.info("  - Scalar files sorted by iteration number")
         elif content["scalars"] and no_sort:
             logger.info("  - Scalar files not sorted (--no-sort specified)")
+
+    @staticmethod
+    def display_content_by_type_static(content: dict[str, list[str]]) -> None:
+        """Static method to display content organized by type without step counts."""
+        # Create a dummy ContentReporter for the static method
+        dummy_reporter = ContentReporter(None)
+        dummy_reporter.display_content_by_type(content, show_step_counts=False)
 
 
 def list_directory_files(directory: Path) -> None:

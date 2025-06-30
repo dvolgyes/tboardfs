@@ -15,6 +15,7 @@ tboardfs/commands/export_command.py
 tboardfs/commands/extract_command.py
 tboardfs/commands/list_command.py
 tboardfs/core/__init__.py
+tboardfs/core/data_types.py
 tboardfs/core/file_utils.py
 tboardfs/core/reporting.py
 tboardfs/core/virtual_paths.py
