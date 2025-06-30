@@ -143,7 +143,7 @@ class EfficientTensorBoardParser:
         iterator: Iterator[event_pb2.Event] = self._iterate_events()
 
         if self.show_progress:
-            iterator = tqdm(iterator, desc="Scanning for tags", unit=" events")  # type: ignore
+            iterator = tqdm(iterator, desc="Scanning for tags", unit=" events")  # type: ignore[assignment]
 
         for event in iterator:
             event_count += 1
@@ -721,9 +721,9 @@ class EfficientTensorBoardParser:
                     total=self._event_count,
                     desc="Extracting data",
                     unit=" events",
-                )  # type: ignore
+                )  # type: ignore[assignment]
             else:
-                iterator = tqdm(iterator, desc="Extracting data", unit=" events")  # type: ignore
+                iterator = tqdm(iterator, desc="Extracting data", unit=" events")  # type: ignore[assignment]
 
         for event in iterator:
             event_count += 1
@@ -783,7 +783,7 @@ class EfficientTensorBoardParser:
                 scalar_buffers.items(),
                 desc="Writing sorted scalars",
                 disable=not self.show_progress,
-            ):  # type: ignore  # type: ignore
+            ):
                 # Sort by step
                 data_points.sort(key=lambda x: x[0])
 
@@ -801,6 +801,8 @@ class EfficientTensorBoardParser:
         paths = []
         self._scan_tags()  # Ensure cache is populated
         all_tags = self._detailed_tags
+        if all_tags is None:
+            return []
 
         # Add directories
         paths.extend(["scalars/", "images/", "histograms/", "audio/", "text/"])

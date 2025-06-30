@@ -218,9 +218,9 @@ class TensorBoardParser:
                 paths.append(f"images/{safe_tag}/")
                 try:
                     image_data = self.get_image_data(tag)
-                    for data in image_data:
-                        ext = self.get_image_extension(data.encoded_image_string)
-                        padded_step = str(data.step).zfill(digits)
+                    for image_item in image_data:
+                        ext = self.get_image_extension(image_item.encoded_image_string)
+                        padded_step = str(image_item.step).zfill(digits)
                         paths.append(f"images/{safe_tag}/{padded_step}.{ext}")
                 except Exception:
                     pass
@@ -242,9 +242,9 @@ class TensorBoardParser:
                 paths.append(f"audio/{safe_tag}/")
                 try:
                     audio_data = self.get_audio_data(tag)
-                    for data in audio_data:
-                        ext = self.get_audio_extension(data.content_type)
-                        padded_step = str(data.step).zfill(digits)
+                    for audio_item in audio_data:
+                        ext = self.get_audio_extension(audio_item.content_type)
+                        padded_step = str(audio_item.step).zfill(digits)
                         paths.append(f"audio/{safe_tag}/{padded_step}.{ext}")
                 except Exception:
                     pass
@@ -258,8 +258,8 @@ class TensorBoardParser:
                 paths.append(f"text/{safe_tag}/")
                 try:
                     text_data = self.get_text_data(tag)
-                    for data in text_data:
-                        padded_step = str(data.step).zfill(digits)
+                    for text_item in text_data:
+                        padded_step = str(text_item.step).zfill(digits)
                         paths.append(f"text/{safe_tag}/{padded_step}.txt")
                 except Exception:
                     pass

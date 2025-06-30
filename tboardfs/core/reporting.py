@@ -10,7 +10,7 @@ from ..parser import TensorBoardParser
 class ContentReporter:
     """Handles content summary and display functionality."""
 
-    def __init__(self, parser: TensorBoardParser):
+    def __init__(self, parser: TensorBoardParser | None):
         self.parser = parser
 
     def display_file_header(self, file_path: Path) -> None:
@@ -66,6 +66,9 @@ class ContentReporter:
 
     def display_virtual_paths(self, digits: int = 6) -> None:
         """Display virtual filesystem paths."""
+        if self.parser is None:
+            logger.error("No parser available for virtual paths display")
+            return
         logger.info("\nVirtual filesystem paths:")
         paths = self.parser.get_virtual_paths(digits=digits)
         for path in paths:
@@ -73,8 +76,14 @@ class ContentReporter:
 
     def display_extraction_summary(self, output_dir: str) -> None:
         """Display summary of extracted content."""
+        if self.parser is None:
+            logger.error("No parser available for extraction summary")
+            return
         content = self.parser.list_all_content()
         logger.success(f"Extracted TensorBoard data to: {output_dir}")
+
+        # Help mypy understand parser is not None
+        assert self.parser is not None
 
         if content["scalars"]:
             logger.info(f"  - {len(content['scalars'])} scalar tag(s)")
@@ -111,6 +120,8 @@ class ContentReporter:
 
     def display_sorting_info(self, sort_scalars: bool, no_sort: bool) -> None:
         """Display scalar sorting information."""
+        if self.parser is None:
+            return
         content = self.parser.list_all_content()
         if content["scalars"] and sort_scalars:
             logger.info("  - Scalar files sorted by iteration number")
