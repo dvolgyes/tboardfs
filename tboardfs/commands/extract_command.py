@@ -6,7 +6,12 @@ from ..core.reporting import ContentReporter
 
 
 def extract_tensorboard_data(
-    tensorboard_path: str, output_dir: str, sort_scalars: bool = True, digits: int = 6
+    tensorboard_path: str,
+    output_dir: str,
+    sort_scalars: bool = True,
+    digits: int = 6,
+    image_format: str = "jpg",
+    image_quality: int = 90,
 ) -> None:
     """Extract all data from TensorBoard log to directory structure."""
     logger.info(f"Starting extraction from {tensorboard_path} to {output_dir}")
@@ -25,7 +30,11 @@ def extract_tensorboard_data(
     # Extract all data
     logger.info("Beginning data extraction")
     parser.extract_all_to_directory(
-        output_dir, sort_scalars=sort_scalars, digits=digits
+        output_dir,
+        sort_scalars=sort_scalars,
+        digits=digits,
+        image_format=image_format,
+        image_quality=image_quality,
     )
     logger.info("Data extraction completed")
 

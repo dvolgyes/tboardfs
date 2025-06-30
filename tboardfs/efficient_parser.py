@@ -12,6 +12,7 @@ from tensorboard.backend.event_processing.event_file_loader import EventFileLoad
 from tensorboard.util import tensor_util
 from tensorboard.compat.proto import event_pb2
 from tqdm import tqdm
+import sys
 from loguru import logger
 import magic
 
@@ -230,13 +231,25 @@ class EfficientTensorBoardParser:
                         elif value.HasField("audio"):
                             tags["audio"].add(tag)
                         elif value.HasField("tensor"):
-                            # Check if it's text (DT_STRING = 7)
-                            if value.tensor.dtype == 7:
-                                tags["text"].add(tag)
-                            # Check if it's an image (common tensor format for images)
-                            elif self._is_image_tensor(value.tensor):
-                                tags["images"].add(tag)
-                            else:
+                            # Attempt to make ndarray to check size for scalar
+                            try:
+                                arr = tensor_util.make_ndarray(value.tensor)
+                                if arr.size == 1:
+                                    tags["scalars"].add(tag)
+                                elif (
+                                    value.tensor.dtype == 7
+                                ):  # Check if it's text (DT_STRING = 7)
+                                    tags["text"].add(tag)
+                                elif self._is_image_tensor(
+                                    value.tensor
+                                ):  # Check if it's an image
+                                    tags["images"].add(tag)
+                                else:
+                                    tags["tensors"].add(tag)
+                            except Exception as e:
+                                logger.debug(
+                                    f"Could not make ndarray for tensor tag {tag}: {e}. Treating as generic tensor."
+                                )
                                 tags["tensors"].add(tag)
 
         # Store the specific categorization for internal use (correct categorization)
@@ -596,7 +609,13 @@ class EfficientTensorBoardParser:
             )
 
     def _save_image(
-        self, event: event_pb2.Event, value, output_path: Path, digits: int
+        self,
+        event: event_pb2.Event,
+        value,
+        output_path: Path,
+        digits: int,
+        image_format: str,
+        image_quality: int,
     ):
         """Save image data to file, handling batches of pre-encoded images."""
         tag = value.tag
@@ -629,7 +648,8 @@ class EfficientTensorBoardParser:
         if image_byte_list:
             padded_step = str(event.step).zfill(digits)
             for i, image_bytes in enumerate(image_byte_list):
-                ext = self.get_image_extension(image_bytes)
+                # Determine the output file extension based on the chosen format
+                ext = image_format
                 # Append index for batches to avoid overwriting
                 filename = (
                     f"{padded_step}_{i}.{ext}"
@@ -637,8 +657,26 @@ class EfficientTensorBoardParser:
                     else f"{padded_step}.{ext}"
                 )
                 image_file = tag_dir / filename
-                with image_file.open("wb") as f:
-                    f.write(image_bytes)
+
+                try:
+                    from PIL import Image
+                    import io
+
+                    image = Image.open(io.BytesIO(image_bytes))
+                    if image.mode == "RGBA":
+                        image = image.convert("RGB")
+                    if image_format == "jpg":
+                        image.save(image_file, format="JPEG", quality=image_quality)
+                    else:  # png
+                        image.save(image_file, format="PNG")
+                except ImportError:
+                    logger.error(
+                        "Pillow (PIL) is not installed. Cannot convert image format."
+                    )
+                    logger.info("Please install it with: pip install Pillow")
+                    sys.exit(1)
+                except Exception as e:
+                    logger.warning(f"Failed to save image {image_file}: {e}")
         else:
             logger.warning(
                 f"Could not extract image for tag '{tag}' at step {event.step}"
@@ -698,7 +736,12 @@ class EfficientTensorBoardParser:
                 f.write(text)
 
     def extract_all_to_directory(
-        self, output_dir: str, sort_scalars: bool = True, digits: int = 6
+        self,
+        output_dir: str,
+        sort_scalars: bool = True,
+        digits: int = 6,
+        image_format: str = "jpg",
+        image_quality: int = 90,
     ):
         """Extract all data to a directory structure using single-pass processing."""
         output_path = Path(output_dir)
@@ -755,7 +798,14 @@ class EfficientTensorBoardParser:
                                 and self._is_image_tensor(value.tensor)
                             )
                         ):
-                            self._save_image(event, value, output_path, digits)
+                            self._save_image(
+                                event,
+                                value,
+                                output_path,
+                                digits,
+                                image_format,
+                                image_quality,
+                            )
                         elif plugin_name == "histograms" or value.HasField("histo"):
                             self._save_histogram(event, value, output_path)
                         elif plugin_name == "audio" or value.HasField("audio"):

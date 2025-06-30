@@ -122,13 +122,17 @@ class VirtualPathHandler:
         return VirtualPathInfo(data_type="text", tag=tag, step=step, extension="txt")
 
     def export_data(
-        self, path_info: VirtualPathInfo, output_file: str | None = None
+        self,
+        path_info: VirtualPathInfo,
+        output_file: str | None = None,
+        image_format: str = "jpg",
+        image_quality: int = 90,
     ) -> None:
         """Export data based on parsed virtual path information."""
         if path_info.data_type == "scalars":
             self._export_scalar_data(path_info, output_file)
         elif path_info.data_type == "images":
-            self._export_image_data(path_info, output_file)
+            self._export_image_data(path_info, output_file, image_format, image_quality)
         elif path_info.data_type == "histograms":
             self._export_histogram_data(path_info, output_file)
         elif path_info.data_type == "audio":
@@ -151,7 +155,11 @@ class VirtualPathHandler:
         self._handle_output(data, output_file, "scalar data")
 
     def _export_image_data(
-        self, path_info: VirtualPathInfo, output_file: str | None
+        self,
+        path_info: VirtualPathInfo,
+        output_file: str | None,
+        image_format: str,
+        image_quality: int,
     ) -> None:
         """Export image data."""
         if path_info.step is None:
@@ -166,8 +174,35 @@ class VirtualPathHandler:
             sys.exit(1)
 
         if output_file:
-            Path(output_file).write_bytes(image_bytes)
-            logger.success(f"Exported image to {output_file}")
+            # Determine the output file extension based on the chosen format
+            output_path = Path(output_file)
+            if output_path.suffix:
+                # If a suffix exists, replace it with the chosen format
+                final_output_file = output_path.with_suffix(f".{image_format}")
+            else:
+                # If no suffix, append the chosen format
+                final_output_file = output_path.with_suffix(f".{image_format}")
+
+            # Convert bytes to image and save with specified format and quality
+            try:
+                from PIL import Image
+                import io
+
+                image = Image.open(io.BytesIO(image_bytes))
+                if image_format == "jpg":
+                    image.save(final_output_file, format="JPEG", quality=image_quality)
+                else:
+                    image.save(final_output_file, format="PNG")
+                logger.success(f"Exported image to {final_output_file}")
+            except ImportError:
+                logger.error(
+                    "Pillow (PIL) is not installed. Cannot convert image format."
+                )
+                logger.info("Please install it with: pip install Pillow")
+                sys.exit(1)
+            except Exception as e:
+                logger.error(f"Failed to save image: {e}")
+                sys.exit(1)
         else:
             logger.info(
                 f"Image data available ({len(image_bytes)} bytes). Use -o to save to file."

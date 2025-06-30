@@ -9,6 +9,8 @@ def export_virtual_path(
     virtual_path: str,
     output_file: str | None = None,
     show_progress: bool = False,
+    image_format: str = "jpg",
+    image_quality: int = 90,
 ) -> None:
     """Export a specific item from TensorBoard log using virtual path."""
     # Validate input file
@@ -20,4 +22,4 @@ def export_virtual_path(
     # Create virtual path handler and process export
     handler = VirtualPathHandler(parser)
     path_info = handler.parse_virtual_path(virtual_path)
-    handler.export_data(path_info, output_file)
+    handler.export_data(path_info, output_file, image_format, image_quality)

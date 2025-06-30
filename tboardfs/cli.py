@@ -109,14 +109,47 @@ def list(ctx, tensorboard_path: str, recursive: bool, digits: int):
     default=6,
     help="Number of digits for padding iteration numbers (default: 6)",
 )
+@click.option(
+    "--png",
+    is_flag=True,
+    help="Export images in PNG format (default: JPG)",
+)
+@click.option(
+    "--jpg",
+    is_flag=True,
+    help="Export images in JPG format (default: JPG)",
+)
+@click.option(
+    "--quality",
+    type=click.IntRange(0, 100),
+    default=90,
+    help="Quality for JPG images (0-100, default: 90)",
+)
 @click.pass_context
-def extract(ctx, tensorboard_path: str, output: str, no_sort: bool, digits: int):
+def extract(
+    ctx,
+    tensorboard_path: str,
+    output: str,
+    no_sort: bool,
+    digits: int,
+    png: bool,
+    jpg: bool,
+    quality: int,
+):
     """Extract all data from TensorBoard log to directory structure."""
     setup_cli_context(ctx)
 
+    if png and jpg:
+        logger.error("Cannot specify both --png and --jpg. Please choose one.")
+        sys.exit(1)
+
+    image_format = "png" if png else "jpg"
+
     try:
         sort_scalars = not no_sort
-        extract_tensorboard_data(tensorboard_path, output, sort_scalars, digits)
+        extract_tensorboard_data(
+            tensorboard_path, output, sort_scalars, digits, image_format, quality
+        )
     except Exception as e:
         handle_standard_error(e, "extracting data")
 
@@ -125,15 +158,47 @@ def extract(ctx, tensorboard_path: str, output: str, no_sort: bool, digits: int)
 @click.argument("tensorboard_path", type=click.Path(exists=True))
 @click.argument("virtual_path", type=str)
 @click.option("-o", "--output", type=click.Path(), help="Output file path")
+@click.option(
+    "--png",
+    is_flag=True,
+    help="Export images in PNG format (default: JPG)",
+)
+@click.option(
+    "--jpg",
+    is_flag=True,
+    help="Export images in JPG format (default: JPG)",
+)
+@click.option(
+    "--quality",
+    type=click.IntRange(0, 100),
+    default=90,
+    help="Quality for JPG images (0-100, default: 90)",
+)
 @click.pass_context
-def export(ctx, tensorboard_path: str, virtual_path: str, output: str | None):
+def export(
+    ctx,
+    tensorboard_path: str,
+    virtual_path: str,
+    output: str | None,
+    png: bool,
+    jpg: bool,
+    quality: int,
+):
     """Export a specific item from TensorBoard log."""
     logger.info(f"Exporting {virtual_path} from {tensorboard_path}")
     context = setup_cli_context(ctx)
 
+    if png and jpg:
+        logger.error("Cannot specify both --png and --jpg. Please choose one.")
+        sys.exit(1)
+
+    image_format = "png" if png else "jpg"
+
     try:
         show_progress = context.get("cli_mode", False)
-        export_virtual_path(tensorboard_path, virtual_path, output, show_progress)
+        export_virtual_path(
+            tensorboard_path, virtual_path, output, show_progress, image_format, quality
+        )
     except Exception as e:
         handle_standard_error(e, "exporting data")
 
