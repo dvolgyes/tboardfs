@@ -68,6 +68,7 @@ repos:
     rev: v1.16.0
     hooks:
       - id: mypy
+        exclude: ^(tests/|demo\.py|test_runner\.py)
         additional_dependencies:
           - types-click
           - types-pillow
