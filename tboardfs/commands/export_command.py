@@ -17,6 +17,8 @@ def export_virtual_path(
     show_progress: bool = False,
     image_format: str = "jpg",
     image_quality: int = 90,
+    audio_format: str = "mp3",
+    histogram_images: bool = False,
 ) -> None:
     """Export a specific item from TensorBoard log(s) using virtual path."""
     path = Path(tensorboard_path)
@@ -30,11 +32,13 @@ def export_virtual_path(
             show_progress,
             image_format,
             image_quality,
+            audio_format,
+            histogram_images,
         )
     elif path.is_dir():
         # Directory export (search for matching virtual path)
         export_from_directory(
-            path, virtual_path, output_file, show_progress, image_format, image_quality
+            path, virtual_path, output_file, show_progress, image_format, image_quality, audio_format, histogram_images
         )
     else:
         logger.error(
@@ -50,6 +54,8 @@ def export_from_single_file(
     show_progress: bool = False,
     image_format: str = "jpg",
     image_quality: int = 90,
+    audio_format: str = "mp3",
+    histogram_images: bool = False,
 ) -> None:
     """Export from a single TensorBoard event file."""
     # Validate input file
@@ -63,7 +69,7 @@ def export_from_single_file(
     # Create virtual path handler and process export
     handler = VirtualPathHandler(parser)
     path_info = handler.parse_virtual_path(virtual_path)
-    handler.export_data(path_info, output_file, image_format, image_quality)
+    handler.export_data(path_info, output_file, image_format, image_quality, audio_format, histogram_images)
 
 
 def export_from_directory(
@@ -73,6 +79,8 @@ def export_from_directory(
     show_progress: bool = False,
     image_format: str = "jpg",
     image_quality: int = 90,
+    audio_format: str = "mp3",
+    histogram_images: bool = False,
 ) -> None:
     """Export from TensorBoard directory by finding the correct event file."""
     logger.info(f"Searching for '{virtual_path}' in directory {directory}")
@@ -143,4 +151,6 @@ def export_from_directory(
         show_progress,
         image_format,
         image_quality,
+        audio_format,
+        histogram_images,
     )

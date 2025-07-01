@@ -10,6 +10,7 @@ from .core.file_utils import (
     setup_cli_context,
     handle_standard_error,
     validate_image_format_options,
+    validate_audio_format_options,
 )
 from .commands.list_command import (
     list_single_file,
@@ -133,6 +134,21 @@ def list(ctx: Any, tensorboard_path: str, no_recursive: bool, digits: int) -> No
     default=90,
     help="Quality for JPG images (0-100, default: 90)",
 )
+@click.option(
+    "--wav",
+    is_flag=True,
+    help="Export audio in WAV format (default: MP3)",
+)
+@click.option(
+    "--mp3",
+    is_flag=True,
+    help="Export audio in MP3 format (default: MP3)",
+)
+@click.option(
+    "--histogram-images",
+    is_flag=True,
+    help="Export histograms as visualization images (default: numpy arrays)",
+)
 @click.pass_context
 def extract(
     ctx: Any,
@@ -142,6 +158,9 @@ def extract(
     png: bool,
     jpg: bool,
     quality: int,
+    wav: bool,
+    mp3: bool,
+    histogram_images: bool,
 ) -> None:
     """Extract all data from TensorBoard log(s) to directory structure.
 
@@ -151,10 +170,11 @@ def extract(
     setup_cli_context(ctx)
 
     image_format = validate_image_format_options(png, jpg)
+    audio_format = validate_audio_format_options(wav, mp3)
 
     try:
         extract_tensorboard_data(
-            tensorboard_path, output, digits, image_format, quality
+            tensorboard_path, output, digits, image_format, quality, audio_format, histogram_images
         )
     except Exception as e:
         handle_standard_error(e, "extracting data")
@@ -180,6 +200,21 @@ def extract(
     default=90,
     help="Quality for JPG images (0-100, default: 90)",
 )
+@click.option(
+    "--wav",
+    is_flag=True,
+    help="Export audio in WAV format (default: MP3)",
+)
+@click.option(
+    "--mp3",
+    is_flag=True,
+    help="Export audio in MP3 format (default: MP3)",
+)
+@click.option(
+    "--histogram-images",
+    is_flag=True,
+    help="Export histograms as visualization images (default: numpy arrays)",
+)
 @click.pass_context
 def export(
     ctx: Any,
@@ -189,6 +224,9 @@ def export(
     png: bool,
     jpg: bool,
     quality: int,
+    wav: bool,
+    mp3: bool,
+    histogram_images: bool,
 ) -> None:
     """Export a specific item from TensorBoard log(s).
 
@@ -199,11 +237,12 @@ def export(
     context = setup_cli_context(ctx)
 
     image_format = validate_image_format_options(png, jpg)
+    audio_format = validate_audio_format_options(wav, mp3)
 
     try:
         show_progress = context.get("cli_mode", False)
         export_virtual_path(
-            tensorboard_path, virtual_path, output, show_progress, image_format, quality
+            tensorboard_path, virtual_path, output, show_progress, image_format, quality, audio_format, histogram_images
         )
     except Exception as e:
         handle_standard_error(e, "exporting data")

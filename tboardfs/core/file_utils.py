@@ -83,6 +83,26 @@ def validate_image_format_options(png: bool, jpg: bool) -> str:
     return "png" if png else "jpg"
 
 
+def validate_audio_format_options(wav: bool, mp3: bool) -> str:
+    """Validate audio format options and return the selected format.
+
+    Args:
+        wav: Whether WAV format was requested
+        mp3: Whether MP3 format was requested
+
+    Returns:
+        The selected audio format as a string ("wav" or "mp3")
+
+    Raises:
+        SystemExit: If both WAV and MP3 are specified
+    """
+    if wav and mp3:
+        logger.error("Cannot specify both --wav and --mp3. Please choose one.")
+        sys.exit(1)
+
+    return "wav" if wav else "mp3"
+
+
 def get_event_files_sorted(directory: Path) -> list[Path]:
     """Get all TensorBoard event files in a directory, sorted by path.
 

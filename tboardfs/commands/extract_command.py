@@ -16,6 +16,8 @@ def extract_tensorboard_data(
     digits: int = 6,
     image_format: str = "jpg",
     image_quality: int = 90,
+    audio_format: str = "mp3",
+    histogram_images: bool = False,
 ) -> None:
     """Extract all data from TensorBoard log(s) to directory structure."""
     logger.info(f"Starting extraction from {tensorboard_path} to {output_dir}")
@@ -31,11 +33,13 @@ def extract_tensorboard_data(
             digits,
             image_format,
             image_quality,
+            audio_format,
+            histogram_images,
         )
     elif path.is_dir():
         # Directory extraction (aggregated)
         extract_directory_aggregated(
-            path, output_dir, digits, image_format, image_quality
+            path, output_dir, digits, image_format, image_quality, audio_format, histogram_images
         )
     else:
         logger.error(
@@ -50,6 +54,8 @@ def extract_single_file(
     digits: int = 6,
     image_format: str = "jpg",
     image_quality: int = 90,
+    audio_format: str = "mp3",
+    histogram_images: bool = False,
 ) -> None:
     """Extract data from a single TensorBoard event file."""
     # Validate input file
@@ -69,6 +75,8 @@ def extract_single_file(
         digits=digits,
         image_format=image_format,
         image_quality=image_quality,
+        audio_format=audio_format,
+        histogram_images=histogram_images,
     )
     logger.info("Data extraction completed")
 
@@ -86,6 +94,8 @@ def extract_directory_aggregated(
     digits: int = 6,
     image_format: str = "jpg",
     image_quality: int = 90,
+    audio_format: str = "mp3",
+    histogram_images: bool = False,
 ) -> None:
     """Extract data from all TensorBoard event files in a directory with aggregated naming."""
     logger.info(f"Starting aggregated extraction from directory {directory}")
@@ -108,6 +118,8 @@ def extract_directory_aggregated(
         digits,
         image_format,
         image_quality,
+        audio_format,
+        histogram_images,
     )
 
     # Display results
@@ -128,6 +140,8 @@ def _process_all_event_files(
     digits: int,
     image_format: str,
     image_quality: int,
+    audio_format: str,
+    histogram_images: bool,
 ) -> dict[str, int]:
     """Process all event files and return extraction statistics."""
     total_extracted = {
@@ -149,6 +163,8 @@ def _process_all_event_files(
                 digits,
                 image_format,
                 image_quality,
+                audio_format,
+                histogram_images,
             )
 
             # Aggregate statistics
@@ -169,6 +185,8 @@ def _extract_single_file_with_context(
     digits: int,
     image_format: str,
     image_quality: int,
+    audio_format: str,
+    histogram_images: bool,
 ) -> dict[str, int]:
     """Extract data from a single file with directory context."""
     # Create parser
@@ -187,6 +205,8 @@ def _extract_single_file_with_context(
         digits=digits,
         image_format=image_format,
         image_quality=image_quality,
+        audio_format=audio_format,
+        histogram_images=histogram_images,
     )
 
     # Count extracted items

@@ -127,6 +127,8 @@ class VirtualPathHandler:
         output_file: str | None = None,
         image_format: str = "jpg",
         image_quality: int = 90,
+        audio_format: str = "mp3",
+        histogram_images: bool = False,
     ) -> None:
         """Export data based on parsed virtual path information."""
         if path_info.data_type == "scalars":
@@ -134,9 +136,9 @@ class VirtualPathHandler:
         elif path_info.data_type == "images":
             self._export_image_data(path_info, output_file, image_format, image_quality)
         elif path_info.data_type == "histograms":
-            self._export_histogram_data(path_info, output_file)
+            self._export_histogram_data(path_info, output_file, histogram_images)
         elif path_info.data_type == "audio":
-            self._export_audio_data(path_info, output_file)
+            self._export_audio_data(path_info, output_file, audio_format)
         elif path_info.data_type == "text":
             self._export_text_data(path_info, output_file)
 
@@ -209,7 +211,7 @@ class VirtualPathHandler:
             )
 
     def _export_histogram_data(
-        self, path_info: VirtualPathInfo, output_file: str | None
+        self, path_info: VirtualPathInfo, output_file: str | None, histogram_images: bool = False
     ) -> None:
         """Export histogram data to text format."""
         histograms = self.parser.list_histograms()
@@ -223,7 +225,7 @@ class VirtualPathHandler:
         self._handle_output(data, output_file, "histogram data")
 
     def _export_audio_data(
-        self, path_info: VirtualPathInfo, output_file: str | None
+        self, path_info: VirtualPathInfo, output_file: str | None, audio_format: str = "mp3"
     ) -> None:
         """Export audio data."""
         if path_info.step is None:

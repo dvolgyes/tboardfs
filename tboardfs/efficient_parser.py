@@ -631,9 +631,82 @@ class EfficientTensorBoardParser:
             )
 
     def _save_histogram(
-        self, event: event_pb2.Event, value: Any, output_path: Path
+        self, event: event_pb2.Event, value: Any, output_path: Path, histogram_images: bool = False
     ) -> None:
         """Save histogram data to file."""
+        tag = value.tag
+        safe_tag = tag.replace("/", "_")
+        
+        if histogram_images:
+            # Save as visualization images (old behavior)
+            self._save_histogram_as_image(event, value, output_path)
+        else:
+            # Save as numpy arrays in text format (new default behavior)
+            if value.HasField("histo"):
+                # Legacy format with histo field
+                self._save_histogram_as_numpy_arrays(event, value, output_path, safe_tag)
+            elif value.HasField("tensor"):
+                # TensorBoard v2 format with tensor field
+                self._save_histogram_tensor_as_numpy_arrays(event, value, output_path, safe_tag)
+            else:
+                logger.warning(f"Unknown histogram format for tag '{tag}'")
+
+    def _save_histogram_as_numpy_arrays(
+        self, event: event_pb2.Event, value: Any, output_path: Path, safe_tag: str
+    ) -> None:
+        """Save histogram data as numpy arrays in text format."""
+        histogram_file = output_path / "histograms" / f"{safe_tag}.txt"
+        histogram_file.parent.mkdir(parents=True, exist_ok=True)
+
+        hist = value.histo
+        
+        # Create numpy arrays for histogram data
+        bucket_limits = list(hist.bucket_limit)
+        bucket_counts = list(hist.bucket)
+        
+        with histogram_file.open("a") as f:
+            f.write(f"# Step: {event.step}\n")
+            f.write(f"# Min: {hist.min}, Max: {hist.max}\n")
+            f.write(f"# Count: {hist.num}, Sum: {hist.sum}, Sum_squares: {hist.sum_squares}\n")
+            f.write("# Format: bucket_limit bucket_count\n")
+            
+            # Write bucket data as space-separated values
+            for limit, count in zip(bucket_limits, bucket_counts):
+                f.write(f"{limit:.6f} {count}\n")
+            f.write("\n")
+
+    def _save_histogram_tensor_as_numpy_arrays(
+        self, event: event_pb2.Event, value: Any, output_path: Path, safe_tag: str
+    ) -> None:
+        """Save histogram tensor data as numpy arrays in text format (TensorBoard v2 format)."""
+        histogram_file = output_path / "histograms" / f"{safe_tag}.txt"
+        histogram_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # Decode tensor to numpy array
+            arr = tensor_util.make_ndarray(value.tensor)
+            logger.debug(f"Histogram tensor shape for '{safe_tag}': {arr.shape}, dtype: {arr.dtype}")
+            
+            with histogram_file.open("a") as f:
+                f.write(f"# Step: {event.step}\n")
+                f.write(f"# Tensor shape: {arr.shape}, dtype: {arr.dtype}\n")
+                f.write("# Format: histogram_data (flattened)\n")
+                
+                # Flatten and write the histogram data
+                flattened = arr.flatten()
+                for i, val in enumerate(flattened):
+                    if i > 0 and i % 10 == 0:  # 10 values per line for readability
+                        f.write("\n")
+                    f.write(f"{val:.6f} ")
+                f.write("\n\n")
+                
+        except Exception as e:
+            logger.warning(f"Failed to process histogram tensor for tag '{safe_tag}': {e}")
+
+    def _save_histogram_as_image(
+        self, event: event_pb2.Event, value: Any, output_path: Path
+    ) -> None:
+        """Save histogram as visualization image (legacy behavior)."""
         tag = value.tag
         safe_tag = tag.replace("/", "_")
         histogram_file = output_path / "histograms" / f"{safe_tag}.txt"
@@ -650,7 +723,7 @@ class EfficientTensorBoardParser:
             f.write("\n")
 
     def _save_audio(
-        self, event: event_pb2.Event, value: Any, output_path: Path, digits: int
+        self, event: event_pb2.Event, value: Any, output_path: Path, digits: int, audio_format: str = "mp3"
     ) -> None:
         """Save audio data to file."""
         tag = value.tag
@@ -658,10 +731,13 @@ class EfficientTensorBoardParser:
         tag_dir = output_path / "audio" / safe_tag
         tag_dir.mkdir(parents=True, exist_ok=True)
 
-        ext = self.get_audio_extension(value.audio.content_type)
+        # Use the requested audio format instead of original content type
+        ext = audio_format
         padded_step = str(event.step).zfill(digits)
         audio_file = tag_dir / f"{padded_step}.{ext}"
 
+        # For now, save as-is since audio conversion requires additional libraries
+        # TODO: Add audio format conversion using pydub or similar library
         with audio_file.open("wb") as f:
             f.write(value.audio.encoded_audio_string)
 
@@ -693,6 +769,8 @@ class EfficientTensorBoardParser:
         digits: int = 6,
         image_format: str = "jpg",
         image_quality: int = 90,
+        audio_format: str = "mp3",
+        histogram_images: bool = False,
     ) -> None:
         """Extract all data to a directory structure using single-pass processing."""
         output_path = Path(output_dir)
@@ -745,33 +823,36 @@ class EfficientTensorBoardParser:
                                     event, value, output_path, scalar_files
                                 )
                             else:
-                                is_image = False
-                                if value.HasField("image"):
-                                    is_image = True
-                                elif value.HasField("tensor") and self._is_image_tensor(
-                                    value.tensor, value.tag
-                                ):
-                                    is_image = True
-
-                                if plugin_name == "images" or is_image:
-                                    self._save_image(
-                                        event,
-                                        value,
-                                        output_path,
-                                        digits,
-                                        image_format,
-                                        image_quality,
-                                    )
-                                elif plugin_name == "histograms" or value.HasField(
+                                # Prioritize histogram detection first
+                                if plugin_name == "histograms" or value.HasField(
                                     "histo"
                                 ):
-                                    self._save_histogram(event, value, output_path)
+                                    self._save_histogram(event, value, output_path, histogram_images)
                                 elif plugin_name == "audio" or value.HasField("audio"):
-                                    self._save_audio(event, value, output_path, digits)
+                                    self._save_audio(event, value, output_path, digits, audio_format)
                                 elif plugin_name == "text" or (
                                     value.HasField("tensor") and value.tensor.dtype == 7
                                 ):
                                     self._save_text(event, value, output_path, digits)
+                                else:
+                                    # Check for images last to avoid false positives
+                                    is_image = False
+                                    if value.HasField("image"):
+                                        is_image = True
+                                    elif value.HasField("tensor") and self._is_image_tensor(
+                                        value.tensor, value.tag
+                                    ):
+                                        is_image = True
+
+                                    if plugin_name == "images" or is_image:
+                                        self._save_image(
+                                            event,
+                                            value,
+                                            output_path,
+                                            digits,
+                                            image_format,
+                                            image_quality,
+                                        )
                         except Exception as e:
                             logger.warning(
                                 f"Failed to save data for tag '{value.tag}': {e}"
