@@ -13,15 +13,13 @@ class TestTensorBoardParser:
         assert parser.ea is not None
 
     def test_list_tensors(self, test_event_file):
-        """Test listing tensor tags (v2 format stores everything as tensors)."""
+        """Test listing tensor tags (v2 format has proper categorization)."""
         parser = TensorBoardParser(test_event_file)
         tensors = parser.list_tensors()
 
         assert isinstance(tensors, list)
-        assert len(tensors) > 0
-        # v2 stores scalars as tensors
-        assert "loss" in tensors
-        assert "accuracy" in tensors
+        # v2 format properly categorizes data, tensors list may be empty
+        # since scalars are in scalars, not tensors
 
     def test_list_text(self, test_event_file):
         """Test listing text tags."""
@@ -54,9 +52,10 @@ class TestTensorBoardParser:
         assert isinstance(content, dict)
         assert "tensors" in content
         assert "text" in content
-        # v2 format: everything is in tensors
-        assert len(content["tensors"]) > 0
-        assert len(content["scalars"]) == 0  # v2 doesn't use scalar format
+        assert "scalars" in content
+        # v2 format: properly categorizes data
+        assert len(content["scalars"]) > 0  # v2 properly categorizes scalars
+        assert len(content["text"]) > 0
 
     def test_get_virtual_paths(self, test_event_file):
         """Test getting virtual filesystem paths."""

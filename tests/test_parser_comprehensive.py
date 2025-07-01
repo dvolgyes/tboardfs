@@ -176,7 +176,7 @@ class TestTensorBoardParserErrorHandling:
         """Test exception handling in text data processing."""
         # Mock the event accumulator to simulate errors
         with patch(
-            "tboardfs.parser.event_accumulator.EventAccumulator"
+            "tensorboard.backend.event_processing.event_accumulator.EventAccumulator"
         ) as mock_ea_class:
             mock_ea = MagicMock()
             mock_ea_class.return_value = mock_ea

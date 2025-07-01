@@ -19,7 +19,10 @@ class TestPreGeneratedData:
         # Check that we can parse without tensorflow
         content = parser.list_all_content()
         assert "tensors" in content
-        assert len(content["tensors"]) > 0
+        assert "scalars" in content
+        # v2 format properly categorizes data
+        total_content = sum(len(v) for v in content.values())
+        assert total_content > 0
 
         # Check text detection works with hardcoded dtype
         text_tags = parser.list_text()
@@ -51,4 +54,6 @@ class TestPreGeneratedData:
 
             parser = TensorBoardParser(event_file)
             content = parser.list_all_content()
-            assert len(content["tensors"]) > 0
+            # v2 format properly categorizes data
+            total_content = sum(len(v) for v in content.values())
+            assert total_content > 0
