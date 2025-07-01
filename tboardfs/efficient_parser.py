@@ -35,7 +35,7 @@ try:
     HPARAMS_AVAILABLE = True
 except ImportError:
     HPARAMS_AVAILABLE = False
-    hparams_pb2 = None  # type: ignore
+    hparams_pb2 = None
     protobuf_Value = Any  # type: ignore
     logger.warning(
         "TensorBoard hparams plugin not available. Hyperparameter parsing disabled."
@@ -474,16 +474,47 @@ class EfficientTensorBoardParser:
         for event in self._iterate_events():
             if event.HasField("summary"):
                 for value in event.summary.value:
-                    if value.tag == tag and value.HasField("audio"):
-                        audio = value.audio
-                        yield AudioData(
-                            step=event.step,
-                            encoded_audio_string=audio.encoded_audio_string,
-                            content_type=audio.content_type,
-                            sample_rate=audio.sample_rate,
-                            length_frames=audio.length_frames,
-                            wall_time=event.wall_time,
-                        )
+                    if value.tag == tag:
+                        # Check for direct audio field first
+                        if value.HasField("audio"):
+                            audio = value.audio
+                            yield AudioData(
+                                step=event.step,
+                                encoded_audio_string=audio.encoded_audio_string,
+                                content_type=audio.content_type,
+                                sample_rate=audio.sample_rate,
+                                length_frames=audio.length_frames,
+                                wall_time=event.wall_time,
+                            )
+                        # Check for audio data stored as tensor with plugin metadata
+                        elif (
+                            value.HasField("metadata")
+                            and value.metadata.plugin_data.plugin_name == "audio"
+                        ):
+                            # Audio data may be stored in tensor format
+                            if value.HasField("tensor"):
+                                try:
+                                    # Try to extract audio data from tensor
+                                    arr = tensor_util.make_ndarray(value.tensor)
+                                    if arr.size > 0:
+                                        # For audio stored as tensor, assume it's raw bytes
+                                        audio_bytes = (
+                                            arr.tobytes()
+                                            if arr.dtype == np.uint8
+                                            else arr.astype(np.uint8).tobytes()
+                                        )
+                                        yield AudioData(
+                                            step=event.step,
+                                            encoded_audio_string=audio_bytes,
+                                            content_type="audio/wav",  # Default assumption
+                                            sample_rate=22050.0,  # Default assumption
+                                            length_frames=len(audio_bytes),
+                                            wall_time=event.wall_time,
+                                        )
+                                except Exception as e:
+                                    logger.debug(
+                                        f"Failed to extract audio from tensor for tag {tag}: {e}"
+                                    )
 
     def iterate_text_data(self, tag: str) -> Iterator[TextData]:
         """Iterate over text data for a given tag."""
@@ -966,9 +997,11 @@ class EfficientTensorBoardParser:
         # Decode text from tensor
         text_value = tensor_util.make_ndarray(value.tensor)
         if text_value.size > 0:
-            text = text_value.item() if text_value.ndim == 0 else str(text_value[0])
+            text = text_value.item() if text_value.ndim == 0 else text_value[0]
             if isinstance(text, bytes):
                 text = text.decode("utf-8", errors="replace")
+            else:
+                text = str(text)
 
             padded_step = str(event.step).zfill(digits)
             text_file = tag_dir / f"{padded_step}.txt"
@@ -1227,13 +1260,6 @@ class EfficientTensorBoardParser:
                                             digits,
                                             audio_format,
                                         )
-                                elif plugin_name == "text" or (
-                                    value.HasField("tensor") and value.tensor.dtype == 7
-                                ):
-                                    if "text" in enabled_types:
-                                        self._save_text(
-                                            event, value, output_path, digits
-                                        )
                                 elif plugin_name == "mesh" or (
                                     value.HasField("tensor")
                                     and (
@@ -1257,7 +1283,7 @@ class EfficientTensorBoardParser:
                                             event, value, hyperparameters_data
                                         )
                                 else:
-                                    # Check for images last to avoid false positives
+                                    # Check for images before text to avoid misclassification
                                     is_image = False
                                     if value.HasField("image"):
                                         is_image = True
@@ -1277,6 +1303,14 @@ class EfficientTensorBoardParser:
                                                 digits,
                                                 image_format,
                                                 image_quality,
+                                            )
+                                    elif plugin_name == "text" or (
+                                        value.HasField("tensor")
+                                        and value.tensor.dtype == 7
+                                    ):
+                                        if "text" in enabled_types:
+                                            self._save_text(
+                                                event, value, output_path, digits
                                             )
                         except Exception as e:
                             logger.warning(
