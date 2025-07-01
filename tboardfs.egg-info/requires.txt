@@ -6,6 +6,7 @@ Pillow>=8.0.0
 loguru>=0.7.0
 tqdm>=4.65.0
 python-magic>=0.4.27
+pyyaml>=6.0.2
 
 [test]
 coverage>=7.8.2

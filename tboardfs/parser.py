@@ -16,6 +16,8 @@ from tboardfs.core.data_types import (
     HistogramData,
     AudioData,
     TextData,
+    MeshData,
+    HyperparameterData,
 )
 from loguru import logger
 import magic
@@ -85,6 +87,18 @@ class TensorBoardParser:
             return self._efficient_parser.list_text()
         return []
 
+    def list_meshes(self) -> list[str]:
+        """List all mesh tags in the event file."""
+        if hasattr(self, "_efficient_parser"):
+            return self._efficient_parser.list_meshes()
+        return []
+
+    def list_hyperparameters(self) -> list[str]:
+        """List all hyperparameter tags in the event file."""
+        if hasattr(self, "_efficient_parser"):
+            return self._efficient_parser.list_hyperparameters()
+        return []
+
     def get_scalar_data(self, tag: str) -> list[ScalarData]:
         """Get all scalar data for a given tag."""
         if hasattr(self, "_efficient_parser"):
@@ -113,6 +127,18 @@ class TensorBoardParser:
         """Get all text data for a given tag."""
         if hasattr(self, "_efficient_parser"):
             return list(self._efficient_parser.iterate_text_data(tag))
+        return []
+
+    def get_mesh_data(self, tag: str) -> list[MeshData]:
+        """Get all mesh data for a given tag."""
+        if hasattr(self, "_efficient_parser"):
+            return list(self._efficient_parser.iterate_mesh_data(tag))
+        return []
+
+    def get_hyperparameter_data(self, tag: str) -> list[HyperparameterData]:
+        """Get all hyperparameter data for a given tag."""
+        if hasattr(self, "_efficient_parser"):
+            return list(self._efficient_parser.iterate_hyperparameter_data(tag))
         return []
 
     def export_scalar_to_text(self, tag: str) -> str:
@@ -202,7 +228,17 @@ class TensorBoardParser:
         paths = []
 
         # Add directories
-        paths.extend(["scalars/", "images/", "histograms/", "audio/", "text/"])
+        paths.extend(
+            [
+                "scalars/",
+                "images/",
+                "histograms/",
+                "audio/",
+                "text/",
+                "meshes/",
+                "hp_params/",
+            ]
+        )
 
         # Scalar paths
         try:
@@ -267,6 +303,34 @@ class TensorBoardParser:
         except Exception:
             pass
 
+        # Mesh paths - group by base tag (without _VERTEX, _FACE, _COLOR suffixes)
+        try:
+            mesh_base_tags = set()
+            for tag in self.list_meshes():
+                base_tag = tag.rstrip("_VERTEX").rstrip("_FACE").rstrip("_COLOR")
+                mesh_base_tags.add(base_tag)
+
+            for base_tag in mesh_base_tags:
+                safe_tag = base_tag.replace("/", "_")
+                paths.append(f"meshes/{safe_tag}/")
+                try:
+                    mesh_data = self.get_mesh_data(base_tag)
+                    for mesh_item in mesh_data:
+                        padded_step = str(mesh_item.step).zfill(digits)
+                        paths.append(f"meshes/{safe_tag}/{padded_step}.ply")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Hyperparameter paths - single file per entire log
+        try:
+            hyperparams = self.list_hyperparameters()
+            if hyperparams:
+                paths.append("hp_params/hp_params.yaml")
+        except Exception:
+            pass
+
         return sorted(set(paths))
 
     def extract_all_to_directory(
@@ -277,10 +341,19 @@ class TensorBoardParser:
         image_quality: int = 90,
         audio_format: str = "mp3",
         histogram_images: bool = False,
+        ply_format: str = "binary",
+        type_filters: dict[str, set[str]] | None = None,
     ) -> None:
         """Extract all data to a directory structure."""
         return self._efficient_parser.extract_all_to_directory(
-            output_dir, digits, image_format, image_quality, audio_format, histogram_images
+            output_dir,
+            digits,
+            image_format,
+            image_quality,
+            audio_format,
+            histogram_images,
+            ply_format,
+            type_filters,
         )
 
     def _sort_scalar_files(self, scalar_files: Any) -> None:

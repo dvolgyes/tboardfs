@@ -11,6 +11,9 @@ from .core.file_utils import (
     handle_standard_error,
     validate_image_format_options,
     validate_audio_format_options,
+    validate_ply_format_options,
+    validate_type_filtering_options,
+    SUPPORTED_DATA_TYPES,
 )
 from .commands.list_command import (
     list_single_file,
@@ -149,6 +152,26 @@ def list(ctx: Any, tensorboard_path: str, no_recursive: bool, digits: int) -> No
     is_flag=True,
     help="Export histograms as visualization images (default: numpy arrays)",
 )
+@click.option(
+    "--ply-bin",
+    is_flag=True,
+    help="Export 3D meshes/point clouds in binary PLY format (default: binary)",
+)
+@click.option(
+    "--ply-txt",
+    is_flag=True,
+    help="Export 3D meshes/point clouds in text PLY format (default: binary)",
+)
+@click.option(
+    "--ignore",
+    multiple=True,
+    help=f"Ignore specified data types (comma-separated). Supported: {', '.join(sorted(SUPPORTED_DATA_TYPES))}",
+)
+@click.option(
+    "--select",
+    multiple=True,
+    help=f"Process only specified data types (comma-separated). Supported: {', '.join(sorted(SUPPORTED_DATA_TYPES))}",
+)
 @click.pass_context
 def extract(
     ctx: Any,
@@ -161,6 +184,10 @@ def extract(
     wav: bool,
     mp3: bool,
     histogram_images: bool,
+    ply_bin: bool,
+    ply_txt: bool,
+    ignore: tuple[str, ...],
+    select: tuple[str, ...],
 ) -> None:
     """Extract all data from TensorBoard log(s) to directory structure.
 
@@ -171,10 +198,20 @@ def extract(
 
     image_format = validate_image_format_options(png, jpg)
     audio_format = validate_audio_format_options(wav, mp3)
+    ply_format = validate_ply_format_options(ply_bin, ply_txt)
+    type_filters = validate_type_filtering_options(ignore, select)
 
     try:
         extract_tensorboard_data(
-            tensorboard_path, output, digits, image_format, quality, audio_format, histogram_images
+            tensorboard_path,
+            output,
+            digits,
+            image_format,
+            quality,
+            audio_format,
+            histogram_images,
+            ply_format,
+            type_filters,
         )
     except Exception as e:
         handle_standard_error(e, "extracting data")
@@ -215,6 +252,26 @@ def extract(
     is_flag=True,
     help="Export histograms as visualization images (default: numpy arrays)",
 )
+@click.option(
+    "--ply-bin",
+    is_flag=True,
+    help="Export 3D meshes/point clouds in binary PLY format (default: binary)",
+)
+@click.option(
+    "--ply-txt",
+    is_flag=True,
+    help="Export 3D meshes/point clouds in text PLY format (default: binary)",
+)
+@click.option(
+    "--ignore",
+    multiple=True,
+    help=f"Ignore specified data types (comma-separated). Supported: {', '.join(sorted(SUPPORTED_DATA_TYPES))}",
+)
+@click.option(
+    "--select",
+    multiple=True,
+    help=f"Process only specified data types (comma-separated). Supported: {', '.join(sorted(SUPPORTED_DATA_TYPES))}",
+)
 @click.pass_context
 def export(
     ctx: Any,
@@ -227,6 +284,10 @@ def export(
     wav: bool,
     mp3: bool,
     histogram_images: bool,
+    ply_bin: bool,
+    ply_txt: bool,
+    ignore: tuple[str, ...],
+    select: tuple[str, ...],
 ) -> None:
     """Export a specific item from TensorBoard log(s).
 
@@ -238,11 +299,22 @@ def export(
 
     image_format = validate_image_format_options(png, jpg)
     audio_format = validate_audio_format_options(wav, mp3)
+    ply_format = validate_ply_format_options(ply_bin, ply_txt)
+    type_filters = validate_type_filtering_options(ignore, select)
 
     try:
         show_progress = context.get("cli_mode", False)
         export_virtual_path(
-            tensorboard_path, virtual_path, output, show_progress, image_format, quality, audio_format, histogram_images
+            tensorboard_path,
+            virtual_path,
+            output,
+            show_progress,
+            image_format,
+            quality,
+            audio_format,
+            histogram_images,
+            ply_format,
+            type_filters,
         )
     except Exception as e:
         handle_standard_error(e, "exporting data")

@@ -7,6 +7,7 @@ loading everything into memory, making it much more efficient for large files.
 from pathlib import Path
 from collections.abc import Iterator
 from typing import Any
+import numpy as np
 
 from tensorboard.backend.event_processing.event_file_loader import EventFileLoader
 from tensorboard.util import tensor_util
@@ -22,7 +23,23 @@ from tboardfs.core.data_types import (
     HistogramData,
     AudioData,
     TextData,
+    MeshData,
+    HyperparameterData,
 )
+
+# Import hyperparameter protobuf definitions
+try:
+    from tensorboard.plugins.hparams import plugin_data_pb2 as hparams_pb2
+    from google.protobuf.struct_pb2 import Value as protobuf_Value
+
+    HPARAMS_AVAILABLE = True
+except ImportError:
+    HPARAMS_AVAILABLE = False
+    hparams_pb2 = None  # type: ignore
+    protobuf_Value = Any  # type: ignore
+    logger.warning(
+        "TensorBoard hparams plugin not available. Hyperparameter parsing disabled."
+    )
 
 
 class EfficientTensorBoardParser:
@@ -67,6 +84,8 @@ class EfficientTensorBoardParser:
                 "audio": [],
                 "text": [],
                 "tensors": [],
+                "meshes": [],
+                "hyperparameters": [],
             }
             self._detailed_tags = {
                 "scalars": [],
@@ -75,6 +94,8 @@ class EfficientTensorBoardParser:
                 "audio": [],
                 "text": [],
                 "tensors": [],
+                "meshes": [],
+                "hyperparameters": [],
             }
             self._event_count = 0
             return
@@ -139,6 +160,8 @@ class EfficientTensorBoardParser:
             "tensors": set(),
             "audio": set(),
             "text": set(),
+            "meshes": set(),
+            "hyperparameters": set(),
         }
 
         event_count = 0
@@ -169,6 +192,10 @@ class EfficientTensorBoardParser:
                             tags["audio"].add(tag)
                         elif plugin_name == "text":
                             tags["text"].add(tag)
+                        elif plugin_name == "mesh":
+                            tags["meshes"].add(tag)
+                        elif plugin_name == "hparams":
+                            tags["hyperparameters"].add(tag)
                         else:
                             # Default to tensors
                             tags["tensors"].add(tag)
@@ -215,6 +242,8 @@ class EfficientTensorBoardParser:
         all_data_tags.update(tags["histograms"])
         all_data_tags.update(tags["audio"])
         all_data_tags.update(tags["text"])
+        all_data_tags.update(tags["meshes"])
+        all_data_tags.update(tags["hyperparameters"])
         all_data_tags.update(tags["tensors"])
 
         # For external API, mostly match EventAccumulator behavior but keep text separate
@@ -225,6 +254,8 @@ class EfficientTensorBoardParser:
             "histograms": self._detailed_tags["histograms"],
             "audio": self._detailed_tags["audio"],
             "text": self._detailed_tags["text"],  # Keep text tags identifiable
+            "meshes": self._detailed_tags["meshes"],
+            "hyperparameters": self._detailed_tags["hyperparameters"],
             "tensors": self._detailed_tags["tensors"],
         }
 
@@ -237,6 +268,8 @@ class EfficientTensorBoardParser:
             f"histograms: {len(self._tags_cache['histograms'])}, "
             f"audio: {len(self._tags_cache['audio'])}, "
             f"text: {len(self._tags_cache['text'])}, "
+            f"meshes: {len(self._tags_cache['meshes'])}, "
+            f"hyperparameters: {len(self._tags_cache['hyperparameters'])}, "
             f"tensors: {len(self._tags_cache['tensors'])}"
         )
 
@@ -265,6 +298,14 @@ class EfficientTensorBoardParser:
     def list_text(self) -> list[str]:
         """List all text tags in the event file."""
         return self._scan_tags()["text"]
+
+    def list_meshes(self) -> list[str]:
+        """List all mesh tags in the event file."""
+        return self._scan_tags()["meshes"]
+
+    def list_hyperparameters(self) -> list[str]:
+        """List all hyperparameter tags in the event file."""
+        return self._scan_tags()["hyperparameters"]
 
     def list_all_content(self) -> dict[str, list[str]]:
         """List all content organized by type."""
@@ -470,6 +511,159 @@ class EfficientTensorBoardParser:
                                 wall_time=event.wall_time,
                             )
 
+    def iterate_mesh_data(self, tag: str) -> Iterator[MeshData]:
+        """Iterate over mesh data for a given tag.
+
+        TensorBoard mesh plugin stores 3D data as tensors with plugin_name="mesh".
+        Mesh data consists of VERTEX, FACE, and COLOR components stored as separate tags.
+        """
+        # Collect mesh components by finding related tags
+        base_tag = tag.rstrip("_VERTEX").rstrip("_FACE").rstrip("_COLOR")
+
+        # Storage for mesh components by step
+        mesh_components: dict[int, dict[str, np.ndarray]] = {}
+
+        # Iterate through events to collect all mesh components
+        for event in self._iterate_events():
+            if event.HasField("summary"):
+                for value in event.summary.value:
+                    value_tag = value.tag
+
+                    # Check if this is a mesh component for our base tag
+                    if value_tag.startswith(base_tag):
+                        if value.HasField("tensor"):
+                            try:
+                                # Extract tensor data
+                                arr = tensor_util.make_ndarray(value.tensor)
+
+                                # Determine component type
+                                component_type = None
+                                if value_tag.endswith("_VERTEX"):
+                                    component_type = "vertices"
+                                elif value_tag.endswith("_FACE"):
+                                    component_type = "faces"
+                                elif value_tag.endswith("_COLOR"):
+                                    component_type = "colors"
+
+                                if component_type:
+                                    step = event.step
+                                    if step not in mesh_components:
+                                        mesh_components[step] = {}
+
+                                    # Reshape array for consistency (remove batch dimension if present)
+                                    if arr.ndim == 3 and arr.shape[0] == 1:
+                                        arr = arr[0]  # Remove batch dimension
+
+                                    mesh_components[step][component_type] = arr
+                                    mesh_components[step]["wall_time"] = event.wall_time
+
+                            except Exception as e:
+                                logger.debug(
+                                    f"Error processing mesh tensor for tag {value_tag}: {e}"
+                                )
+                                continue
+
+        # Yield complete mesh data for each step
+        for step in sorted(mesh_components.keys()):
+            components = mesh_components[step]
+
+            # Verify we have at least vertices
+            if "vertices" in components:
+                vertices = components["vertices"]
+                faces = components.get("faces", None)
+                colors = components.get("colors", None)
+                wall_time = float(components.get("wall_time", 0.0))
+
+                # Validate vertex data
+                if vertices.shape[1] == 3:  # XYZ coordinates
+                    yield MeshData(
+                        step=step,
+                        vertices=vertices,
+                        faces=faces,
+                        colors=colors,
+                        wall_time=wall_time,
+                    )
+
+    def iterate_hyperparameter_data(self, tag: str) -> Iterator[HyperparameterData]:
+        """Iterate over hyperparameter data for a given tag.
+
+        TensorBoard hyperparameters are stored with plugin_name="hparams".
+        The actual data is serialized in the metadata content field.
+        """
+        if not HPARAMS_AVAILABLE:
+            logger.warning(
+                "TensorBoard hparams plugin not available. Cannot parse hyperparameters."
+            )
+            return
+
+        for event in self._iterate_events():
+            if event.HasField("summary"):
+                for value in event.summary.value:
+                    if value.tag == tag and value.HasField("metadata"):
+                        plugin_name = value.metadata.plugin_data.plugin_name
+                        if plugin_name == "hparams":
+                            try:
+                                # Parse the hyperparameter data from metadata
+                                plugin_data = hparams_pb2.HParamsPluginData.FromString(
+                                    value.metadata.plugin_data.content
+                                )
+
+                                if plugin_data.HasField("session_start_info"):
+                                    session_info = plugin_data.session_start_info
+
+                                    # Extract hyperparameters from protobuf Value objects
+                                    hparams = {}
+                                    for (
+                                        param_name,
+                                        param_value,
+                                    ) in session_info.hparams.items():
+                                        hparams[param_name] = (
+                                            self._extract_protobuf_value(param_value)
+                                        )
+
+                                    yield HyperparameterData(
+                                        step=event.step,
+                                        hparams=hparams,
+                                        model_uri=session_info.model_uri
+                                        if session_info.model_uri
+                                        else None,
+                                        monitor_url=session_info.monitor_url
+                                        if session_info.monitor_url
+                                        else None,
+                                        group_name=session_info.group_name
+                                        if session_info.group_name
+                                        else None,
+                                        wall_time=event.wall_time,
+                                    )
+
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to parse hyperparameter data for tag '{tag}': {e}"
+                                )
+                                continue
+
+    def _extract_protobuf_value(self, value: protobuf_Value) -> Any:
+        """Extract value from google.protobuf.Value object."""
+        if value.HasField("bool_value"):
+            return value.bool_value
+        elif value.HasField("number_value"):
+            return value.number_value
+        elif value.HasField("string_value"):
+            return value.string_value
+        elif value.HasField("list_value"):
+            return [self._extract_protobuf_value(v) for v in value.list_value.values]
+        elif value.HasField("struct_value"):
+            return {
+                k: self._extract_protobuf_value(v)
+                for k, v in value.struct_value.fields.items()
+            }
+        else:
+            return None
+
+    def get_hyperparameter_data(self, tag: str) -> list[HyperparameterData]:
+        """Get all hyperparameter data for a given tag."""
+        return list(self.iterate_hyperparameter_data(tag))
+
     def export_scalar_to_text(self, tag: str) -> str:
         """Export scalar data to text format (iteration, value)."""
         lines = []
@@ -631,12 +825,16 @@ class EfficientTensorBoardParser:
             )
 
     def _save_histogram(
-        self, event: event_pb2.Event, value: Any, output_path: Path, histogram_images: bool = False
+        self,
+        event: event_pb2.Event,
+        value: Any,
+        output_path: Path,
+        histogram_images: bool = False,
     ) -> None:
         """Save histogram data to file."""
         tag = value.tag
         safe_tag = tag.replace("/", "_")
-        
+
         if histogram_images:
             # Save as visualization images (old behavior)
             self._save_histogram_as_image(event, value, output_path)
@@ -644,10 +842,14 @@ class EfficientTensorBoardParser:
             # Save as numpy arrays in text format (new default behavior)
             if value.HasField("histo"):
                 # Legacy format with histo field
-                self._save_histogram_as_numpy_arrays(event, value, output_path, safe_tag)
+                self._save_histogram_as_numpy_arrays(
+                    event, value, output_path, safe_tag
+                )
             elif value.HasField("tensor"):
                 # TensorBoard v2 format with tensor field
-                self._save_histogram_tensor_as_numpy_arrays(event, value, output_path, safe_tag)
+                self._save_histogram_tensor_as_numpy_arrays(
+                    event, value, output_path, safe_tag
+                )
             else:
                 logger.warning(f"Unknown histogram format for tag '{tag}'")
 
@@ -659,17 +861,19 @@ class EfficientTensorBoardParser:
         histogram_file.parent.mkdir(parents=True, exist_ok=True)
 
         hist = value.histo
-        
+
         # Create numpy arrays for histogram data
         bucket_limits = list(hist.bucket_limit)
         bucket_counts = list(hist.bucket)
-        
+
         with histogram_file.open("a") as f:
             f.write(f"# Step: {event.step}\n")
             f.write(f"# Min: {hist.min}, Max: {hist.max}\n")
-            f.write(f"# Count: {hist.num}, Sum: {hist.sum}, Sum_squares: {hist.sum_squares}\n")
+            f.write(
+                f"# Count: {hist.num}, Sum: {hist.sum}, Sum_squares: {hist.sum_squares}\n"
+            )
             f.write("# Format: bucket_limit bucket_count\n")
-            
+
             # Write bucket data as space-separated values
             for limit, count in zip(bucket_limits, bucket_counts):
                 f.write(f"{limit:.6f} {count}\n")
@@ -681,17 +885,19 @@ class EfficientTensorBoardParser:
         """Save histogram tensor data as numpy arrays in text format (TensorBoard v2 format)."""
         histogram_file = output_path / "histograms" / f"{safe_tag}.txt"
         histogram_file.parent.mkdir(parents=True, exist_ok=True)
-        
+
         try:
             # Decode tensor to numpy array
             arr = tensor_util.make_ndarray(value.tensor)
-            logger.debug(f"Histogram tensor shape for '{safe_tag}': {arr.shape}, dtype: {arr.dtype}")
-            
+            logger.debug(
+                f"Histogram tensor shape for '{safe_tag}': {arr.shape}, dtype: {arr.dtype}"
+            )
+
             with histogram_file.open("a") as f:
                 f.write(f"# Step: {event.step}\n")
                 f.write(f"# Tensor shape: {arr.shape}, dtype: {arr.dtype}\n")
                 f.write("# Format: histogram_data (flattened)\n")
-                
+
                 # Flatten and write the histogram data
                 flattened = arr.flatten()
                 for i, val in enumerate(flattened):
@@ -699,9 +905,11 @@ class EfficientTensorBoardParser:
                         f.write("\n")
                     f.write(f"{val:.6f} ")
                 f.write("\n\n")
-                
+
         except Exception as e:
-            logger.warning(f"Failed to process histogram tensor for tag '{safe_tag}': {e}")
+            logger.warning(
+                f"Failed to process histogram tensor for tag '{safe_tag}': {e}"
+            )
 
     def _save_histogram_as_image(
         self, event: event_pb2.Event, value: Any, output_path: Path
@@ -723,7 +931,12 @@ class EfficientTensorBoardParser:
             f.write("\n")
 
     def _save_audio(
-        self, event: event_pb2.Event, value: Any, output_path: Path, digits: int, audio_format: str = "mp3"
+        self,
+        event: event_pb2.Event,
+        value: Any,
+        output_path: Path,
+        digits: int,
+        audio_format: str = "mp3",
     ) -> None:
         """Save audio data to file."""
         tag = value.tag
@@ -763,6 +976,143 @@ class EfficientTensorBoardParser:
             with text_file.open("w", encoding="utf-8") as f:
                 f.write(text)
 
+    def _save_mesh(
+        self,
+        event: event_pb2.Event,
+        value: Any,
+        output_path: Path,
+        digits: int,
+        ply_format: str = "binary",
+        mesh_cache: dict[str, dict[int, dict[str, np.ndarray]]] | None = None,
+    ) -> None:
+        """Save mesh data to PLY file.
+
+        Args:
+            event: The TensorBoard event
+            value: The summary value containing mesh tensor data
+            output_path: Base output directory path
+            digits: Number of digits for step padding
+            ply_format: PLY format ("binary" or "text")
+            mesh_cache: Cache for collecting mesh components across multiple events
+        """
+        from tboardfs.core.ply_writer import write_mesh_as_ply
+
+        tag = value.tag
+
+        # Determine base tag and component type
+        base_tag = tag.rstrip("_VERTEX").rstrip("_FACE").rstrip("_COLOR")
+        component_type = None
+
+        if tag.endswith("_VERTEX"):
+            component_type = "vertices"
+        elif tag.endswith("_FACE"):
+            component_type = "faces"
+        elif tag.endswith("_COLOR"):
+            component_type = "colors"
+        else:
+            # If tag doesn't follow the expected pattern, skip
+            logger.debug(f"Skipping mesh tag with unexpected format: {tag}")
+            return
+
+        if mesh_cache is None:
+            logger.warning("mesh_cache is None, cannot save mesh data")
+            return
+
+        # Initialize cache for this base tag if needed
+        if base_tag not in mesh_cache:
+            mesh_cache[base_tag] = {}
+
+        step = event.step
+        if step not in mesh_cache[base_tag]:
+            mesh_cache[base_tag][step] = {}
+
+        # Extract and store tensor data
+        if value.HasField("tensor"):
+            try:
+                arr = tensor_util.make_ndarray(value.tensor)
+
+                # Remove batch dimension if present
+                if arr.ndim == 3 and arr.shape[0] == 1:
+                    arr = arr[0]
+
+                mesh_cache[base_tag][step][component_type] = arr
+                mesh_cache[base_tag][step]["wall_time"] = event.wall_time
+
+                # Check if we have enough components to create a mesh
+                components = mesh_cache[base_tag][step]
+                if "vertices" in components:
+                    # Create and save mesh data
+                    vertices = components["vertices"]
+                    faces = components.get("faces", None)
+                    colors = components.get("colors", None)
+                    wall_time = float(components.get("wall_time", 0.0))
+
+                    # Validate vertex data
+                    if vertices.shape[1] == 3:  # XYZ coordinates
+                        # Pre-validate faces to avoid PLY writer errors
+                        valid_faces = faces
+                        if faces is not None and len(faces) > 0:
+                            max_vertex_idx = len(vertices) - 1
+                            if np.max(faces) > max_vertex_idx or np.min(faces) < 0:
+                                logger.warning(
+                                    f"Invalid face indices in {base_tag} step {step} "
+                                    f"(range: {np.min(faces)} to {np.max(faces)}, valid: 0 to {max_vertex_idx}). "
+                                    f"Saving as point cloud instead."
+                                )
+                                valid_faces = None
+
+                        mesh_data = MeshData(
+                            step=step,
+                            vertices=vertices,
+                            faces=valid_faces,
+                            colors=colors,
+                            wall_time=wall_time,
+                        )
+
+                        # Create output directory and file
+                        safe_tag = base_tag.replace("/", "_")
+                        tag_dir = output_path / "meshes" / safe_tag
+                        tag_dir.mkdir(parents=True, exist_ok=True)
+
+                        padded_step = str(step).zfill(digits)
+                        ply_file = tag_dir / f"{padded_step}.ply"
+
+                        # Write PLY file
+                        try:
+                            write_mesh_as_ply(mesh_data, ply_file, ply_format)
+                            mesh_type = (
+                                "point cloud" if mesh_data.is_point_cloud else "mesh"
+                            )
+                            logger.debug(f"Saved {mesh_type} data to {ply_file}")
+                        except Exception as ply_error:
+                            logger.error(
+                                f"Failed to write PLY file {ply_file}: {ply_error}"
+                            )
+                            # Don't re-raise, continue with next component
+
+            except Exception as e:
+                logger.error(f"Error processing mesh tensor for tag {tag}: {e}")
+
+    def _get_enabled_types(
+        self, all_types: set[str], type_filters: dict[str, set[str]] | None
+    ) -> set[str]:
+        """Determine which data types should be processed based on filters."""
+        if not type_filters:
+            return all_types
+
+        ignore_types = type_filters.get("ignore", set())
+        select_types = type_filters.get("select", set())
+
+        if select_types:
+            # Only process selected types
+            return all_types & select_types
+        elif ignore_types:
+            # Process all types except ignored ones
+            return all_types - ignore_types
+        else:
+            # No filtering
+            return all_types
+
     def extract_all_to_directory(
         self,
         output_dir: str,
@@ -771,21 +1121,57 @@ class EfficientTensorBoardParser:
         image_quality: int = 90,
         audio_format: str = "mp3",
         histogram_images: bool = False,
+        ply_format: str = "binary",
+        type_filters: dict[str, set[str]] | None = None,
     ) -> None:
         """Extract all data to a directory structure using single-pass processing."""
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Output directory created: {output_path}")
 
-        # Create base subdirectories
-        base_dirs = ["scalars", "images", "histograms", "audio", "text"]
-        for dirname in base_dirs:
+        # Determine which data types to process based on filters
+        all_types = {
+            "scalar",
+            "image",
+            "histogram",
+            "audio",
+            "text",
+            "mesh",
+            "hyperparameter",
+        }
+        enabled_types = self._get_enabled_types(all_types, type_filters)
+
+        if not enabled_types:
+            logger.warning("No data types enabled for processing")
+            return
+
+        logger.debug(f"Processing data types: {', '.join(sorted(enabled_types))}")
+
+        # Create base subdirectories for enabled types only
+        type_to_dir = {
+            "scalar": "scalars",
+            "image": "images",
+            "histogram": "histograms",
+            "audio": "audio",
+            "text": "text",
+            "mesh": "meshes",
+            "hyperparameter": "hp_params",
+        }
+
+        for data_type in enabled_types:
+            dirname = type_to_dir[data_type]
             (output_path / dirname).mkdir(exist_ok=True)
 
         logger.debug("Base subdirectories created")
 
         # ScalarFile instances for handling scalar data
         scalar_files: dict[Path, ScalarFile] = {}
+
+        # Mesh cache for collecting mesh components across events
+        mesh_cache: dict[str, dict[int, dict[str, np.ndarray]]] = {}
+
+        # Hyperparameter collection - aggregate all hyperparameters into single structure
+        hyperparameters_data: dict[str, Any] = {}
 
         # Single pass through all events
         event_count = 0
@@ -819,40 +1205,79 @@ class EfficientTensorBoardParser:
                             if plugin_name == "scalars" or value.HasField(
                                 "simple_value"
                             ):
-                                self._save_scalar(
-                                    event, value, output_path, scalar_files
-                                )
+                                if "scalar" in enabled_types:
+                                    self._save_scalar(
+                                        event, value, output_path, scalar_files
+                                    )
                             else:
                                 # Prioritize histogram detection first
                                 if plugin_name == "histograms" or value.HasField(
                                     "histo"
                                 ):
-                                    self._save_histogram(event, value, output_path, histogram_images)
+                                    if "histogram" in enabled_types:
+                                        self._save_histogram(
+                                            event, value, output_path, histogram_images
+                                        )
                                 elif plugin_name == "audio" or value.HasField("audio"):
-                                    self._save_audio(event, value, output_path, digits, audio_format)
+                                    if "audio" in enabled_types:
+                                        self._save_audio(
+                                            event,
+                                            value,
+                                            output_path,
+                                            digits,
+                                            audio_format,
+                                        )
                                 elif plugin_name == "text" or (
                                     value.HasField("tensor") and value.tensor.dtype == 7
                                 ):
-                                    self._save_text(event, value, output_path, digits)
+                                    if "text" in enabled_types:
+                                        self._save_text(
+                                            event, value, output_path, digits
+                                        )
+                                elif plugin_name == "mesh" or (
+                                    value.HasField("tensor")
+                                    and (
+                                        value.tag.endswith("_VERTEX")
+                                        or value.tag.endswith("_FACE")
+                                        or value.tag.endswith("_COLOR")
+                                    )
+                                ):
+                                    if "mesh" in enabled_types:
+                                        self._save_mesh(
+                                            event,
+                                            value,
+                                            output_path,
+                                            digits,
+                                            ply_format,
+                                            mesh_cache,
+                                        )
+                                elif plugin_name == "hparams":
+                                    if "hyperparameter" in enabled_types:
+                                        self._collect_hyperparameters(
+                                            event, value, hyperparameters_data
+                                        )
                                 else:
                                     # Check for images last to avoid false positives
                                     is_image = False
                                     if value.HasField("image"):
                                         is_image = True
-                                    elif value.HasField("tensor") and self._is_image_tensor(
+                                    elif value.HasField(
+                                        "tensor"
+                                    ) and self._is_image_tensor(
                                         value.tensor, value.tag
                                     ):
                                         is_image = True
 
                                     if plugin_name == "images" or is_image:
-                                        self._save_image(
-                                            event,
-                                            value,
-                                            output_path,
-                                            digits,
-                                            image_format,
-                                            image_quality,
-                                        )
+                                        if "image" in enabled_types:
+                                            self._save_image(
+                                                event,
+                                                value,
+                                                output_path,
+                                                digits,
+                                                image_format,
+                                                image_quality,
+                                            )
                         except Exception as e:
                             logger.warning(
                                 f"Failed to save data for tag '{value.tag}': {e}"
@@ -861,6 +1286,10 @@ class EfficientTensorBoardParser:
             # Always close all scalar files to ensure data is written and sorted
             for scalar_file in scalar_files.values():
                 scalar_file.close()
+
+            # Write hyperparameters to YAML file if any were collected
+            if hyperparameters_data and "hyperparameter" in enabled_types:
+                self._export_hyperparameters_yaml(output_path, hyperparameters_data)
 
         logger.debug(
             f"Single-pass extraction completed. Processed {event_count} events."
@@ -875,7 +1304,17 @@ class EfficientTensorBoardParser:
             return []
 
         # Add directories
-        paths.extend(["scalars/", "images/", "histograms/", "audio/", "text/"])
+        paths.extend(
+            [
+                "scalars/",
+                "images/",
+                "histograms/",
+                "audio/",
+                "text/",
+                "meshes/",
+                "hp_params/",
+            ]
+        )
 
         # Scalar paths
         for tag in all_tags["scalars"]:
@@ -916,4 +1355,118 @@ class EfficientTensorBoardParser:
                 padded_step = str(data_text.step).zfill(digits)
                 paths.append(f"text/{safe_tag}/{padded_step}.txt")
 
+        # Mesh paths - group by base tag (without _VERTEX, _FACE, _COLOR suffixes)
+        mesh_base_tags = set()
+        for tag in all_tags["meshes"]:
+            base_tag = tag.rstrip("_VERTEX").rstrip("_FACE").rstrip("_COLOR")
+            mesh_base_tags.add(base_tag)
+
+        for base_tag in mesh_base_tags:
+            safe_tag = base_tag.replace("/", "_")
+            paths.append(f"meshes/{safe_tag}/")
+            try:
+                for data_mesh in self.iterate_mesh_data(base_tag):
+                    padded_step = str(data_mesh.step).zfill(digits)
+                    paths.append(f"meshes/{safe_tag}/{padded_step}.ply")
+            except Exception:
+                # Skip if mesh data iteration fails
+                pass
+
+        # Hyperparameter paths - single file per entire log
+        if all_tags["hyperparameters"]:
+            paths.append("hp_params/hp_params.yaml")
+
         return sorted(set(paths))
+
+    def _collect_hyperparameters(
+        self, event: event_pb2.Event, value: Any, hyperparameters_data: dict[str, Any]
+    ) -> None:
+        """Collect hyperparameter data from a TensorBoard event."""
+        if not HPARAMS_AVAILABLE:
+            return
+
+        try:
+            # Parse the hyperparameter data from metadata
+            plugin_data = hparams_pb2.HParamsPluginData.FromString(
+                value.metadata.plugin_data.content
+            )
+
+            if plugin_data.HasField("session_start_info"):
+                session_info = plugin_data.session_start_info
+
+                # Extract hyperparameters from protobuf Value objects
+                session_hparams = {}
+                for param_name, param_value in session_info.hparams.items():
+                    session_hparams[param_name] = self._extract_protobuf_value(
+                        param_value
+                    )
+
+                # Use tag as session identifier, or fall back to a counter
+                session_key = value.tag or f"session_{len(hyperparameters_data)}"
+
+                hyperparameters_data[session_key] = {
+                    "hyperparameters": session_hparams,
+                    "step": event.step,
+                    "wall_time": event.wall_time,
+                }
+
+                # Add optional fields if present
+                if session_info.model_uri:
+                    hyperparameters_data[session_key]["model_uri"] = (
+                        session_info.model_uri
+                    )
+                if session_info.monitor_url:
+                    hyperparameters_data[session_key]["monitor_url"] = (
+                        session_info.monitor_url
+                    )
+                if session_info.group_name:
+                    hyperparameters_data[session_key]["group_name"] = (
+                        session_info.group_name
+                    )
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to collect hyperparameter data for tag '{value.tag}': {e}"
+            )
+
+    def _export_hyperparameters_yaml(
+        self, output_path: Path, hyperparameters_data: dict[str, Any]
+    ) -> None:
+        """Export collected hyperparameters to hp_params/hp_params.yaml."""
+        try:
+            import yaml
+        except ImportError:
+            logger.error(
+                "PyYAML not available. Cannot export hyperparameters to YAML format."
+            )
+            logger.info("Please install it with: pip install PyYAML")
+            return
+
+        hp_params_dir = output_path / "hp_params"
+        hp_params_dir.mkdir(exist_ok=True)
+
+        yaml_file = hp_params_dir / "hp_params.yaml"
+
+        # Organize data for YAML export
+        export_data = {}
+
+        if len(hyperparameters_data) == 1:
+            # Single session - export hyperparameters directly
+            session_data = list(hyperparameters_data.values())[0]
+            export_data = session_data["hyperparameters"]
+        else:
+            # Multiple sessions - export as nested structure
+            export_data = {
+                session_key: session_data["hyperparameters"]
+                for session_key, session_data in hyperparameters_data.items()
+            }
+
+        try:
+            with yaml_file.open("w") as f:
+                yaml.dump(export_data, f, default_flow_style=False, sort_keys=True)
+
+            logger.info(f"Exported hyperparameters to {yaml_file}")
+            logger.debug(f"Hyperparameter sessions: {len(hyperparameters_data)}")
+
+        except Exception as e:
+            logger.error(f"Failed to write hyperparameters YAML file: {e}")

@@ -19,6 +19,8 @@ def export_virtual_path(
     image_quality: int = 90,
     audio_format: str = "mp3",
     histogram_images: bool = False,
+    ply_format: str = "binary",
+    type_filters: dict[str, set[str]] | None = None,
 ) -> None:
     """Export a specific item from TensorBoard log(s) using virtual path."""
     path = Path(tensorboard_path)
@@ -34,11 +36,22 @@ def export_virtual_path(
             image_quality,
             audio_format,
             histogram_images,
+            ply_format,
+            type_filters,
         )
     elif path.is_dir():
         # Directory export (search for matching virtual path)
         export_from_directory(
-            path, virtual_path, output_file, show_progress, image_format, image_quality, audio_format, histogram_images
+            path,
+            virtual_path,
+            output_file,
+            show_progress,
+            image_format,
+            image_quality,
+            audio_format,
+            histogram_images,
+            ply_format,
+            type_filters,
         )
     else:
         logger.error(
@@ -56,6 +69,8 @@ def export_from_single_file(
     image_quality: int = 90,
     audio_format: str = "mp3",
     histogram_images: bool = False,
+    ply_format: str = "binary",
+    type_filters: dict[str, set[str]] | None = None,
 ) -> None:
     """Export from a single TensorBoard event file."""
     # Validate input file
@@ -69,7 +84,16 @@ def export_from_single_file(
     # Create virtual path handler and process export
     handler = VirtualPathHandler(parser)
     path_info = handler.parse_virtual_path(virtual_path)
-    handler.export_data(path_info, output_file, image_format, image_quality, audio_format, histogram_images)
+    handler.export_data(
+        path_info,
+        output_file,
+        image_format,
+        image_quality,
+        audio_format,
+        histogram_images,
+        ply_format,
+        type_filters,
+    )
 
 
 def export_from_directory(
@@ -81,6 +105,8 @@ def export_from_directory(
     image_quality: int = 90,
     audio_format: str = "mp3",
     histogram_images: bool = False,
+    ply_format: str = "binary",
+    type_filters: dict[str, set[str]] | None = None,
 ) -> None:
     """Export from TensorBoard directory by finding the correct event file."""
     logger.info(f"Searching for '{virtual_path}' in directory {directory}")
@@ -153,4 +179,6 @@ def export_from_directory(
         image_quality,
         audio_format,
         histogram_images,
+        ply_format,
+        type_filters,
     )

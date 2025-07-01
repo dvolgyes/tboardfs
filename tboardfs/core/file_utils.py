@@ -10,6 +10,19 @@ from loguru import logger
 from ..parser import TensorBoardParser
 
 
+# Supported data types for filtering
+SUPPORTED_DATA_TYPES = {
+    "image",
+    "audio",
+    "video",
+    "text",
+    "scalar",
+    "histogram",
+    "mesh",
+    "hyperparameter",
+}
+
+
 def validate_tensorboard_file(path: Path) -> bool:
     """Validate that the path is a valid TensorBoard event file."""
     return path.is_file() and "tfevents" in path.name
@@ -103,6 +116,26 @@ def validate_audio_format_options(wav: bool, mp3: bool) -> str:
     return "wav" if wav else "mp3"
 
 
+def validate_ply_format_options(ply_bin: bool, ply_txt: bool) -> str:
+    """Validate PLY format options and return the selected format.
+
+    Args:
+        ply_bin: Whether binary PLY format was requested
+        ply_txt: Whether text PLY format was requested
+
+    Returns:
+        The selected PLY format as a string ("binary" or "text")
+
+    Raises:
+        SystemExit: If both binary and text PLY are specified
+    """
+    if ply_bin and ply_txt:
+        logger.error("Cannot specify both --ply-bin and --ply-txt. Please choose one.")
+        sys.exit(1)
+
+    return "text" if ply_txt else "binary"
+
+
 def get_event_files_sorted(directory: Path) -> list[Path]:
     """Get all TensorBoard event files in a directory, sorted by path.
 
@@ -121,3 +154,60 @@ def get_event_files_sorted(directory: Path) -> list[Path]:
         return []
 
     return sorted(event_files)
+
+
+def parse_data_type_list(data_types: tuple[str, ...]) -> set[str]:
+    """Parse comma-separated data types from CLI arguments.
+
+    Args:
+        data_types: Tuple of data type strings, each may contain comma-separated values
+
+    Returns:
+        Set of individual data type strings
+
+    Raises:
+        SystemExit: If any unsupported data types are specified
+    """
+    result = set()
+
+    for type_group in data_types:
+        # Split by comma and strip whitespace
+        types = [t.strip().lower() for t in type_group.split(",")]
+        result.update(types)
+
+    # Validate all types are supported
+    invalid_types = result - SUPPORTED_DATA_TYPES
+    if invalid_types:
+        logger.error(f"Unsupported data types: {', '.join(sorted(invalid_types))}")
+        logger.error(f"Supported types: {', '.join(sorted(SUPPORTED_DATA_TYPES))}")
+        sys.exit(1)
+
+    return result
+
+
+def validate_type_filtering_options(
+    ignore_types: tuple[str, ...], select_types: tuple[str, ...]
+) -> dict[str, set[str]]:
+    """Validate and process data type filtering options.
+
+    Args:
+        ignore_types: Types to ignore during processing
+        select_types: Types to select (process only these)
+
+    Returns:
+        Dictionary with 'ignore' and 'select' keys containing sets of data types
+
+    Raises:
+        SystemExit: If both ignore and select are specified or if invalid types are given
+    """
+    ignore_set = parse_data_type_list(ignore_types) if ignore_types else set()
+    select_set = parse_data_type_list(select_types) if select_types else set()
+
+    # Check for mutual exclusivity
+    if ignore_set and select_set:
+        logger.error(
+            "Cannot specify both --ignore and --select options. Please choose one."
+        )
+        sys.exit(1)
+
+    return {"ignore": ignore_set, "select": select_set}

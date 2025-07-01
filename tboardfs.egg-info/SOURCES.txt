@@ -4,6 +4,7 @@ tboardfs/__init__.py
 tboardfs/cli.py
 tboardfs/efficient_parser.py
 tboardfs/parser.py
+tboardfs/scalar_file.py
 tboardfs.egg-info/PKG-INFO
 tboardfs.egg-info/SOURCES.txt
 tboardfs.egg-info/dependency_links.txt
@@ -17,6 +18,7 @@ tboardfs/commands/list_command.py
 tboardfs/core/__init__.py
 tboardfs/core/data_types.py
 tboardfs/core/file_utils.py
+tboardfs/core/ply_writer.py
 tboardfs/core/reporting.py
 tboardfs/core/virtual_paths.py
 tests/test_cli.py
