@@ -112,11 +112,6 @@ def list(ctx: Any, tensorboard_path: str, no_recursive: bool, digits: int) -> No
     "-o", "--output", type=click.Path(), required=True, help="Output directory path"
 )
 @click.option(
-    "--no-sort",
-    is_flag=True,
-    help="Disable sorting of scalar files by iteration number",
-)
-@click.option(
     "--digits",
     type=int,
     default=6,
@@ -143,7 +138,6 @@ def extract(
     ctx: Any,
     tensorboard_path: str,
     output: str,
-    no_sort: bool,
     digits: int,
     png: bool,
     jpg: bool,
@@ -159,9 +153,8 @@ def extract(
     image_format = validate_image_format_options(png, jpg)
 
     try:
-        sort_scalars = not no_sort
         extract_tensorboard_data(
-            tensorboard_path, output, sort_scalars, digits, image_format, quality
+            tensorboard_path, output, digits, image_format, quality
         )
     except Exception as e:
         handle_standard_error(e, "extracting data")

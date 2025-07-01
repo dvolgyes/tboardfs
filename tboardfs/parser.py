@@ -272,14 +272,13 @@ class TensorBoardParser:
     def extract_all_to_directory(
         self,
         output_dir: str,
-        sort_scalars: bool = True,
         digits: int = 6,
         image_format: str = "jpg",
         image_quality: int = 90,
     ) -> None:
         """Extract all data to a directory structure."""
         return self._efficient_parser.extract_all_to_directory(
-            output_dir, sort_scalars, digits, image_format, image_quality
+            output_dir, digits, image_format, image_quality
         )
 
     def _sort_scalar_files(self, scalar_files: Any) -> None:

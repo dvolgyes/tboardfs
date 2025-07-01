@@ -147,7 +147,7 @@ class TestCLI:
         result = runner.invoke(main, ["extract", "--help"])
         assert result.exit_code == 0
         assert "Extract all data from TensorBoard log" in result.output
-        assert "--no-sort" in result.output
+        # --no-sort option was removed - ScalarFile always sorts
         assert "--digits" in result.output
 
     def test_extract_text_only(self, runner, test_event_file, temp_dir):
@@ -169,14 +169,15 @@ class TestCLI:
         text_files = list((output_dir / "text").rglob("*.txt"))
         assert len(text_files) > 0
 
-    def test_extract_no_sort(self, runner, test_event_file, temp_dir):
-        """Test extracting with no sorting option."""
-        output_dir = temp_dir / "extracted_nosort"
+    def test_extract_always_sorts(self, runner, test_event_file, temp_dir):
+        """Test that extraction always sorts scalar files now."""
+        output_dir = temp_dir / "extracted_sorted"
         result = runner.invoke(
-            main, ["extract", test_event_file, "-o", str(output_dir), "--no-sort"]
+            main, ["extract", test_event_file, "-o", str(output_dir)]
         )
         assert result.exit_code == 0
         assert output_dir.exists()
+        # ScalarFile always sorts, so scalar files should be sorted
 
     def test_extract_custom_digits(self, runner, test_event_file, temp_dir):
         """Test extracting with custom step digits."""

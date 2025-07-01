@@ -13,14 +13,13 @@ from ..core.reporting import ContentReporter
 def extract_tensorboard_data(
     tensorboard_path: str,
     output_dir: str,
-    sort_scalars: bool = True,
     digits: int = 6,
     image_format: str = "jpg",
     image_quality: int = 90,
 ) -> None:
     """Extract all data from TensorBoard log(s) to directory structure."""
     logger.info(f"Starting extraction from {tensorboard_path} to {output_dir}")
-    logger.debug(f"Extract parameters: sort_scalars={sort_scalars}, digits={digits}")
+    logger.debug(f"Extract parameters: digits={digits}")
 
     path = Path(tensorboard_path)
 
@@ -29,7 +28,6 @@ def extract_tensorboard_data(
         extract_single_file(
             tensorboard_path,
             output_dir,
-            sort_scalars,
             digits,
             image_format,
             image_quality,
@@ -37,7 +35,7 @@ def extract_tensorboard_data(
     elif path.is_dir():
         # Directory extraction (aggregated)
         extract_directory_aggregated(
-            path, output_dir, sort_scalars, digits, image_format, image_quality
+            path, output_dir, digits, image_format, image_quality
         )
     else:
         logger.error(
@@ -49,7 +47,6 @@ def extract_tensorboard_data(
 def extract_single_file(
     file_path: str,
     output_dir: str,
-    sort_scalars: bool = True,
     digits: int = 6,
     image_format: str = "jpg",
     image_quality: int = 90,
@@ -69,7 +66,6 @@ def extract_single_file(
     logger.info("Beginning data extraction")
     parser.extract_all_to_directory(
         output_dir,
-        sort_scalars=sort_scalars,
         digits=digits,
         image_format=image_format,
         image_quality=image_quality,
@@ -80,14 +76,13 @@ def extract_single_file(
     logger.debug("Generating extraction summary")
     reporter = ContentReporter(parser)
     reporter.display_extraction_summary(output_dir)
-    reporter.display_sorting_info(sort_scalars, not sort_scalars)
+    reporter.display_sorting_info(True, False)  # ScalarFile always sorts
     logger.debug("Extraction summary displayed")
 
 
 def extract_directory_aggregated(
     directory: Path,
     output_dir: str,
-    sort_scalars: bool = True,
     digits: int = 6,
     image_format: str = "jpg",
     image_quality: int = 90,
@@ -110,7 +105,6 @@ def extract_directory_aggregated(
         directory,
         event_files,
         output_path,
-        sort_scalars,
         digits,
         image_format,
         image_quality,
@@ -131,7 +125,6 @@ def _process_all_event_files(
     directory: Path,
     event_files: list[Path],
     output_path: Path,
-    sort_scalars: bool,
     digits: int,
     image_format: str,
     image_quality: int,
@@ -153,7 +146,6 @@ def _process_all_event_files(
                 file_path,
                 directory,
                 output_path,
-                sort_scalars,
                 digits,
                 image_format,
                 image_quality,
@@ -174,7 +166,6 @@ def _extract_single_file_with_context(
     file_path: Path,
     directory: Path,
     output_path: Path,
-    sort_scalars: bool,
     digits: int,
     image_format: str,
     image_quality: int,
@@ -193,7 +184,6 @@ def _extract_single_file_with_context(
     # Extract data
     parser.extract_all_to_directory(
         extract_output,
-        sort_scalars=sort_scalars,
         digits=digits,
         image_format=image_format,
         image_quality=image_quality,

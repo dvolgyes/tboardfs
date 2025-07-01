@@ -15,6 +15,7 @@ from tqdm import tqdm
 import sys
 from loguru import logger
 import magic
+from tboardfs.scalar_file import ScalarFile
 from tboardfs.core.data_types import (
     ScalarData,
     ImageData,
@@ -520,13 +521,12 @@ class EfficientTensorBoardParser:
         event: event_pb2.Event,
         value: Any,
         output_path: Path,
-        sort_scalars: bool,
-        scalar_buffers: dict[Path, list[tuple[int, float]]],
+        scalar_files: dict[Path, ScalarFile],
     ) -> None:
-        """Save scalar data to file."""
+        """Save scalar data to file using ScalarFile."""
         tag = value.tag
         safe_tag = tag.replace("/", "_")
-        scalar_file = output_path / "scalars" / f"{safe_tag}.txt"
+        scalar_file_path = output_path / "scalars" / f"{safe_tag}.txt"
 
         scalar_val = None
         if value.HasField("simple_value"):
@@ -546,16 +546,11 @@ class EfficientTensorBoardParser:
                 )
 
         if scalar_val is not None:
-            if sort_scalars:
-                # Buffer for later sorting
-                if scalar_file not in scalar_buffers:
-                    scalar_buffers[scalar_file] = []
-                scalar_buffers[scalar_file].append((event.step, scalar_val))
-            else:
-                # Write directly
-                scalar_file.parent.mkdir(parents=True, exist_ok=True)
-                with scalar_file.open("a") as f:
-                    f.write(f"{event.step}\t{scalar_val}\n")
+            # Get or create ScalarFile instance
+            if scalar_file_path not in scalar_files:
+                scalar_files[scalar_file_path] = ScalarFile(scalar_file_path)
+
+            scalar_files[scalar_file_path].append(event.step, scalar_val)
         else:
             logger.warning(
                 f"Could not extract scalar value for tag '{tag}' at step {event.step}"
@@ -695,7 +690,6 @@ class EfficientTensorBoardParser:
     def extract_all_to_directory(
         self,
         output_dir: str,
-        sort_scalars: bool = True,
         digits: int = 6,
         image_format: str = "jpg",
         image_quality: int = 90,
@@ -712,8 +706,8 @@ class EfficientTensorBoardParser:
 
         logger.debug("Base subdirectories created")
 
-        # Buffer for scalar data if sorting is enabled
-        scalar_buffers: dict[Path, list[tuple[int, float]]] = {}
+        # ScalarFile instances for handling scalar data
+        scalar_files: dict[Path, ScalarFile] = {}
 
         # Single pass through all events
         event_count = 0
@@ -730,72 +724,62 @@ class EfficientTensorBoardParser:
             else:
                 iterator = tqdm(iterator, desc="Extracting data", unit=" events")  # type: ignore[assignment]
 
-        for event in iterator:
-            event_count += 1
+        try:
+            for event in iterator:
+                event_count += 1
 
-            if event.HasField("summary"):
-                for value in event.summary.value:
-                    # Dispatch to appropriate save function based on data type
+                if event.HasField("summary"):
+                    for value in event.summary.value:
+                        # Dispatch to appropriate save function based on data type
 
-                    # Check metadata for plugin type first
-                    plugin_name = None
-                    if value.HasField("metadata"):
-                        plugin_name = value.metadata.plugin_data.plugin_name
+                        # Check metadata for plugin type first
+                        plugin_name = None
+                        if value.HasField("metadata"):
+                            plugin_name = value.metadata.plugin_data.plugin_name
 
-                    try:
-                        if plugin_name == "scalars" or value.HasField("simple_value"):
-                            self._save_scalar(
-                                event, value, output_path, sort_scalars, scalar_buffers
-                            )
-                        else:
-                            is_image = False
-                            if value.HasField("image"):
-                                is_image = True
-                            elif value.HasField("tensor") and self._is_image_tensor(
-                                value.tensor, value.tag
+                        try:
+                            if plugin_name == "scalars" or value.HasField(
+                                "simple_value"
                             ):
-                                is_image = True
-
-                            if plugin_name == "images" or is_image:
-                                self._save_image(
-                                    event,
-                                    value,
-                                    output_path,
-                                    digits,
-                                    image_format,
-                                    image_quality,
+                                self._save_scalar(
+                                    event, value, output_path, scalar_files
                                 )
-                            elif plugin_name == "histograms" or value.HasField("histo"):
-                                self._save_histogram(event, value, output_path)
-                            elif plugin_name == "audio" or value.HasField("audio"):
-                                self._save_audio(event, value, output_path, digits)
-                            elif plugin_name == "text" or (
-                                value.HasField("tensor") and value.tensor.dtype == 7
-                            ):
-                                self._save_text(event, value, output_path, digits)
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to save data for tag '{value.tag}': {e}"
-                        )
+                            else:
+                                is_image = False
+                                if value.HasField("image"):
+                                    is_image = True
+                                elif value.HasField("tensor") and self._is_image_tensor(
+                                    value.tensor, value.tag
+                                ):
+                                    is_image = True
 
-        # Write sorted scalar data if buffering was used
-        if sort_scalars and scalar_buffers:
-            logger.debug(f"Sorting and writing {len(scalar_buffers)} scalar files")
-            if self.show_progress:
-                logger.info("Sorting scalar files...")
-
-            for scalar_file, data_points in tqdm(
-                scalar_buffers.items(),
-                desc="Writing sorted scalars",
-                disable=not self.show_progress,
-            ):
-                # Sort by step
-                data_points.sort(key=lambda x: x[0])
-
-                # Write sorted data
-                with scalar_file.open("w") as f:
-                    for step, value in data_points:
-                        f.write(f"{step}\t{value}\n")
+                                if plugin_name == "images" or is_image:
+                                    self._save_image(
+                                        event,
+                                        value,
+                                        output_path,
+                                        digits,
+                                        image_format,
+                                        image_quality,
+                                    )
+                                elif plugin_name == "histograms" or value.HasField(
+                                    "histo"
+                                ):
+                                    self._save_histogram(event, value, output_path)
+                                elif plugin_name == "audio" or value.HasField("audio"):
+                                    self._save_audio(event, value, output_path, digits)
+                                elif plugin_name == "text" or (
+                                    value.HasField("tensor") and value.tensor.dtype == 7
+                                ):
+                                    self._save_text(event, value, output_path, digits)
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to save data for tag '{value.tag}': {e}"
+                            )
+        finally:
+            # Always close all scalar files to ensure data is written and sorted
+            for scalar_file in scalar_files.values():
+                scalar_file.close()
 
         logger.debug(
             f"Single-pass extraction completed. Processed {event_count} events."
