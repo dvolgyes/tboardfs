@@ -61,7 +61,9 @@ class TestTensorBoardParserWithRealData:
             assert len(exported_image) > 0
 
             # Test image extension detection
-            ext = parser.get_image_extension(exported_image)
+            from tboardfs.core.image_processor import ImageProcessor
+
+            ext = ImageProcessor.get_image_extension(exported_image)
             assert ext in ["png", "jpg", "bin"]
 
     def test_virtual_paths_with_real_data(self, real_log_file):
@@ -253,21 +255,19 @@ class TestTensorBoardParserErrorHandling:
 
     def test_image_extension_detection(self):
         """Test image extension detection for various formats."""
-        parser = EfficientTensorBoardParser.__new__(
-            EfficientTensorBoardParser
-        )  # Create without __init__
-
         # Test PNG detection with proper header
+        from tboardfs.core.image_processor import ImageProcessor
+
         png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-        assert parser.get_image_extension(png_bytes) == "png"
+        assert ImageProcessor.get_image_extension(png_bytes) == "png"
 
         # Test JPEG detection with proper header
         jpg_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb\x00C"
-        assert parser.get_image_extension(jpg_bytes) == "jpg"
+        assert ImageProcessor.get_image_extension(jpg_bytes) == "jpg"
 
         # Test unknown format
         unknown_bytes = b"unknown format"
-        assert parser.get_image_extension(unknown_bytes) == "bin"
+        assert ImageProcessor.get_image_extension(unknown_bytes) == "bin"
 
     def test_audio_extension_detection(self):
         """Test audio extension detection for various formats."""

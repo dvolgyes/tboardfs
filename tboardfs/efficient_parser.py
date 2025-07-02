@@ -15,7 +15,6 @@ from tensorboard.compat.proto import event_pb2
 from tqdm import tqdm
 import sys
 from loguru import logger
-import magic
 from tboardfs.core.data_types import (
     ScalarData,
     ImageData,
@@ -37,6 +36,8 @@ from tboardfs.core.constants import (
     DEFAULT_DIGITS,
     FileSystemConstants,
 )
+from tboardfs.core.virtual_filesystem import VirtualFilesystemGenerator
+from tboardfs.core.image_processor import ImageProcessor
 
 # Import pydub for audio format conversion
 try:
@@ -129,6 +130,9 @@ class EfficientTensorBoardParser:
             raise FileNotFoundError(
                 f"Data source not available: {self.data_source.get_identifier()}"
             )
+
+        # Initialize virtual filesystem generator
+        self._virtual_fs = VirtualFilesystemGenerator(self)
 
     def _create_loader(self) -> EventFileLoader:
         """Create a new EventFileLoader instance (deprecated, use data_source)."""
@@ -417,7 +421,7 @@ class EfficientTensorBoardParser:
                             )
                         elif value.HasField("tensor"):
                             if TensorDataDetector.is_image_tensor(value.tensor, tag):
-                                decoded_image = self._decode_image_from_tensor(
+                                decoded_image = ImageProcessor.decode_image_from_tensor(
                                     value.tensor
                                 )
                                 if decoded_image:
@@ -433,7 +437,9 @@ class EfficientTensorBoardParser:
                                     arr = tensor_util.make_ndarray(value.tensor)
                                     for item in arr:
                                         if isinstance(item, bytes):
-                                            ext = self.get_image_extension(item, tag)
+                                            ext = ImageProcessor.get_image_extension(
+                                                item, tag
+                                            )
                                             if ext != "bin":
                                                 yield ImageData(
                                                     step=event.step,
@@ -446,56 +452,6 @@ class EfficientTensorBoardParser:
                                     logger.warning(
                                         f"Could not decode string tensor for tag '{tag}': {e}"
                                     )
-
-    def _decode_image_from_tensor(self, tensor_proto: Any) -> bytes | None:
-        """Decode an image from a tensor_proto."""
-        try:
-            import numpy as np
-            from PIL import Image
-            import io
-
-            arr = tensor_util.make_ndarray(tensor_proto)
-            logger.debug(f"Decoding image tensor: shape={arr.shape}, dtype={arr.dtype}")
-
-            # Squeeze batch dimension if present
-            if arr.ndim == 4 and arr.shape[0] == 1:
-                arr = arr.squeeze(0)
-
-            # Handle channel-first format (C, H, W) -> (H, W, C)
-            if arr.ndim == 3 and arr.shape[0] in [1, 3, 4]:
-                arr = np.transpose(arr, (1, 2, 0))
-
-            # Handle grayscale with no channel dim
-            if arr.ndim == 2:
-                arr = np.expand_dims(arr, axis=-1)
-
-            # Normalize to 0-255
-            if arr.dtype == np.float32 or arr.dtype == np.float64:
-                logger.debug("Normalizing float tensor to uint8")
-                arr = (arr * 255).astype(np.uint8)
-
-            # Ensure it is uint8
-            if arr.dtype != np.uint8:
-                logger.warning(f"Unsupported image tensor dtype: {arr.dtype}")
-                return None
-
-            # Handle single-channel (grayscale)
-            if arr.shape[-1] == 1:
-                arr = arr.squeeze(axis=-1)
-
-            logger.debug(f"Final array shape for Pillow: {arr.shape}")
-            # Convert to image
-            img = Image.fromarray(arr)
-
-            # Save to bytes buffer
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            logger.debug("Successfully decoded tensor to PNG")
-            return buf.getvalue()
-
-        except Exception as e:
-            logger.error(f"Failed to decode image from tensor: {e}")
-            return None
 
     def iterate_video_data(self, tag: str) -> Iterator[VideoData]:
         """Iterate over video data for a given tag."""
@@ -797,34 +753,6 @@ class EfficientTensorBoardParser:
                                     f"Failed to extract PR curve data for tag '{tag}': {e}"
                                 )
 
-    def get_image_extension(self, image_bytes: bytes, tag: str = "unknown") -> str:
-        """Determine image extension from bytes using python-magic."""
-        # Use python-magic to detect the actual file type
-        mime_type = magic.from_buffer(image_bytes, mime=True)
-        logger.debug(
-            f"MIME type for image bytes (tag='{tag}', len={len(image_bytes)}): {mime_type}"
-        )
-
-        # Map MIME types to extensions
-        mime_to_ext = {
-            "image/png": "png",
-            "image/jpeg": "jpg",
-            "image/jpg": "jpg",
-            "image/gif": "gif",
-            "image/bmp": "bmp",
-            "image/tiff": "tiff",
-            "image/webp": "webp",
-            "image/svg+xml": "svg",
-        }
-
-        ext = mime_to_ext.get(mime_type, "bin")
-        if ext == "bin":
-            # This is expected for non-image string tensors, so log at debug level.
-            logger.debug(
-                f"Could not determine image type from MIME type '{mime_type}'. Returning .bin"
-            )
-        return ext
-
     def get_audio_extension(self, content_type: str) -> str:
         """Determine audio extension from content type."""
         if "wav" in content_type:
@@ -870,7 +798,7 @@ class EfficientTensorBoardParser:
             image_byte_list.append(value.image.encoded_image_string)
         elif value.HasField("tensor"):
             if TensorDataDetector.is_image_tensor(value.tensor, tag):
-                decoded_image = self._decode_image_from_tensor(value.tensor)
+                decoded_image = ImageProcessor.decode_image_from_tensor(value.tensor)
                 if decoded_image:
                     image_byte_list.append(decoded_image)
             elif value.tensor.dtype == 7:
@@ -879,7 +807,7 @@ class EfficientTensorBoardParser:
                     for item in arr:
                         if isinstance(item, bytes):
                             # Filter out non-image data by checking extension
-                            ext = self.get_image_extension(item, tag)
+                            ext = ImageProcessor.get_image_extension(item, tag)
                             if ext != "bin":
                                 image_byte_list.append(item)
                 except Exception as e:
@@ -1139,224 +1067,9 @@ class EfficientTensorBoardParser:
 
         logger.debug(f"Extraction completed. Processed {event_count} events.")
 
-    def _determine_processing_mode(self) -> dict[str, list[str]] | None:
-        """Determine processing mode and return tags if available."""
-        # Check if we have proper initialization
-        if hasattr(self, "_tags_cache") and hasattr(self, "event_file_path"):
-            try:
-                self._scan_tags()  # Ensure cache is populated
-                all_tags = self._detailed_tags
-                if all_tags is None:
-                    return None
-                return all_tags
-            except Exception:
-                # If scanning fails, fall back to mock-based method
-                pass
-
-        # Check if we have detailed tags from scanning
-        if hasattr(self, "_detailed_tags") and self._detailed_tags is not None:
-            return self._detailed_tags
-        else:
-            # Fallback for tests using mocks - call the individual methods
-            return None
-
-    def _get_base_directories(self) -> list[str]:
-        """Return base directory paths for virtual filesystem."""
-        return [
-            "scalars/",
-            "images/",
-            "histograms/",
-            "audio/",
-            "text/",
-            "meshes/",
-            "hp_params/",
-        ]
-
-    def _sanitize_tag_for_path(self, tag: str) -> str:
-        """Convert tag to filesystem-safe name."""
-        return tag.replace("/", FileSystemConstants.PATH_REPLACEMENT_CHAR)
-
-    def _get_tags_with_fallback(
-        self, data_type: str, all_tags: dict[str, list[str]] | None
-    ) -> list[str]:
-        """Get tags using normal mode or fallback to individual methods."""
-        if all_tags is not None:
-            return all_tags.get(data_type, [])
-
-        # Fallback mode - call individual list methods
-        method_map = {
-            "scalars": self.list_scalars,
-            "images": self.list_images,
-            "histograms": self.list_histograms,
-            "audio": self.list_audio,
-            "text": self.list_text,
-            "meshes": self.list_meshes,
-            "hyperparameters": self.list_hyperparameters,
-        }
-
-        try:
-            method = method_map.get(data_type)
-            if method:
-                return method()
-            return []
-        except Exception:
-            return []
-
-    def _generate_simple_paths(
-        self, data_type: str, tags: list[str], extension: str
-    ) -> list[str]:
-        """Generate simple file paths for data types without steps."""
-        paths = []
-        for tag in tags:
-            safe_tag = self._sanitize_tag_for_path(tag)
-            paths.append(f"{data_type}/{safe_tag}.{extension}")
-        return paths
-
-    def _iterate_data_with_fallback(
-        self, data_type: str, tag: str, all_tags: dict[str, list[str]] | None
-    ) -> Iterator[Any]:
-        """Iterate data using normal mode or fallback with error handling."""
-        if all_tags is not None:
-            # Normal mode - direct iteration
-            method_map = {
-                "images": self.iterate_image_data,
-                "audio": self.iterate_audio_data,
-                "text": self.iterate_text_data,
-                "meshes": self.iterate_mesh_data,
-            }
-            method = method_map.get(data_type)
-            if method:
-                return method(tag)
-            return iter([])
-        else:
-            # Fallback mode with error handling
-            try:
-                method_map = {
-                    "images": self.iterate_image_data,
-                    "audio": self.iterate_audio_data,
-                    "text": self.iterate_text_data,
-                    "meshes": self.iterate_mesh_data,
-                }
-                method = method_map.get(data_type)
-                if method:
-                    return method(tag)
-                return iter([])
-            except Exception:
-                return iter([])
-
-    def _get_file_extension(self, data_type: str, data_item: Any = None) -> str:
-        """Get file extension for data type."""
-        if data_type == "images":
-            if data_item and hasattr(data_item, "encoded_image_string"):
-                return self.get_image_extension(data_item.encoded_image_string)
-            return "png"
-        elif data_type == "audio":
-            if data_item and hasattr(data_item, "content_type"):
-                return self.get_audio_extension(data_item.content_type)
-            return "wav"
-        elif data_type == "text":
-            return "txt"
-        elif data_type == "meshes":
-            return "ply"
-        else:
-            return "txt"
-
-    def _generate_step_based_paths(
-        self,
-        data_type: str,
-        tags: list[str],
-        digits: int,
-        all_tags: dict[str, list[str]] | None,
-    ) -> list[str]:
-        """Generate step-based file paths with error handling."""
-        paths = []
-
-        for tag in tags:
-            safe_tag = self._sanitize_tag_for_path(tag)
-            # Add tag directory
-            paths.append(f"{data_type}/{safe_tag}/")
-
-            # Add individual step files
-            for data_item in self._iterate_data_with_fallback(data_type, tag, all_tags):
-                step = data_item.step
-                padded_step = str(step).zfill(digits)
-                extension = self._get_file_extension(data_type, data_item)
-                paths.append(f"{data_type}/{safe_tag}/{padded_step}.{extension}")
-
-        return paths
-
-    def _generate_mesh_paths(
-        self, tags: list[str], digits: int, all_tags: dict[str, list[str]] | None
-    ) -> list[str]:
-        """Generate mesh paths with base tag grouping."""
-        paths = []
-
-        # Group mesh tags by base tag
-        base_tags = set()
-        for tag in tags:
-            if (
-                tag.endswith("_VERTEX")
-                or tag.endswith("_FACE")
-                or tag.endswith("_COLOR")
-            ):
-                base_tag = tag.rsplit("_", 1)[0]
-                base_tags.add(base_tag)
-
-        for base_tag in base_tags:
-            safe_tag = self._sanitize_tag_for_path(base_tag)
-            # Add tag directory
-            paths.append(f"meshes/{safe_tag}/")
-
-            # Get steps from vertex tag (most reliable)
-            vertex_tag = f"{base_tag}_VERTEX"
-            if vertex_tag in tags:
-                for data_item in self._iterate_data_with_fallback(
-                    "meshes", vertex_tag, all_tags
-                ):
-                    step = data_item.step
-                    padded_step = str(step).zfill(digits)
-                    paths.append(f"meshes/{safe_tag}/{padded_step}.ply")
-
-        return paths
-
-    def _generate_hyperparameter_paths(
-        self, all_tags: dict[str, list[str]] | None
-    ) -> list[str]:
-        """Generate hyperparameter paths."""
-        tags = self._get_tags_with_fallback("hyperparameters", all_tags)
-        if tags:
-            return ["hp_params/hp_params.yaml"]
-        return []
-
     def get_virtual_paths(self, digits: int = DEFAULT_DIGITS) -> list[str]:
         """Get all virtual paths that would exist in the filesystem."""
-        # Determine processing mode
-        all_tags = self._determine_processing_mode()
-
-        # Start with base directories
-        paths = self._get_base_directories()
-
-        # Generate paths for each data type
-        # Scalars (simple files)
-        scalar_tags = self._get_tags_with_fallback("scalars", all_tags)
-        paths.extend(self._generate_simple_paths("scalars", scalar_tags, "txt"))
-
-        # Histograms (simple files)
-        histogram_tags = self._get_tags_with_fallback("histograms", all_tags)
-        paths.extend(self._generate_simple_paths("histograms", histogram_tags, "txt"))
-
-        # Step-based data types
-        for data_type in ["images", "audio", "text"]:
-            tags = self._get_tags_with_fallback(data_type, all_tags)
-            paths.extend(
-                self._generate_step_based_paths(data_type, tags, digits, all_tags)
-            )
-
-        # Meshes (special handling for base tags)
-        mesh_tags = self._get_tags_with_fallback("meshes", all_tags)
-        paths.extend(self._generate_mesh_paths(mesh_tags, digits, all_tags))
-
-        # Hyperparameters (special case)
-        paths.extend(self._generate_hyperparameter_paths(all_tags))
-
-        return sorted(set(paths))
+        # Create virtual filesystem generator if not initialized (for tests)
+        if not hasattr(self, "_virtual_fs"):
+            self._virtual_fs = VirtualFilesystemGenerator(self)
+        return self._virtual_fs.get_virtual_paths(digits)

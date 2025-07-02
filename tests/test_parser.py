@@ -73,18 +73,18 @@ class TestEfficientTensorBoardParser:
 
     def test_get_image_extension(self):
         """Test image extension detection."""
-        parser = EfficientTensorBoardParser.__new__(EfficientTensorBoardParser)
+        from tboardfs.core.image_processor import ImageProcessor
 
         # PNG magic bytes with proper header
         png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-        assert parser.get_image_extension(png_bytes) == "png"
+        assert ImageProcessor.get_image_extension(png_bytes) == "png"
 
         # JPEG magic bytes with proper header
         jpeg_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb\x00C"
-        assert parser.get_image_extension(jpeg_bytes) == "jpg"
+        assert ImageProcessor.get_image_extension(jpeg_bytes) == "jpg"
 
         # Unknown
-        assert parser.get_image_extension(b"unknown") == "bin"
+        assert ImageProcessor.get_image_extension(b"unknown") == "bin"
 
     def test_get_audio_extension(self):
         """Test audio extension detection."""
