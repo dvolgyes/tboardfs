@@ -87,15 +87,40 @@ class TestTensorBoardParserWithRealData:
             output_path = Path(tmp_dir)
             assert output_path.exists()
 
-            # Check directory structure
-            assert (output_path / "scalars").exists()
-            assert (output_path / "images").exists()
-            assert (output_path / "histograms").exists()
-            assert (output_path / "audio").exists()
-            assert (output_path / "text").exists()
+            # Check that only directories with actual content are created
+            images = parser.list_images()
+            scalars = parser.list_scalars()
+            histograms = parser.list_histograms()
+            audio = parser.list_audio()
+            text = parser.list_text()
+
+            # Only check for directories that should contain data
+            if scalars:
+                assert (output_path / "scalars").exists()
+            else:
+                assert not (output_path / "scalars").exists()
+
+            if images:
+                assert (output_path / "images").exists()
+            else:
+                assert not (output_path / "images").exists()
+
+            if histograms:
+                assert (output_path / "histograms").exists()
+            else:
+                assert not (output_path / "histograms").exists()
+
+            if audio:
+                assert (output_path / "audio").exists()
+            else:
+                assert not (output_path / "audio").exists()
+
+            if text:
+                assert (output_path / "text").exists()
+            else:
+                assert not (output_path / "text").exists()
 
             # Check that image files were created
-            images = parser.list_images()
             if images:
                 # Find image directory
                 for tag in images:

@@ -966,11 +966,13 @@ class EfficientTensorBoardParser:
     ) -> None:
         """Save scalar data in unified CSV + NPZ formats."""
         scalars_dir = output_path / "scalars"
-        scalars_dir.mkdir(parents=True, exist_ok=True)
 
         for tag, data_points in scalar_data_buffers.items():
             if not data_points:
                 continue
+
+            # Create scalars directory only when we have data to save
+            scalars_dir.mkdir(parents=True, exist_ok=True)
 
             safe_tag = tag.replace("/", "_")
 
@@ -1005,11 +1007,13 @@ class EfficientTensorBoardParser:
     ) -> None:
         """Save histogram data in unified CSV + NPZ formats."""
         histograms_dir = output_path / "histograms"
-        histograms_dir.mkdir(parents=True, exist_ok=True)
 
         for tag, data_points in histogram_data_buffers.items():
             if not data_points:
                 continue
+
+            # Create histograms directory only when we have data to save
+            histograms_dir.mkdir(parents=True, exist_ok=True)
 
             safe_tag = tag.replace("/", "_")
 
@@ -1711,24 +1715,8 @@ class EfficientTensorBoardParser:
 
         logger.debug(f"Processing data types: {', '.join(sorted(enabled_types))}")
 
-        # Create base subdirectories for enabled types only
-        type_to_dir = {
-            "scalar": "scalars",
-            "image": "images",
-            "video": "videos",
-            "histogram": "histograms",
-            "audio": "audio",
-            "text": "text",
-            "mesh": "meshes",
-            "hyperparameter": "hp_params",
-            "pr_curve": "pr_curves",
-        }
-
-        for data_type in enabled_types:
-            dirname = type_to_dir[data_type]
-            (output_path / dirname).mkdir(exist_ok=True)
-
-        logger.debug("Base subdirectories created")
+        # Note: Directories will be created on-demand when files are saved
+        # This avoids creating empty directories for data types with no content
 
         # ScalarFile instances for handling scalar data
         scalar_files: dict[Path, ScalarFile] = {}
