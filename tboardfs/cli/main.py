@@ -6,22 +6,24 @@ import click
 from pathlib import Path
 from loguru import logger
 
-from .core.file_utils import (
+from ..core.file_utils import (
     setup_cli_context,
     handle_standard_error,
+)
+from .validators import (
     validate_image_format_options,
     validate_audio_format_options,
     validate_ply_format_options,
     validate_type_filtering_options,
     SUPPORTED_DATA_TYPES,
 )
-from .commands.list_command import (
+from ..commands.list_command import (
     list_single_file,
     list_directory,
     list_directory_recursive,
 )
-from .commands.extract_command import extract_tensorboard_data
-from .commands.export_command import export_virtual_path
+from ..commands.extract_command import extract_tensorboard_data
+from ..commands.export_command import export_virtual_path
 
 
 def setup_logging(logfile: str | None = None, debug: bool = False) -> None:
