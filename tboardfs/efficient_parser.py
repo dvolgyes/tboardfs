@@ -29,6 +29,8 @@ from tboardfs.core.data_types import (
     HyperparameterData,
     PRCurveData,
 )
+from tboardfs.core.data_detector import TensorDataDetector
+from tboardfs.exporters import ScalarExporter, ImageExporter, HistogramExporter
 
 # Import pydub for audio format conversion
 try:
@@ -132,97 +134,15 @@ class EfficientTensorBoardParser:
 
     def _is_image_tensor(self, tensor_proto: Any, tag: str) -> bool:
         """Check if a tensor seems to be an image."""
-        try:
-            # from tensorboard.util import tensor_util
-
-            arr = tensor_util.make_ndarray(tensor_proto)
-            logger.debug(
-                f"Checking if tensor '{tag}' is image: shape={arr.shape}, ndim={arr.ndim}, dtype={arr.dtype}"
-            )
-
-            # Check shape: (H, W, C) or (N, H, W, C) or (C, H, W) or (N, C, H, W)
-            if arr.ndim < 2 or arr.ndim > 4:
-                logger.debug(f"Tensor '{tag}' is not image: ndim is {arr.ndim}")
-                return False
-
-            # Check channels: last or second dimension should be 1, 3, or 4
-            # For (H, W, C) or (N, H, W, C)
-            if arr.shape[-1] in [1, 3, 4]:
-                logger.debug(f"Tensor '{tag}' is image: shape[-1] is {arr.shape[-1]}")
-                return True
-            # For (C, H, W) or (N, C, H, W)
-            if arr.ndim > 2 and arr.shape[-3] in [1, 3, 4]:
-                logger.debug(f"Tensor '{tag}' is image: shape[-3] is {arr.shape[-3]}")
-                return True
-            if arr.ndim == 3 and arr.shape[0] in [1, 3, 4]:  # (C,H,W)
-                logger.debug(f"Tensor '{tag}' is image: shape[0] is {arr.shape[0]}")
-                return True
-
-            logger.debug(f"Tensor '{tag}' is not image: no shape condition met")
-            return False
-        except Exception as e:
-            logger.debug(f"Tensor '{tag}' to-image check failed: {e}")
-            return False
+        return TensorDataDetector.is_image_tensor(tensor_proto, tag)
 
     def _is_video_data(self, image_data: bytes, tag: str) -> bool:
         """Check if image data is actually a GIF video."""
-        try:
-            # Check for GIF header (videos in TensorBoard are stored as GIF)
-            if image_data.startswith(b"GIF87a") or image_data.startswith(b"GIF89a"):
-                logger.debug(f"Detected GIF video for tag '{tag}'")
-                return True
-
-            # Additional heuristics: check tag name for video-like patterns
-            video_keywords = ["video", "animation", "movie", "gif", "sequence"]
-            tag_lower = tag.lower()
-            for keyword in video_keywords:
-                if keyword in tag_lower:
-                    logger.debug(f"Tag '{tag}' contains video keyword '{keyword}'")
-                    return True
-
-            return False
-        except Exception as e:
-            logger.debug(f"Video detection failed for tag '{tag}': {e}")
-            return False
+        return TensorDataDetector.is_video_data(image_data, tag)
 
     def _is_pr_curve_tensor(self, tensor_proto: Any, tag: str) -> bool:
         """Check if a tensor contains PR curve data."""
-        try:
-            arr = tensor_util.make_ndarray(tensor_proto)
-            logger.debug(
-                f"Checking if tensor '{tag}' is PR curve: shape={arr.shape}, dtype={arr.dtype}"
-            )
-
-            # PR curves have specific shape [6, N] where N is number of thresholds
-            if arr.ndim == 2 and arr.shape[0] == 6:
-                # Additional checks: tag name contains pr_curve, precision, recall
-                tag_lower = tag.lower()
-                pr_keywords = [
-                    "pr_curve",
-                    "precision",
-                    "recall",
-                    "pr",
-                    "binary_classification",
-                    "multi_class",
-                    "model_comparison",
-                    "threshold_analysis",
-                ]
-
-                for keyword in pr_keywords:
-                    if keyword in tag_lower:
-                        logger.debug(
-                            f"Detected PR curve tensor for tag '{tag}' (keyword: {keyword})"
-                        )
-                        return True
-
-                # Even without keyword match, [6, N] shape is strong indicator for PR curves
-                logger.debug(f"Detected PR curve tensor for tag '{tag}' (shape-based)")
-                return True
-
-            return False
-        except Exception as e:
-            logger.debug(f"PR curve detection failed for tag '{tag}': {e}")
-            return False
+        return TensorDataDetector.is_pr_curve_tensor(tensor_proto, tag)
 
     def _scan_tags(self) -> dict[str, list[str]]:
         """Scan the file once to build a directory of all tags by type."""
@@ -1718,10 +1638,25 @@ class EfficientTensorBoardParser:
         # Note: Directories will be created on-demand when files are saved
         # This avoids creating empty directories for data types with no content
 
-        # ScalarFile instances for handling scalar data
+        # Initialize exporters for modular data handling
+        scalar_exporter = (
+            ScalarExporter(output_path, digits) if "scalar" in enabled_types else None
+        )
+        image_exporter = (
+            ImageExporter(output_path, digits)
+            if "image" in enabled_types or "video" in enabled_types
+            else None
+        )
+        histogram_exporter = (
+            HistogramExporter(output_path, digits)
+            if "histogram" in enabled_types
+            else None
+        )
+
+        # Legacy ScalarFile instances for backward compatibility
         scalar_files: dict[Path, ScalarFile] = {}
 
-        # Unified data buffers for CSV + NPZ export
+        # Legacy buffers for types not yet migrated to exporters
         scalar_data_buffers: dict[str, list[tuple[int, float, float]]] = {}
         histogram_data_buffers: dict[str, list[tuple[int, dict, float]]] = {}
 
@@ -1763,26 +1698,18 @@ class EfficientTensorBoardParser:
                             if plugin_name == "scalars" or value.HasField(
                                 "simple_value"
                             ):
-                                if "scalar" in enabled_types:
-                                    self._save_scalar(
-                                        event,
-                                        value,
-                                        output_path,
-                                        scalar_files,
-                                        scalar_data_buffers,
-                                    )
+                                if scalar_exporter:
+                                    scalar_exporter.save_data(event, value)
                             else:
                                 # Prioritize histogram detection first
                                 if plugin_name == "histograms" or value.HasField(
                                     "histo"
                                 ):
-                                    if "histogram" in enabled_types:
-                                        self._save_histogram(
+                                    if histogram_exporter:
+                                        histogram_exporter.save_data(
                                             event,
                                             value,
-                                            output_path,
-                                            histogram_images,
-                                            histogram_data_buffers,
+                                            histogram_images=histogram_images,
                                         )
                                 elif plugin_name == "audio" or value.HasField("audio"):
                                     if "audio" in enabled_types:
@@ -1836,22 +1763,15 @@ class EfficientTensorBoardParser:
                                         is_image = True
 
                                     if is_video:
-                                        if "video" in enabled_types:
-                                            self._save_video(
-                                                event,
-                                                value,
-                                                output_path,
-                                                digits,
-                                            )
+                                        if image_exporter:
+                                            image_exporter.save_video(event, value)
                                     elif plugin_name == "images" or is_image:
-                                        if "image" in enabled_types:
-                                            self._save_image(
+                                        if image_exporter:
+                                            image_exporter.save_image(
                                                 event,
                                                 value,
-                                                output_path,
-                                                digits,
-                                                image_format,
-                                                image_quality,
+                                                image_format=image_format,
+                                                image_quality=image_quality,
                                             )
                                     elif plugin_name == "text" or (
                                         value.HasField("tensor")
@@ -1875,17 +1795,24 @@ class EfficientTensorBoardParser:
                                 f"Failed to save data for tag '{value.tag}': {e}"
                             )
         finally:
-            # Always close all scalar files to ensure data is written and sorted
+            # Finalize exporters to ensure all data is written
+            if scalar_exporter:
+                scalar_exporter.finalize_export()
+
+            if histogram_exporter:
+                histogram_exporter.finalize_export()
+
+            # Legacy scalar file handling for backward compatibility
             for scalar_file in scalar_files.values():
                 scalar_file.close()
 
-            # Export unified formats for numerical data
+            # Legacy unified formats (will be removed after full migration)
             if scalar_data_buffers and "scalar" in enabled_types:
-                logger.debug("Exporting unified scalar formats (CSV + NPZ)")
+                logger.debug("Exporting legacy unified scalar formats (CSV + NPZ)")
                 self._save_unified_scalars(scalar_data_buffers, output_path)
 
             if histogram_data_buffers and "histogram" in enabled_types:
-                logger.debug("Exporting unified histogram formats (CSV + NPZ)")
+                logger.debug("Exporting legacy unified histogram formats (CSV + NPZ)")
                 self._save_unified_histograms(histogram_data_buffers, output_path)
 
             # Write hyperparameters to YAML file if any were collected
