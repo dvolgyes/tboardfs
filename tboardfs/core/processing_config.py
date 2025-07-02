@@ -4,7 +4,7 @@ This module contains configuration classes for data processing operations,
 including memory management, validation limits, and progress tracking options.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .constants import (
@@ -178,10 +178,10 @@ class ConcurrencyConfig:
 class ProcessingConfig:
     """Comprehensive configuration for data processing operations."""
 
-    memory: MemoryConfig = MemoryConfig()
-    validation: ValidationConfig = ValidationConfig()
-    progress: ProgressConfig = ProgressConfig()
-    concurrency: ConcurrencyConfig = ConcurrencyConfig()
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
+    progress: ProgressConfig = field(default_factory=ProgressConfig)
+    concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
 
     def validate(self) -> None:
         """Validate all processing configurations."""

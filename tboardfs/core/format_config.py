@@ -4,7 +4,7 @@ This module contains format-specific configuration classes and validation
 functions for different data types supported by TensorBoard.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from .constants import (
@@ -216,11 +216,11 @@ class DataFormatConfig:
 class FormatConfig:
     """Comprehensive format configuration for all data types."""
 
-    image: ImageFormatConfig = ImageFormatConfig()
-    audio: AudioFormatConfig = AudioFormatConfig()
-    mesh: MeshFormatConfig = MeshFormatConfig()
-    text: TextFormatConfig = TextFormatConfig()
-    data: DataFormatConfig = DataFormatConfig()
+    image: ImageFormatConfig = field(default_factory=ImageFormatConfig)
+    audio: AudioFormatConfig = field(default_factory=AudioFormatConfig)
+    mesh: MeshFormatConfig = field(default_factory=MeshFormatConfig)
+    text: TextFormatConfig = field(default_factory=TextFormatConfig)
+    data: DataFormatConfig = field(default_factory=DataFormatConfig)
 
     def validate(self) -> None:
         """Validate all format configurations."""
