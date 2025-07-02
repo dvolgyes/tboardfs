@@ -4,7 +4,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from ..parser import TensorBoardParser
+from ..efficient_parser import TensorBoardParser
 
 
 class ContentReporter:

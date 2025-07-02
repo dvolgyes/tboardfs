@@ -7,7 +7,7 @@ from typing import Any
 
 from loguru import logger
 
-from ..parser import TensorBoardParser
+from ..efficient_parser import TensorBoardParser
 from .file_utils import restore_tag_from_path, extract_step_from_filename
 
 

@@ -7,7 +7,7 @@ from typing import Any
 import click
 from loguru import logger
 
-from ..parser import TensorBoardParser
+from ..efficient_parser import TensorBoardParser
 
 
 # Supported data types for filtering

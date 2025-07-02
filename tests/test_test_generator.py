@@ -1,7 +1,7 @@
 """Test parsing of pre-generated test data."""
 
 from pathlib import Path
-from tboardfs.parser import TensorBoardParser
+from tboardfs.efficient_parser import TensorBoardParser
 
 
 class TestPreGeneratedData:

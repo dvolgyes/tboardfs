@@ -1,6 +1,6 @@
 """Test TensorBoard parser functionality with v2 format."""
 
-from tboardfs.parser import TensorBoardParser
+from tboardfs.efficient_parser import TensorBoardParser
 
 
 class TestTensorBoardParser:

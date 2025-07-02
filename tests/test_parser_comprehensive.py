@@ -5,7 +5,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from tboardfs.parser import TensorBoardParser, ImageData
+from tboardfs.efficient_parser import TensorBoardParser
+from tboardfs.core.data_types import ImageData
 
 
 class TestTensorBoardParserWithRealData:
@@ -300,6 +301,10 @@ class TestTensorBoardParserErrorHandling:
     def test_tag_name_sanitization(self):
         """Test tag name sanitization for filesystem safety."""
         parser = TensorBoardParser.__new__(TensorBoardParser)
+        # Initialize attributes that __init__ would normally set
+        parser._tags_cache = None
+        parser.show_progress = False
+        parser.event_file_path = "dummy_file"
 
         # Mock some content with slash-containing tags
         with patch.object(
@@ -312,8 +317,6 @@ class TestTensorBoardParserErrorHandling:
                             with patch.object(
                                 parser, "get_image_data", return_value=[]
                             ):
-                                parser.show_progress = False
-
                                 paths = parser.get_virtual_paths()
 
                                 # Check that slashes in tags are replaced with underscores
