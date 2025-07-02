@@ -16,6 +16,7 @@ from tqdm import tqdm
 import sys
 from loguru import logger
 import magic
+import io
 from tboardfs.scalar_file import ScalarFile
 from tboardfs.core.data_types import (
     ScalarData,
@@ -26,6 +27,16 @@ from tboardfs.core.data_types import (
     MeshData,
     HyperparameterData,
 )
+
+# Import pydub for audio format conversion
+try:
+    from pydub import AudioSegment
+
+    PYDUB_AVAILABLE = True
+except ImportError:
+    PYDUB_AVAILABLE = False
+    AudioSegment = None
+    logger.warning("pydub not available. Audio format conversion disabled.")
 
 # Import hyperparameter protobuf definitions
 try:
@@ -975,39 +986,80 @@ class EfficientTensorBoardParser:
         digits: int,
         audio_format: str = "mp3",
     ) -> None:
-        """Save audio data to file."""
+        """Save audio data to file with format conversion."""
         tag = value.tag
         safe_tag = tag.replace("/", "_")
         tag_dir = output_path / "audio" / safe_tag
         tag_dir.mkdir(parents=True, exist_ok=True)
 
-        # Use the requested audio format instead of original content type
-        ext = audio_format
         padded_step = str(event.step).zfill(digits)
-        audio_file = tag_dir / f"{padded_step}.{ext}"
+        audio_file = tag_dir / f"{padded_step}.{audio_format}"
 
-        # For now, save as-is since audio conversion requires additional libraries
-        # TODO: Add audio format conversion using pydub or similar library
         try:
-            with audio_file.open("wb") as f:
-                if value.HasField("audio"):
-                    # Legacy audio format
-                    f.write(value.audio.encoded_audio_string)
-                elif value.HasField("tensor") and value.tensor.dtype == 7:
-                    # Modern tensor-based audio format
-                    arr = tensor_util.make_ndarray(value.tensor)
-                    if arr.size > 0:
-                        # For string tensors, extract the bytes directly
-                        audio_data = arr.item() if arr.ndim == 0 else arr[0]
-                        if isinstance(audio_data, bytes):
-                            f.write(audio_data)
-                        else:
-                            # If it's a string, encode it to bytes
-                            f.write(str(audio_data).encode("utf-8"))
+            # Extract raw audio data
+            raw_audio_data = None
+            if value.HasField("audio"):
+                # Legacy audio format
+                raw_audio_data = value.audio.encoded_audio_string
+            elif value.HasField("tensor") and value.tensor.dtype == 7:
+                # Modern tensor-based audio format
+                arr = tensor_util.make_ndarray(value.tensor)
+                if arr.size > 0:
+                    # For string tensors, extract the bytes directly
+                    audio_data = arr.item() if arr.ndim == 0 else arr[0]
+                    if isinstance(audio_data, bytes):
+                        raw_audio_data = audio_data
                     else:
-                        logger.warning(f"Empty audio tensor for tag {tag}")
+                        # If it's a string, encode it to bytes
+                        raw_audio_data = str(audio_data).encode("utf-8")
                 else:
-                    logger.warning(f"No audio data found for tag {tag}")
+                    logger.warning(f"Empty audio tensor for tag {tag}")
+                    return
+            else:
+                logger.warning(f"No audio data found for tag {tag}")
+                return
+
+            if raw_audio_data is None:
+                logger.warning(f"No audio data extracted for tag {tag}")
+                return
+
+            # Convert audio format if needed and pydub is available
+            if PYDUB_AVAILABLE and audio_format != "wav":
+                try:
+                    # Load the raw audio data (typically WAV format) into AudioSegment
+                    audio_segment = AudioSegment.from_file(io.BytesIO(raw_audio_data))
+
+                    # Convert to requested format
+                    output_buffer = io.BytesIO()
+                    audio_segment.export(output_buffer, format=audio_format)
+                    converted_data = output_buffer.getvalue()
+
+                    # Save the converted audio
+                    with audio_file.open("wb") as f:
+                        f.write(converted_data)
+
+                    logger.debug(
+                        f"Converted audio for tag {tag} from WAV to {audio_format}"
+                    )
+
+                except Exception as conversion_error:
+                    logger.warning(
+                        f"Audio conversion failed for tag {tag}: {conversion_error}"
+                    )
+                    logger.info(f"Falling back to saving raw audio data for tag {tag}")
+                    # Fall back to saving raw data
+                    with audio_file.open("wb") as f:
+                        f.write(raw_audio_data)
+            else:
+                # Save raw audio data (no conversion)
+                if not PYDUB_AVAILABLE and audio_format != "wav":
+                    logger.warning(
+                        f"pydub not available - saving {tag} as raw audio with .{audio_format} extension"
+                    )
+
+                with audio_file.open("wb") as f:
+                    f.write(raw_audio_data)
+
         except Exception as e:
             logger.error(f"Failed to save audio for tag {tag}: {e}")
             # Remove the empty file if it was created
