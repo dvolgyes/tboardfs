@@ -6,6 +6,8 @@ from typing import Any
 from tensorboard.compat.proto import event_pb2
 from loguru import logger
 
+from ..core.unified_virtual_paths import VirtualPathBuilder
+
 
 class BaseExporter(ABC):
     """Abstract base class for TensorBoard data exporters."""
@@ -19,6 +21,7 @@ class BaseExporter(ABC):
         """
         self.output_path = output_path
         self.digits = digits
+        self.path_builder = VirtualPathBuilder(digits=digits)
 
     @abstractmethod
     def save_data(self, event: event_pb2.Event, value: Any, **kwargs: Any) -> None:
@@ -27,7 +30,7 @@ class BaseExporter(ABC):
 
     def _sanitize_tag(self, tag: str) -> str:
         """Sanitize tag name for filesystem safety."""
-        return tag.replace("/", "_")
+        return self.path_builder.sanitize_tag(tag)
 
     def _ensure_directory_exists(self, directory: Path) -> None:
         """Create directory if it doesn't exist."""
@@ -35,7 +38,7 @@ class BaseExporter(ABC):
 
     def _format_step(self, step: int) -> str:
         """Format step number with zero padding."""
-        return str(step).zfill(self.digits)
+        return self.path_builder.format_step(step)
 
     def _log_save_error(self, tag: str, error: Exception) -> None:
         """Log save error with context."""

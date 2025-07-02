@@ -8,6 +8,7 @@ import click
 from loguru import logger
 
 from ..efficient_parser import EfficientTensorBoardParser
+from .data_source import DataSource, DataSourceFactory
 
 
 # Supported data types for filtering
@@ -44,6 +45,24 @@ def create_parser_with_progress(
     return EfficientTensorBoardParser(file_path, show_progress=show_progress)
 
 
+def create_parser_from_data_source(
+    data_source: DataSource, show_progress: bool = False
+) -> EfficientTensorBoardParser:
+    """Create a TensorBoardParser from a DataSource with optional progress display."""
+    logger.debug(
+        f"Creating parser for data source: {data_source.get_identifier()} (progress: {show_progress})"
+    )
+    return EfficientTensorBoardParser(
+        data_source=data_source, show_progress=show_progress
+    )
+
+
+def create_data_source_from_path(path: str | Path) -> DataSource:
+    """Create DataSource from file or directory path."""
+    logger.debug(f"Creating data source from path: {path}")
+    return DataSourceFactory.from_path(path)
+
+
 def validate_and_exit_on_error(tensorboard_path: str) -> Path:
     """Validate TensorBoard file path and exit with error if invalid."""
     logger.debug(f"Validating TensorBoard file: {tensorboard_path}")
@@ -55,14 +74,8 @@ def validate_and_exit_on_error(tensorboard_path: str) -> Path:
     return path
 
 
-def sanitize_tag_for_path(tag: str) -> str:
-    """Convert tag name to filesystem-safe format."""
-    return tag.replace("/", "_")
-
-
-def restore_tag_from_path(safe_tag: str) -> str:
-    """Restore original tag name from filesystem-safe format."""
-    return safe_tag.replace("_", "/")
+# Note: sanitize_tag_for_path and restore_tag_from_path are now imported
+# from unified_virtual_paths for consistency
 
 
 def extract_step_from_filename(filename: str) -> int:

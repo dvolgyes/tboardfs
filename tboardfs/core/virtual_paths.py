@@ -1,4 +1,8 @@
-"""Virtual path parsing and export handling for tboardfs."""
+"""Virtual path parsing and export handling for tboardfs.
+
+This module provides backward compatibility for the original virtual path system
+while migrating to the unified virtual path system.
+"""
 
 import sys
 from pathlib import Path
@@ -8,17 +12,30 @@ from typing import Any
 from loguru import logger
 
 from ..efficient_parser import EfficientTensorBoardParser
-from .file_utils import restore_tag_from_path, extract_step_from_filename
+from .unified_virtual_paths import (
+    VirtualPathParser,
+    VirtualPathInfo as UnifiedVirtualPathInfo,
+)
 
 
 @dataclass
 class VirtualPathInfo:
-    """Information parsed from a virtual path."""
+    """Information parsed from a virtual path (legacy compatibility)."""
 
     data_type: str
     tag: str
     step: int | None = None
     extension: str | None = None
+
+    @classmethod
+    def from_unified(cls, unified_info: UnifiedVirtualPathInfo) -> "VirtualPathInfo":
+        """Create legacy VirtualPathInfo from unified version."""
+        return cls(
+            data_type=unified_info.data_type.value,
+            tag=unified_info.tag,
+            step=unified_info.step,
+            extension=unified_info.extension,
+        )
 
 
 class VirtualPathHandler:
@@ -26,164 +43,18 @@ class VirtualPathHandler:
 
     def __init__(self, parser: EfficientTensorBoardParser):
         self.parser = parser
+        self.unified_parser = VirtualPathParser()
 
     def parse_virtual_path(self, virtual_path: str) -> VirtualPathInfo:
-        """Parse virtual path into components."""
-        parts = virtual_path.strip("/").split("/")
-
-        if len(parts) < 2:
-            logger.error(f"Invalid virtual path format: {virtual_path}")
+        """Parse virtual path into components using unified system."""
+        try:
+            unified_info = self.unified_parser.parse(virtual_path)
+            return VirtualPathInfo.from_unified(unified_info)
+        except ValueError as e:
+            logger.error(str(e))
             sys.exit(1)
 
-        data_type = parts[0]
-
-        if data_type == "scalars":
-            return self._parse_scalar_path(parts, virtual_path)
-        elif data_type == "images":
-            return self._parse_image_path(parts, virtual_path)
-        elif data_type == "histograms":
-            return self._parse_histogram_path(parts, virtual_path)
-        elif data_type == "audio":
-            return self._parse_audio_path(parts, virtual_path)
-        elif data_type == "text":
-            return self._parse_text_path(parts, virtual_path)
-        elif data_type == "meshes":
-            return self._parse_mesh_path(parts, virtual_path)
-        elif data_type == "hp_params":
-            return self._parse_hyperparameter_path(parts, virtual_path)
-        else:
-            logger.error(f"Unsupported data type: {data_type}")
-            logger.error(
-                "Supported types: scalars, images, histograms, audio, text, meshes, hp_params"
-            )
-            sys.exit(1)
-
-    def _parse_scalar_path(self, parts: list, virtual_path: str) -> VirtualPathInfo:
-        """Parse scalar path: scalars/tag_name.txt"""
-        if not parts[1].endswith(".txt"):
-            logger.error(f"Scalar path must end with .txt: {virtual_path}")
-            sys.exit(1)
-
-        tag = restore_tag_from_path(parts[1][:-4])  # Remove .txt
-        return VirtualPathInfo(data_type="scalars", tag=tag, extension="txt")
-
-    def _parse_image_path(self, parts: list, virtual_path: str) -> VirtualPathInfo:
-        """Parse image path: images/tag_name/step.ext"""
-        if len(parts) != 3:
-            logger.error(
-                f"Image path must be in format 'images/tag/step.ext': {virtual_path}"
-            )
-            sys.exit(1)
-
-        tag = restore_tag_from_path(parts[1])
-        step_file = parts[2]
-        step = extract_step_from_filename(step_file)
-        extension = step_file.split(".")[-1]
-
-        return VirtualPathInfo(
-            data_type="images", tag=tag, step=step, extension=extension
-        )
-
-    def _parse_histogram_path(self, parts: list, virtual_path: str) -> VirtualPathInfo:
-        """Parse histogram path: histograms/tag_name.txt"""
-        if not parts[1].endswith(".txt"):
-            logger.error(f"Histogram path must end with .txt: {virtual_path}")
-            sys.exit(1)
-
-        tag = restore_tag_from_path(parts[1][:-4])  # Remove .txt
-        return VirtualPathInfo(data_type="histograms", tag=tag, extension="txt")
-
-    def _parse_audio_path(self, parts: list, virtual_path: str) -> VirtualPathInfo:
-        """Parse audio path: audio/tag_name/step.ext"""
-        if len(parts) != 3:
-            logger.error(
-                f"Audio path must be in format 'audio/tag/step.ext': {virtual_path}"
-            )
-            sys.exit(1)
-
-        tag = restore_tag_from_path(parts[1])
-        step_file = parts[2]
-        step = extract_step_from_filename(step_file)
-        extension = step_file.split(".")[-1]
-
-        return VirtualPathInfo(
-            data_type="audio", tag=tag, step=step, extension=extension
-        )
-
-    def _parse_text_path(self, parts: list, virtual_path: str) -> VirtualPathInfo:
-        """Parse text path: text/tag_name/step.txt"""
-        if len(parts) != 3:
-            logger.error(
-                f"Text path must be in format 'text/tag/step.txt': {virtual_path}"
-            )
-            sys.exit(1)
-
-        tag = restore_tag_from_path(parts[1])
-        step_file = parts[2]
-
-        if not step_file.endswith(".txt"):
-            logger.error(f"Text file must end with .txt: {virtual_path}")
-            sys.exit(1)
-
-        step = int(step_file[:-4])  # Remove .txt and get step
-        return VirtualPathInfo(data_type="text", tag=tag, step=step, extension="txt")
-
-    def _parse_mesh_path(self, parts: list, virtual_path: str) -> VirtualPathInfo:
-        """Parse mesh path: meshes/tag_name/step.ply"""
-        if len(parts) != 3:
-            logger.error(
-                f"Mesh path must be in format 'meshes/tag/step.ply': {virtual_path}"
-            )
-            sys.exit(1)
-
-        # For meshes, we need special handling since tags can contain both / and _
-        # The virtual path format is: meshes/Tag_With_Underscores_Replacing_Slashes/step.ply
-        # We need to convert back: underscores to slashes for the base tag
-        safe_tag = parts[1]
-        step_file = parts[2]
-
-        if not step_file.endswith(".ply"):
-            logger.error(f"Mesh file must end with .ply: {virtual_path}")
-            sys.exit(1)
-
-        step = int(step_file[:-4])  # Remove .ply and get step
-
-        # Convert safe_tag back to original tag
-        # We need to find the correct base tag from available mesh tags
-        mesh_tags = self.parser.list_meshes()
-        base_tags = set()
-        for mesh_tag in mesh_tags:
-            base_tag = mesh_tag.rstrip("_VERTEX").rstrip("_FACE").rstrip("_COLOR")
-            base_tags.add(base_tag)
-
-        # Find the base tag that matches our safe_tag when encoded
-        tag = None
-        for base_tag in base_tags:
-            encoded_base_tag = base_tag.replace("/", "_")
-            if encoded_base_tag == safe_tag:
-                tag = base_tag
-                break
-
-        if tag is None:
-            logger.error(f"Cannot find mesh base tag for virtual path: {virtual_path}")
-            logger.error(f"Available base tags: {sorted(base_tags)}")
-            sys.exit(1)
-
-        return VirtualPathInfo(data_type="meshes", tag=tag, step=step, extension="ply")
-
-    def _parse_hyperparameter_path(
-        self, parts: list, virtual_path: str
-    ) -> VirtualPathInfo:
-        """Parse hyperparameter path: hp_params/hp_params.yaml"""
-        if len(parts) != 2 or parts[1] != "hp_params.yaml":
-            logger.error(
-                f"Hyperparameter path must be 'hp_params/hp_params.yaml': {virtual_path}"
-            )
-            sys.exit(1)
-
-        return VirtualPathInfo(
-            data_type="hp_params", tag="hyperparameters", extension="yaml"
-        )
+    # Legacy parsing methods removed - now handled by unified system
 
     def _is_data_type_enabled(
         self, data_type: str, type_filters: dict[str, set[str]] | None
@@ -192,18 +63,13 @@ class VirtualPathHandler:
         if not type_filters:
             return True
 
-        # Map plural data types to singular for filter matching
-        type_mapping = {
-            "scalars": "scalar",
-            "images": "image",
-            "histograms": "histogram",
-            "audio": "audio",
-            "text": "text",
-            "meshes": "mesh",
-            "hp_params": "hyperparameter",
-        }
+        # Use the unified data type mapping from VirtualPathConfig
+        from .unified_virtual_paths import VirtualPathConfig
 
-        filter_type = type_mapping.get(data_type, data_type)
+        # Map directory names to DataType values
+        data_type_obj = VirtualPathConfig.from_directory_name(data_type)
+        filter_type = data_type_obj.value if data_type_obj else data_type
+
         ignore_types = type_filters.get("ignore", set())
         select_types = type_filters.get("select", set())
 

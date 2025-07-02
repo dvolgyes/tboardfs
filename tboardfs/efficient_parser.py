@@ -29,6 +29,7 @@ from tboardfs.core.data_types import (
 )
 from tboardfs.core.data_detector import TensorDataDetector
 from tboardfs.core.export_pipeline import ExportPipeline, ExportConfig
+from tboardfs.core.data_source import DataSource, FileDataSource
 
 # Import pydub for audio format conversion
 try:
@@ -66,12 +67,36 @@ class EfficientTensorBoardParser:
     EventAccumulator which loads everything into memory.
     """
 
-    def __init__(self, event_file_path: str, show_progress: bool = False):
-        """Initialize parser with event file path."""
-        logger.debug(
-            f"Initializing EfficientTensorBoardParser for file: {event_file_path}"
-        )
-        self.event_file_path = event_file_path
+    def __init__(
+        self,
+        event_file_path: str | DataSource | None = None,
+        show_progress: bool = False,
+        data_source: DataSource | None = None,
+    ):
+        """Initialize parser with event file path or DataSource.
+
+        Args:
+            event_file_path: Path to event file (deprecated, use data_source instead)
+            show_progress: Whether to show progress bars
+            data_source: DataSource instance for flexible data access
+        """
+        # Handle backward compatibility
+        if data_source is not None:
+            self.data_source = data_source
+            # Keep event_file_path for backward compatibility
+            self.event_file_path = data_source.get_identifier()
+        elif event_file_path is not None:
+            if isinstance(event_file_path, DataSource):
+                # Handle case where DataSource is passed as first argument
+                self.data_source = event_file_path
+                self.event_file_path = event_file_path.get_identifier()
+            else:
+                # Traditional file path
+                self.data_source = FileDataSource(event_file_path)
+                self.event_file_path = str(event_file_path)
+        else:
+            raise ValueError("Either event_file_path or data_source must be provided")
+
         self.show_progress = show_progress
 
         # Cache for tags to avoid re-scanning
@@ -79,34 +104,43 @@ class EfficientTensorBoardParser:
         self._detailed_tags: dict[str, list[str]] | None = None
         self._event_count: int | None = None
 
-        # Check file size for logging (handle missing files gracefully)
-        try:
-            file_size = Path(event_file_path).stat().st_size
-            file_size_mb = file_size / (1024 * 1024)
-            logger.debug(f"TensorBoard file size: {file_size_mb:.1f} MB")
+        # Log data source information
+        source_info = self.data_source.get_source_info()
+        logger.debug(
+            f"Initializing EfficientTensorBoardParser for {source_info.get('type', 'unknown')} source: "
+            f"{self.data_source.get_identifier()}"
+        )
 
-            if file_size_mb > 100:
-                logger.info(
-                    f"Large TensorBoard file detected ({file_size_mb:.1f} MB). Processing will be memory efficient."
-                )
-        except (FileNotFoundError, OSError):
-            logger.debug(f"File not found or inaccessible: {event_file_path}")
+        size_mb = source_info.get("size_mb", 0)
+        if size_mb > 100:
+            logger.info(
+                f"Large data source detected ({size_mb:.1f} MB). Processing will be memory efficient."
+            )
+
+        # Validate data source availability
+        if not self.data_source.is_available():
             raise FileNotFoundError(
-                f"TensorBoard event file not found: {event_file_path}"
+                f"Data source not available: {self.data_source.get_identifier()}"
             )
 
     def _create_loader(self) -> EventFileLoader:
-        """Create a new EventFileLoader instance."""
-        return EventFileLoader(self.event_file_path)
+        """Create a new EventFileLoader instance (deprecated, use data_source)."""
+        # Fallback for backward compatibility - only works with FileDataSource
+        if isinstance(self.data_source, FileDataSource):
+            return EventFileLoader(str(self.data_source.file_path))
+        else:
+            raise RuntimeError(
+                "_create_loader() only supports FileDataSource. Use _iterate_events() instead."
+            )
 
     def _iterate_events(self) -> Iterator[event_pb2.Event]:
-        """Iterate over all events in the file."""
-        # Ensure file exists
-        if not Path(self.event_file_path).exists():
-            raise FileNotFoundError(f"Event file not found: {self.event_file_path}")
+        """Iterate over all events using the data source."""
+        if not self.data_source.is_available():
+            raise FileNotFoundError(
+                f"Data source not available: {self.data_source.get_identifier()}"
+            )
 
-        loader = self._create_loader()
-        yield from loader.Load()
+        yield from self.data_source.get_event_iterator()
 
     def _scan_tags(self) -> dict[str, list[str]]:
         """Scan the file once to build a directory of all tags by type."""
