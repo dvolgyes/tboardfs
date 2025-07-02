@@ -1,20 +1,20 @@
 """Test TensorBoard parser functionality with v2 format."""
 
-from tboardfs.efficient_parser import TensorBoardParser
+from tboardfs.efficient_parser import EfficientTensorBoardParser
 
 
-class TestTensorBoardParser:
+class TestEfficientTensorBoardParser:
     """Test TensorBoard parser functionality."""
 
     def test_parser_initialization(self, test_event_file):
         """Test parser can be initialized with event file."""
-        parser = TensorBoardParser(test_event_file)
+        parser = EfficientTensorBoardParser(test_event_file)
         assert parser.event_file_path == test_event_file
-        assert parser.ea is not None
+        assert parser.event_file_path == test_event_file
 
     def test_list_tensors(self, test_event_file):
         """Test listing tensor tags (v2 format has proper categorization)."""
-        parser = TensorBoardParser(test_event_file)
+        parser = EfficientTensorBoardParser(test_event_file)
         tensors = parser.list_tensors()
 
         assert isinstance(tensors, list)
@@ -23,7 +23,7 @@ class TestTensorBoardParser:
 
     def test_list_text(self, test_event_file):
         """Test listing text tags."""
-        parser = TensorBoardParser(test_event_file)
+        parser = EfficientTensorBoardParser(test_event_file)
         text_tags = parser.list_text()
 
         assert isinstance(text_tags, list)
@@ -33,12 +33,12 @@ class TestTensorBoardParser:
 
     def test_get_text_data(self, test_event_file):
         """Test getting text data."""
-        parser = TensorBoardParser(test_event_file)
+        parser = EfficientTensorBoardParser(test_event_file)
         text_tags = parser.list_text()
 
         if text_tags:
             tag = text_tags[0]
-            data = parser.get_text_data(tag)
+            data = list(parser.iterate_text_data(tag))
             assert isinstance(data, list)
             assert len(data) > 0
             assert hasattr(data[0], "text")
@@ -46,7 +46,7 @@ class TestTensorBoardParser:
 
     def test_list_all_content(self, test_event_file):
         """Test listing all content types."""
-        parser = TensorBoardParser(test_event_file)
+        parser = EfficientTensorBoardParser(test_event_file)
         content = parser.list_all_content()
 
         assert isinstance(content, dict)
@@ -59,7 +59,7 @@ class TestTensorBoardParser:
 
     def test_get_virtual_paths(self, test_event_file):
         """Test getting virtual filesystem paths."""
-        parser = TensorBoardParser(test_event_file)
+        parser = EfficientTensorBoardParser(test_event_file)
         paths = parser.get_virtual_paths()
 
         assert isinstance(paths, list)
@@ -73,7 +73,7 @@ class TestTensorBoardParser:
 
     def test_get_image_extension(self):
         """Test image extension detection."""
-        parser = TensorBoardParser.__new__(TensorBoardParser)
+        parser = EfficientTensorBoardParser.__new__(EfficientTensorBoardParser)
 
         # PNG magic bytes with proper header
         png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
@@ -88,7 +88,7 @@ class TestTensorBoardParser:
 
     def test_get_audio_extension(self):
         """Test audio extension detection."""
-        parser = TensorBoardParser.__new__(TensorBoardParser)
+        parser = EfficientTensorBoardParser.__new__(EfficientTensorBoardParser)
 
         assert parser.get_audio_extension("audio/wav") == "wav"
         assert parser.get_audio_extension("audio/mp3") == "mp3"
@@ -97,7 +97,7 @@ class TestTensorBoardParser:
 
     def test_minimal_event_file(self, minimal_event_file):
         """Test parsing minimal event file."""
-        parser = TensorBoardParser(minimal_event_file)
+        parser = EfficientTensorBoardParser(minimal_event_file)
         content = parser.list_all_content()
 
         assert isinstance(content, dict)
@@ -107,25 +107,31 @@ class TestTensorBoardParser:
 
     def test_export_text(self, test_event_file):
         """Test exporting text data."""
-        parser = TensorBoardParser(test_event_file)
+        parser = EfficientTensorBoardParser(test_event_file)
         text_tags = parser.list_text()
 
         if text_tags:
             tag = text_tags[0]
-            data = parser.get_text_data(tag)
+            data = list(parser.iterate_text_data(tag))
             if data:
-                exported = parser.export_text(tag, data[0].step)
+                # Find the text data for the specific step
+                text_data = None
+                for text_item in parser.iterate_text_data(tag):
+                    if text_item.step == data[0].step:
+                        text_data = text_item.text
+                        break
+                exported = text_data
                 assert exported is not None
                 assert isinstance(exported, str)
 
     def test_progress_bar_disabled_by_default(self, test_event_file):
         """Test that progress bar is disabled by default."""
-        parser = TensorBoardParser(test_event_file)
+        parser = EfficientTensorBoardParser(test_event_file)
         assert not parser.show_progress
 
     def test_progress_bar_enabled(self, test_event_file):
         """Test parser with progress bar enabled."""
-        parser = TensorBoardParser(test_event_file, show_progress=True)
+        parser = EfficientTensorBoardParser(test_event_file, show_progress=True)
         assert parser.show_progress
         # Should still work
         paths = parser.get_virtual_paths()

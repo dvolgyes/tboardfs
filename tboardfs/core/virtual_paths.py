@@ -7,7 +7,7 @@ from typing import Any
 
 from loguru import logger
 
-from ..efficient_parser import TensorBoardParser
+from ..efficient_parser import EfficientTensorBoardParser
 from .file_utils import restore_tag_from_path, extract_step_from_filename
 
 
@@ -24,7 +24,7 @@ class VirtualPathInfo:
 class VirtualPathHandler:
     """Handles virtual path parsing and data export operations."""
 
-    def __init__(self, parser: TensorBoardParser):
+    def __init__(self, parser: EfficientTensorBoardParser):
         self.parser = parser
 
     def parse_virtual_path(self, virtual_path: str) -> VirtualPathInfo:
@@ -273,7 +273,12 @@ class VirtualPathHandler:
         if path_info.step is None:
             logger.error("Step is required for image export")
             sys.exit(1)
-        image_bytes = self.parser.export_image(path_info.tag, path_info.step)
+        # Find the image data for the specific step
+        image_bytes = None
+        for data in self.parser.iterate_image_data(path_info.tag):
+            if data.step == path_info.step:
+                image_bytes = data.encoded_image_string
+                break
 
         if image_bytes is None:
             logger.error(
@@ -330,7 +335,17 @@ class VirtualPathHandler:
             logger.error(f"Available histogram tags: {', '.join(histograms)}")
             sys.exit(1)
 
-        data = self.parser.export_histogram_to_text(path_info.tag)
+        # Export histogram data to text format
+        lines = []
+        for hist_data in self.parser.iterate_histogram_data(path_info.tag):
+            lines.append(f"Step: {hist_data.step}")
+            lines.append(f"Min: {hist_data.min}, Max: {hist_data.max}")
+            lines.append(f"Count: {hist_data.num}, Sum: {hist_data.sum}")
+            lines.append("Buckets:")
+            for limit, count in zip(hist_data.bucket_limit, hist_data.bucket):
+                lines.append(f"  [{limit:.6f}]: {count}")
+            lines.append("")  # Empty line between steps
+        data = "\n".join(lines)
         self._handle_output(data, output_file, "histogram data")
 
     def _export_audio_data(
@@ -343,7 +358,12 @@ class VirtualPathHandler:
         if path_info.step is None:
             logger.error("Step is required for audio export")
             sys.exit(1)
-        audio_result = self.parser.export_audio(path_info.tag, path_info.step)
+        # Find the audio data for the specific step
+        audio_result = None
+        for data in self.parser.iterate_audio_data(path_info.tag):
+            if data.step == path_info.step:
+                audio_result = (data.encoded_audio_string, data.content_type)
+                break
 
         if audio_result is None:
             logger.error(
@@ -368,7 +388,12 @@ class VirtualPathHandler:
         if path_info.step is None:
             logger.error("Step is required for text export")
             sys.exit(1)
-        text_data = self.parser.export_text(path_info.tag, path_info.step)
+        # Find the text data for the specific step
+        text_data = None
+        for data in self.parser.iterate_text_data(path_info.tag):
+            if data.step == path_info.step:
+                text_data = data.text
+                break
 
         if text_data is None:
             logger.error(
@@ -395,7 +420,7 @@ class VirtualPathHandler:
             sys.exit(1)
 
         # Get mesh data from parser
-        mesh_data_list = self.parser.get_mesh_data(path_info.tag)
+        mesh_data_list = list(self.parser.iterate_mesh_data(path_info.tag))
 
         if not mesh_data_list:
             logger.error(f"Mesh not found for tag '{path_info.tag}'")
@@ -478,7 +503,7 @@ class VirtualPathHandler:
             sys.exit(1)
 
         for tag in hyperparameters_tags:
-            hyperparam_data_list = self.parser.get_hyperparameter_data(tag)
+            hyperparam_data_list = list(self.parser.iterate_hyperparameter_data(tag))
 
             for hyperparam_data in hyperparam_data_list:
                 session_key = tag or f"session_{len(all_hyperparams)}"

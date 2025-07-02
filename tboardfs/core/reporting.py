@@ -4,13 +4,13 @@ from pathlib import Path
 
 from loguru import logger
 
-from ..efficient_parser import TensorBoardParser
+from ..efficient_parser import EfficientTensorBoardParser
 
 
 class ContentReporter:
     """Handles content summary and display functionality."""
 
-    def __init__(self, parser: TensorBoardParser | None):
+    def __init__(self, parser: EfficientTensorBoardParser | None):
         self.parser = parser
 
     def display_file_header(self, file_path: Path) -> None:
@@ -31,7 +31,7 @@ class ContentReporter:
             logger.info("\nImages:")
             for tag in content["images"]:
                 if show_step_counts and self.parser:
-                    image_data = self.parser.get_image_data(tag)
+                    image_data = list(self.parser.iterate_image_data(tag))
                     logger.info(f"  - {tag} ({len(image_data)} steps)")
                 else:
                     logger.info(f"  - {tag}")
@@ -50,7 +50,7 @@ class ContentReporter:
             logger.info("\nAudio:")
             for tag in content["audio"]:
                 if show_step_counts and self.parser:
-                    audio_data = self.parser.get_audio_data(tag)
+                    audio_data = list(self.parser.iterate_audio_data(tag))
                     logger.info(f"  - {tag} ({len(audio_data)} steps)")
                 else:
                     logger.info(f"  - {tag}")
@@ -59,7 +59,7 @@ class ContentReporter:
             logger.info("\nText:")
             for tag in content["text"]:
                 if show_step_counts and self.parser:
-                    text_data = self.parser.get_text_data(tag)
+                    text_data = list(self.parser.iterate_text_data(tag))
                     logger.info(f"  - {tag} ({len(text_data)} steps)")
                 else:
                     logger.info(f"  - {tag}")
@@ -90,7 +90,8 @@ class ContentReporter:
 
         if content["images"]:
             total_images = sum(
-                len(self.parser.get_image_data(tag)) for tag in content["images"]
+                len(list(self.parser.iterate_image_data(tag)))
+                for tag in content["images"]
             )
             logger.info(
                 f"  - {len(content['images'])} image tag(s) ({total_images} total images)"
@@ -104,7 +105,8 @@ class ContentReporter:
 
         if content["audio"]:
             total_audio = sum(
-                len(self.parser.get_audio_data(tag)) for tag in content["audio"]
+                len(list(self.parser.iterate_audio_data(tag)))
+                for tag in content["audio"]
             )
             logger.info(
                 f"  - {len(content['audio'])} audio tag(s) ({total_audio} total audio files)"
@@ -112,7 +114,7 @@ class ContentReporter:
 
         if content["text"]:
             total_text = sum(
-                len(self.parser.get_text_data(tag)) for tag in content["text"]
+                len(list(self.parser.iterate_text_data(tag))) for tag in content["text"]
             )
             logger.info(
                 f"  - {len(content['text'])} text tag(s) ({total_text} total text entries)"

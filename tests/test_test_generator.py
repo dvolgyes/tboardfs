@@ -1,7 +1,7 @@
 """Test parsing of pre-generated test data."""
 
 from pathlib import Path
-from tboardfs.efficient_parser import TensorBoardParser
+from tboardfs.efficient_parser import EfficientTensorBoardParser
 
 
 class TestPreGeneratedData:
@@ -14,7 +14,7 @@ class TestPreGeneratedData:
         assert Path(event_file).exists()
 
         # Parse and verify content
-        parser = TensorBoardParser(event_file)
+        parser = EfficientTensorBoardParser(event_file)
 
         # Check that we can parse without tensorflow
         content = parser.list_all_content()
@@ -35,7 +35,7 @@ class TestPreGeneratedData:
         assert Path(event_file).exists()
 
         # Parse and verify minimal content
-        parser = TensorBoardParser(event_file)
+        parser = EfficientTensorBoardParser(event_file)
 
         content = parser.list_all_content()
         assert "tensors" in content
@@ -52,7 +52,7 @@ class TestPreGeneratedData:
                 assert len(event_files) == 1
                 event_file = str(event_files[0])
 
-            parser = TensorBoardParser(event_file)
+            parser = EfficientTensorBoardParser(event_file)
             content = parser.list_all_content()
             # v2 format properly categorizes data
             total_content = sum(len(v) for v in content.values())

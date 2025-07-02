@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from tboardfs.efficient_parser import TensorBoardParser
+from tboardfs.efficient_parser import EfficientTensorBoardParser
 from tboardfs.core.data_types import ImageData
 
 
@@ -24,7 +24,7 @@ class TestTensorBoardParserWithRealData:
 
     def test_parser_with_real_data(self, real_log_file):
         """Test parser functionality with real TensorBoard data."""
-        parser = TensorBoardParser(real_log_file)
+        parser = EfficientTensorBoardParser(real_log_file)
 
         # Test basic listing
         content = parser.list_all_content()
@@ -43,14 +43,19 @@ class TestTensorBoardParserWithRealData:
 
         # Test image data retrieval
         if images:
-            image_data = parser.get_image_data(images[0])
+            image_data = list(parser.iterate_image_data(images[0]))
             assert isinstance(image_data, list)
             assert len(image_data) > 0
             assert all(isinstance(item, ImageData) for item in image_data)
 
             # Test image export
             first_image = image_data[0]
-            exported_image = parser.export_image(images[0], first_image.step)
+            # Find the image data for the specific step
+            exported_image = None
+            for data in parser.iterate_image_data(images[0]):
+                if data.step == first_image.step:
+                    exported_image = data.encoded_image_string
+                    break
             assert exported_image is not None
             assert isinstance(exported_image, bytes)
             assert len(exported_image) > 0
@@ -61,7 +66,7 @@ class TestTensorBoardParserWithRealData:
 
     def test_virtual_paths_with_real_data(self, real_log_file):
         """Test virtual path generation with real data."""
-        parser = TensorBoardParser(real_log_file)
+        parser = EfficientTensorBoardParser(real_log_file)
 
         paths = parser.get_virtual_paths()
         assert isinstance(paths, list)
@@ -79,7 +84,7 @@ class TestTensorBoardParserWithRealData:
 
     def test_extraction_with_real_data(self, real_log_file):
         """Test data extraction with real data."""
-        parser = TensorBoardParser(real_log_file)
+        parser = EfficientTensorBoardParser(real_log_file)
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Test extraction
@@ -136,11 +141,15 @@ class TestTensorBoardParserWithRealData:
     def test_progress_bar_functionality(self, real_log_file):
         """Test progress bar integration."""
         # Test with progress disabled
-        parser_no_progress = TensorBoardParser(real_log_file, show_progress=False)
+        parser_no_progress = EfficientTensorBoardParser(
+            real_log_file, show_progress=False
+        )
         paths_no_progress = parser_no_progress.get_virtual_paths()
 
         # Test with progress enabled
-        parser_with_progress = TensorBoardParser(real_log_file, show_progress=True)
+        parser_with_progress = EfficientTensorBoardParser(
+            real_log_file, show_progress=True
+        )
         paths_with_progress = parser_with_progress.get_virtual_paths()
 
         # Results should be the same regardless of progress setting
@@ -153,7 +162,7 @@ class TestTensorBoardParserErrorHandling:
     def test_invalid_file_path(self):
         """Test parser with invalid file path."""
         with pytest.raises(Exception):
-            TensorBoardParser("nonexistent_file.tfevents")
+            EfficientTensorBoardParser("nonexistent_file.tfevents")
 
     def test_empty_file(self):
         """Test parser with empty file."""
@@ -163,7 +172,7 @@ class TestTensorBoardParserErrorHandling:
             tmp_file.flush()
 
             # This should not crash but return empty results
-            parser = TensorBoardParser(tmp_file.name)
+            parser = EfficientTensorBoardParser(tmp_file.name)
             assert parser.list_scalars() == []
             assert parser.list_images() == []
             assert parser.list_histograms() == []
@@ -178,24 +187,34 @@ class TestTensorBoardParserErrorHandling:
         if not log_path.exists():
             pytest.skip("Real log file not found")
 
-        parser = TensorBoardParser(str(log_path))
+        parser = EfficientTensorBoardParser(str(log_path))
 
         # Test with nonexistent scalar tag - should return empty list
-        scalar_data = parser.get_scalar_data("nonexistent_scalar")
+        scalar_data = list(parser.iterate_scalar_data("nonexistent_scalar"))
         assert scalar_data == []
 
         # Test with nonexistent image tag - should return empty list
-        image_data = parser.get_image_data("nonexistent_image")
+        image_data = list(parser.iterate_image_data("nonexistent_image"))
         assert image_data == []
 
         # Test export with nonexistent tag - should return None
-        export_result = parser.export_image("nonexistent_image", 0)
+        # Try to find nonexistent image
+        export_result = None
+        for data in parser.iterate_image_data("nonexistent_image"):
+            if data.step == 0:
+                export_result = data.encoded_image_string
+                break
         assert export_result is None
 
         # Test export with nonexistent step
         images = parser.list_images()
         if images:
-            result = parser.export_image(images[0], 999999)  # Very high step
+            # Try to find image with very high step
+            result = None
+            for data in parser.iterate_image_data(images[0]):
+                if data.step == 999999:  # Very high step
+                    result = data.encoded_image_string
+                    break
             assert result is None
 
     def test_text_data_exception_handling(self):
@@ -213,19 +232,30 @@ class TestTensorBoardParserErrorHandling:
             # Mock Tensors() to raise an exception
             mock_ea.Tensors.side_effect = Exception("Test exception")
 
-            parser = TensorBoardParser("dummy_path")
+            # Create a temp file for testing
+            with tempfile.NamedTemporaryFile(
+                suffix=".tfevents", delete=False
+            ) as tmp_file:
+                tmp_file.write(b"\x08\x01\x12\x00\x1a\x00")
+                tmp_file.flush()
+                parser = EfficientTensorBoardParser(tmp_file.name)
 
-            # This should handle the exception gracefully and return empty list
-            text_tags = parser.list_text()
-            assert text_tags == []
+                # This should handle the exception gracefully and return empty list
+                text_tags = parser.list_text()
+                assert text_tags == []
 
-            # Test get_text_data exception handling
-            text_data = parser.get_text_data("test/tag")
-            assert text_data == []
+                # Test get_text_data exception handling
+                text_data = list(parser.iterate_text_data("test/tag"))
+                assert text_data == []
+
+            # Clean up
+            Path(tmp_file.name).unlink()
 
     def test_image_extension_detection(self):
         """Test image extension detection for various formats."""
-        parser = TensorBoardParser.__new__(TensorBoardParser)  # Create without __init__
+        parser = EfficientTensorBoardParser.__new__(
+            EfficientTensorBoardParser
+        )  # Create without __init__
 
         # Test PNG detection with proper header
         png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
@@ -241,7 +271,9 @@ class TestTensorBoardParserErrorHandling:
 
     def test_audio_extension_detection(self):
         """Test audio extension detection for various formats."""
-        parser = TensorBoardParser.__new__(TensorBoardParser)  # Create without __init__
+        parser = EfficientTensorBoardParser.__new__(
+            EfficientTensorBoardParser
+        )  # Create without __init__
 
         # Test WAV detection
         assert parser.get_audio_extension("audio/wav") == "wav"
@@ -257,50 +289,9 @@ class TestTensorBoardParserErrorHandling:
         # Test unknown format
         assert parser.get_audio_extension("audio/unknown") == "audio"
 
-    def test_scalar_file_sorting_edge_cases(self):
-        """Test scalar file sorting with edge cases."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            # Create a test scalar file with unsorted data
-            scalar_file = Path(tmp_dir) / "test_scalar.txt"
-
-            # Write unsorted data with some invalid lines
-            with scalar_file.open("w") as f:
-                f.write("10\t0.5\n")
-                f.write("5\t0.3\n")
-                f.write("invalid line\n")
-                f.write("15\t0.7\n")
-                f.write("\n")  # Empty line
-                f.write("1\t0.1\n")
-
-            # Create parser and test sorting
-            parser = TensorBoardParser.__new__(
-                TensorBoardParser
-            )  # Create without __init__
-            parser.show_progress = False
-
-            # Test the internal sorting method
-            parser._sort_scalar_files([scalar_file])
-
-            # Read back and verify sorting
-            with scalar_file.open() as f:
-                lines = f.readlines()
-
-            # Should be sorted by step number
-            steps = []
-            for line in lines:
-                if line.strip():
-                    parts = line.strip().split("\t")
-                    if len(parts) >= 2:
-                        try:
-                            steps.append(int(parts[0]))
-                        except ValueError:
-                            pass
-
-            assert steps == sorted(steps)
-
     def test_tag_name_sanitization(self):
         """Test tag name sanitization for filesystem safety."""
-        parser = TensorBoardParser.__new__(TensorBoardParser)
+        parser = EfficientTensorBoardParser.__new__(EfficientTensorBoardParser)
         # Initialize attributes that __init__ would normally set
         parser._tags_cache = None
         parser.show_progress = False
@@ -315,7 +306,7 @@ class TestTensorBoardParserErrorHandling:
                     with patch.object(parser, "list_audio", return_value=[]):
                         with patch.object(parser, "list_text", return_value=[]):
                             with patch.object(
-                                parser, "get_image_data", return_value=[]
+                                parser, "iterate_image_data", return_value=iter([])
                             ):
                                 paths = parser.get_virtual_paths()
 

@@ -7,7 +7,7 @@ from typing import Any
 import click
 from loguru import logger
 
-from ..efficient_parser import TensorBoardParser
+from ..efficient_parser import EfficientTensorBoardParser
 
 
 # Supported data types for filtering
@@ -38,10 +38,10 @@ def setup_cli_context(ctx: click.Context) -> dict[str, Any]:
 
 def create_parser_with_progress(
     file_path: str, show_progress: bool = False
-) -> TensorBoardParser:
+) -> EfficientTensorBoardParser:
     """Create a TensorBoardParser with optional progress display."""
     logger.debug(f"Creating parser for file: {file_path} (progress: {show_progress})")
-    return TensorBoardParser(file_path, show_progress=show_progress)
+    return EfficientTensorBoardParser(file_path, show_progress=show_progress)
 
 
 def validate_and_exit_on_error(tensorboard_path: str) -> Path:

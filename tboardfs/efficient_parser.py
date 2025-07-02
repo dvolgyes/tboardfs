@@ -76,9 +76,6 @@ class EfficientTensorBoardParser:
         self.event_file_path = event_file_path
         self.show_progress = show_progress
 
-        # For backward compatibility with old TensorBoardParser interface
-        self.ea = self
-
         # Cache for tags to avoid re-scanning
         self._tags_cache: dict[str, list[str]] | None = None
         self._detailed_tags: dict[str, list[str]] | None = None
@@ -96,39 +93,9 @@ class EfficientTensorBoardParser:
                 )
         except (FileNotFoundError, OSError):
             logger.debug(f"File not found or inaccessible: {event_file_path}")
-            # Only allow dummy files in test contexts (check for "dummy" in path)
-            if "dummy" not in event_file_path.lower():
-                raise FileNotFoundError(
-                    f"TensorBoard event file not found: {event_file_path}"
-                )
-
-            # Initialize empty cache for dummy files used in tests
-            self._tags_cache = {
-                "scalars": [],
-                "images": [],
-                "videos": [],
-                "histograms": [],
-                "audio": [],
-                "text": [],
-                "tensors": [],
-                "meshes": [],
-                "hyperparameters": [],
-                "pr_curves": [],
-            }
-            self._detailed_tags = {
-                "scalars": [],
-                "images": [],
-                "videos": [],
-                "histograms": [],
-                "audio": [],
-                "text": [],
-                "tensors": [],
-                "meshes": [],
-                "hyperparameters": [],
-                "pr_curves": [],
-            }
-            self._event_count = 0
-            return
+            raise FileNotFoundError(
+                f"TensorBoard event file not found: {event_file_path}"
+            )
 
     def _create_loader(self) -> EventFileLoader:
         """Create a new EventFileLoader instance."""
@@ -136,9 +103,9 @@ class EfficientTensorBoardParser:
 
     def _iterate_events(self) -> Iterator[event_pb2.Event]:
         """Iterate over all events in the file."""
-        # Handle dummy files gracefully
+        # Ensure file exists
         if not Path(self.event_file_path).exists():
-            return
+            raise FileNotFoundError(f"Event file not found: {self.event_file_path}")
 
         loader = self._create_loader()
         yield from loader.Load()
@@ -1838,13 +1805,8 @@ class EfficientTensorBoardParser:
         """Get all virtual paths that would exist in the filesystem."""
         paths = []
 
-        # Check if we have proper initialization (not a mock/test object)
-        # The test sets event_file_path to "dummy_file", so check for that
-        if (
-            hasattr(self, "_tags_cache")
-            and hasattr(self, "event_file_path")
-            and not self.event_file_path.endswith("dummy_file")
-        ):
+        # Check if we have proper initialization
+        if hasattr(self, "_tags_cache") and hasattr(self, "event_file_path"):
             try:
                 self._scan_tags()  # Ensure cache is populated
                 all_tags = self._detailed_tags
@@ -1950,7 +1912,7 @@ class EfficientTensorBoardParser:
                     safe_tag = tag.replace("/", "_")
                     paths.append(f"images/{safe_tag}/")
                     try:
-                        image_data = self.get_image_data(tag)
+                        image_data = list(self.iterate_image_data(tag))
                         for image_item in image_data:
                             ext = self.get_image_extension(
                                 image_item.encoded_image_string
@@ -1976,7 +1938,7 @@ class EfficientTensorBoardParser:
                     safe_tag = tag.replace("/", "_")
                     paths.append(f"audio/{safe_tag}/")
                     try:
-                        audio_data = self.get_audio_data(tag)
+                        audio_data = list(self.iterate_audio_data(tag))
                         for audio_item in audio_data:
                             ext = self.get_audio_extension(audio_item.content_type)
                             padded_step = str(audio_item.step).zfill(digits)
@@ -1992,7 +1954,7 @@ class EfficientTensorBoardParser:
                     safe_tag = tag.replace("/", "_")
                     paths.append(f"text/{safe_tag}/")
                     try:
-                        text_data = self.get_text_data(tag)
+                        text_data = list(self.iterate_text_data(tag))
                         for text_item in text_data:
                             padded_step = str(text_item.step).zfill(digits)
                             paths.append(f"text/{safe_tag}/{padded_step}.txt")
@@ -2012,7 +1974,7 @@ class EfficientTensorBoardParser:
                     safe_tag = base_tag.replace("/", "_")
                     paths.append(f"meshes/{safe_tag}/")
                     try:
-                        mesh_data = self.get_mesh_data(base_tag)
+                        mesh_data = list(self.iterate_mesh_data(base_tag))
                         for mesh_item in mesh_data:
                             padded_step = str(mesh_item.step).zfill(digits)
                             paths.append(f"meshes/{safe_tag}/{padded_step}.ply")
@@ -2128,104 +2090,3 @@ class EfficientTensorBoardParser:
 
         except Exception as e:
             logger.error(f"Failed to write hyperparameters YAML file: {e}")
-
-    # Compatibility wrapper methods from old TensorBoardParser interface
-    def get_scalar_data(self, tag: str) -> list[ScalarData]:
-        """Get all scalar data for a given tag."""
-        return list(self.iterate_scalar_data(tag))
-
-    def get_image_data(self, tag: str) -> list[ImageData]:
-        """Get all image data for a given tag."""
-        return list(self.iterate_image_data(tag))
-
-    def get_histogram_data(self, tag: str) -> list[HistogramData]:
-        """Get all histogram data for a given tag."""
-        return list(self.iterate_histogram_data(tag))
-
-    def get_audio_data(self, tag: str) -> list[AudioData]:
-        """Get all audio data for a given tag."""
-        return list(self.iterate_audio_data(tag))
-
-    def get_text_data(self, tag: str) -> list[TextData]:
-        """Get all text data for a given tag."""
-        return list(self.iterate_text_data(tag))
-
-    def get_mesh_data(self, tag: str) -> list[MeshData]:
-        """Get all mesh data for a given tag."""
-        return list(self.iterate_mesh_data(tag))
-
-    def export_image(self, tag: str, step: int) -> bytes | None:
-        """Export a specific image by tag and step."""
-        for data in self.iterate_image_data(tag):
-            if data.step == step:
-                return data.encoded_image_string
-        return None
-
-    def export_histogram_to_text(self, tag: str) -> str:
-        """Export histogram data to text format."""
-        lines = []
-        for data in self.iterate_histogram_data(tag):
-            lines.append(f"Step: {data.step}")
-            lines.append(f"Min: {data.min}, Max: {data.max}")
-            lines.append(f"Count: {data.num}, Sum: {data.sum}")
-            lines.append("Buckets:")
-            for limit, count in zip(data.bucket_limit, data.bucket):
-                lines.append(f"  [{limit:.6f}]: {count}")
-            lines.append("")  # Empty line between steps
-        return "\n".join(lines)
-
-    def export_audio(self, tag: str, step: int) -> tuple[bytes, str] | None:
-        """Export a specific audio by tag and step. Returns (audio_bytes, content_type)."""
-        for data in self.iterate_audio_data(tag):
-            if data.step == step:
-                return data.encoded_audio_string, data.content_type
-        return None
-
-    def export_text(self, tag: str, step: int) -> str | None:
-        """Export a specific text by tag and step."""
-        for data in self.iterate_text_data(tag):
-            if data.step == step:
-                return data.text
-        return None
-
-    def _sort_scalar_files(self, scalar_files: Any) -> None:
-        """Sort scalar files by iteration number (first column). For backward compatibility."""
-        from pathlib import Path
-        from tqdm import tqdm
-
-        scalar_file_list = list(scalar_files)
-        file_iterator = (
-            tqdm(scalar_file_list, desc="Sorting scalar files", leave=False)
-            if self.show_progress
-            else scalar_file_list
-        )
-        for file_path in file_iterator:
-            # Read the file
-            with Path(file_path).open() as f:
-                lines = f.readlines()
-
-            # Parse and sort by step (first column)
-            data_points = []
-            for line in lines:
-                if line.strip():
-                    parts = line.strip().split("\t")
-                    if len(parts) >= 2:
-                        try:
-                            step = int(parts[0])
-                            value = float(parts[1])
-                            data_points.append((step, value))
-                        except ValueError:
-                            continue
-
-            # Sort by step
-            data_points.sort(key=lambda x: x[0])
-
-            # Write back sorted data
-            with Path(file_path).open("w") as f:
-                for step, value in data_points:
-                    f.write(f"{step}\t{value}\n")
-
-
-# Compatibility alias - this allows existing code to use TensorBoardParser
-# and automatically get the efficient implementation
-TensorBoardParser = EfficientTensorBoardParser
