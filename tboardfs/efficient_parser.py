@@ -17,7 +17,6 @@ import sys
 from loguru import logger
 import magic
 import io
-from tboardfs.scalar_file import ScalarFile
 from tboardfs.core.data_types import (
     ScalarData,
     ImageData,
@@ -30,7 +29,7 @@ from tboardfs.core.data_types import (
     PRCurveData,
 )
 from tboardfs.core.data_detector import TensorDataDetector
-from tboardfs.exporters import ScalarExporter, ImageExporter, HistogramExporter
+from tboardfs.core.export_pipeline import ExportPipeline, ExportConfig
 
 # Import pydub for audio format conversion
 try:
@@ -110,18 +109,6 @@ class EfficientTensorBoardParser:
         loader = self._create_loader()
         yield from loader.Load()
 
-    def _is_image_tensor(self, tensor_proto: Any, tag: str) -> bool:
-        """Check if a tensor seems to be an image."""
-        return TensorDataDetector.is_image_tensor(tensor_proto, tag)
-
-    def _is_video_data(self, image_data: bytes, tag: str) -> bool:
-        """Check if image data is actually a GIF video."""
-        return TensorDataDetector.is_video_data(image_data, tag)
-
-    def _is_pr_curve_tensor(self, tensor_proto: Any, tag: str) -> bool:
-        """Check if a tensor contains PR curve data."""
-        return TensorDataDetector.is_pr_curve_tensor(tensor_proto, tag)
-
     def _scan_tags(self) -> dict[str, list[str]]:
         """Scan the file once to build a directory of all tags by type."""
         if self._tags_cache is not None:
@@ -184,7 +171,7 @@ class EfficientTensorBoardParser:
                             tags["scalars"].add(tag)
                         elif value.HasField("image"):
                             # Check if this image is actually a video (GIF)
-                            if self._is_video_data(
+                            if TensorDataDetector.is_video_data(
                                 value.image.encoded_image_string, tag
                             ):
                                 tags["videos"].add(tag)
@@ -204,11 +191,11 @@ class EfficientTensorBoardParser:
                                     value.tensor.dtype == 7
                                 ):  # Check if it's text (DT_STRING = 7)
                                     tags["text"].add(tag)
-                                elif self._is_pr_curve_tensor(
+                                elif TensorDataDetector.is_pr_curve_tensor(
                                     value.tensor, tag
                                 ):  # Check if it's a PR curve
                                     tags["pr_curves"].add(tag)
-                                elif self._is_image_tensor(
+                                elif TensorDataDetector.is_image_tensor(
                                     value.tensor, tag
                                 ):  # Check if it's an image
                                     tags["images"].add(tag)
@@ -372,7 +359,7 @@ class EfficientTensorBoardParser:
                                 wall_time=event.wall_time,
                             )
                         elif value.HasField("tensor"):
-                            if self._is_image_tensor(value.tensor, tag):
+                            if TensorDataDetector.is_image_tensor(value.tensor, tag):
                                 decoded_image = self._decode_image_from_tensor(
                                     value.tensor
                                 )
@@ -461,7 +448,7 @@ class EfficientTensorBoardParser:
                     if value.tag == tag:
                         if value.HasField("image"):
                             # Video data is stored as images (GIF) in TensorBoard
-                            if self._is_video_data(
+                            if TensorDataDetector.is_video_data(
                                 value.image.encoded_image_string, tag
                             ):
                                 yield VideoData(
@@ -725,7 +712,7 @@ class EfficientTensorBoardParser:
             if event.HasField("summary"):
                 for value in event.summary.value:
                     if value.tag == tag and value.HasField("tensor"):
-                        if self._is_pr_curve_tensor(value.tensor, tag):
+                        if TensorDataDetector.is_pr_curve_tensor(value.tensor, tag):
                             try:
                                 # Extract tensor data
                                 arr = tensor_util.make_ndarray(value.tensor)
@@ -791,97 +778,6 @@ class EfficientTensorBoardParser:
             return "ogg"
         else:
             return "audio"
-
-    def _save_scalar(
-        self,
-        event: event_pb2.Event,
-        value: Any,
-        output_path: Path,
-        scalar_files: dict[Path, ScalarFile],
-        scalar_data_buffers: dict[str, list[tuple[int, float, float]]] | None = None,
-    ) -> None:
-        """Save scalar data to unified CSV + NPZ format."""
-        tag = value.tag
-        safe_tag = tag.replace("/", "_")
-
-        # Legacy text format for backwards compatibility
-        scalar_file_path = output_path / "scalars" / f"{safe_tag}.txt"
-
-        scalar_val = None
-        if value.HasField("simple_value"):
-            scalar_val = value.simple_value
-        elif value.HasField("tensor"):
-            try:
-                arr = tensor_util.make_ndarray(value.tensor)
-                if arr.size == 1:
-                    scalar_val = float(arr.item())
-                else:
-                    logger.warning(
-                        f"Tensor for scalar tag '{tag}' has more than one element (size={arr.size}). Skipping."
-                    )
-            except Exception as e:
-                logger.warning(
-                    f"Could not extract scalar from tensor for tag '{tag}': {e}"
-                )
-
-        if scalar_val is not None:
-            # Save to legacy text format
-            if scalar_file_path not in scalar_files:
-                scalar_files[scalar_file_path] = ScalarFile(scalar_file_path)
-            scalar_files[scalar_file_path].append(event.step, scalar_val)
-
-            # Buffer data for unified CSV + NPZ export
-            if scalar_data_buffers is not None:
-                if tag not in scalar_data_buffers:
-                    scalar_data_buffers[tag] = []
-                scalar_data_buffers[tag].append(
-                    (event.step, scalar_val, event.wall_time)
-                )
-        else:
-            logger.warning(
-                f"Could not extract scalar value for tag '{tag}' at step {event.step}"
-            )
-
-    def _save_unified_scalars(
-        self,
-        scalar_data_buffers: dict[str, list[tuple[int, float, float]]],
-        output_path: Path,
-    ) -> None:
-        """Save scalar data in unified CSV + NPZ formats."""
-        scalars_dir = output_path / "scalars"
-
-        for tag, data_points in scalar_data_buffers.items():
-            if not data_points:
-                continue
-
-            # Create scalars directory only when we have data to save
-            scalars_dir.mkdir(parents=True, exist_ok=True)
-
-            safe_tag = tag.replace("/", "_")
-
-            # Sort by step
-            data_points.sort(key=lambda x: x[0])
-
-            steps = np.array([dp[0] for dp in data_points])
-            values = np.array([dp[1] for dp in data_points])
-            wall_times = np.array([dp[2] for dp in data_points])
-
-            # Save CSV format
-            csv_file = scalars_dir / f"{safe_tag}.csv"
-            with csv_file.open("w") as f:
-                f.write("step,value,wall_time\n")
-                for step, value, wall_time in data_points:
-                    f.write(f"{step},{value:.10g},{wall_time:.6f}\n")
-
-            # Save NPZ format
-            npz_file = scalars_dir / f"{safe_tag}.npz"
-            np.savez_compressed(
-                npz_file, step=steps, value=values, wall_time=wall_times, tag=tag
-            )
-
-            logger.debug(
-                f"Saved scalar '{tag}' to {csv_file} and {npz_file} ({len(data_points)} points)"
-            )
 
     def _save_unified_histograms(
         self,
@@ -1084,7 +980,7 @@ class EfficientTensorBoardParser:
         if value.HasField("image"):
             image_byte_list.append(value.image.encoded_image_string)
         elif value.HasField("tensor"):
-            if self._is_image_tensor(value.tensor, tag):
+            if TensorDataDetector.is_image_tensor(value.tensor, tag):
                 decoded_image = self._decode_image_from_tensor(value.tensor)
                 if decoded_image:
                     image_byte_list.append(decoded_image)
@@ -1496,7 +1392,9 @@ class EfficientTensorBoardParser:
         tag_dir = output_path / "pr_curves" / safe_tag
         tag_dir.mkdir(parents=True, exist_ok=True)
 
-        if value.HasField("tensor") and self._is_pr_curve_tensor(value.tensor, tag):
+        if value.HasField("tensor") and TensorDataDetector.is_pr_curve_tensor(
+            value.tensor, tag
+        ):
             try:
                 # Extract tensor data
                 arr = tensor_util.make_ndarray(value.tensor)
@@ -1573,7 +1471,7 @@ class EfficientTensorBoardParser:
         ply_format: str = "binary",
         type_filters: dict[str, set[str]] | None = None,
     ) -> None:
-        """Extract all data to a directory structure using single-pass processing."""
+        """Extract all data to a directory structure using modular export pipeline."""
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Output directory created: {output_path}")
@@ -1598,193 +1496,150 @@ class EfficientTensorBoardParser:
 
         logger.debug(f"Processing data types: {', '.join(sorted(enabled_types))}")
 
-        # Note: Directories will be created on-demand when files are saved
-        # This avoids creating empty directories for data types with no content
-
-        # Initialize exporters for modular data handling
-        scalar_exporter = (
-            ScalarExporter(output_path, digits) if "scalar" in enabled_types else None
-        )
-        image_exporter = (
-            ImageExporter(output_path, digits)
-            if "image" in enabled_types or "video" in enabled_types
-            else None
-        )
-        histogram_exporter = (
-            HistogramExporter(output_path, digits)
-            if "histogram" in enabled_types
-            else None
+        # Create export configuration
+        config = ExportConfig(
+            output_path=output_path,
+            enabled_types=enabled_types,
+            digits=digits,
+            histogram_images=histogram_images,
+            audio_format=audio_format,
+            ply_format=ply_format,
         )
 
-        # Legacy ScalarFile instances for backward compatibility
-        scalar_files: dict[Path, ScalarFile] = {}
+        # Create export pipeline
+        pipeline = ExportPipeline(config)
 
-        # Legacy buffers for types not yet migrated to exporters
-        scalar_data_buffers: dict[str, list[tuple[int, float, float]]] = {}
-        histogram_data_buffers: dict[str, list[tuple[int, dict, float]]] = {}
-
-        # Mesh cache for collecting mesh components across events
-        mesh_cache: dict[str, dict[int, dict[str, np.ndarray]]] = {}
-
-        # Hyperparameter collection - aggregate all hyperparameters into single structure
-        hyperparameters_data: dict[str, Any] = {}
-
-        # Single pass through all events
-        event_count = 0
-        iterator: Iterator[event_pb2.Event] = self._iterate_events()
+        # Get events iterator with optional progress tracking
+        events_iterator: Iterator[event_pb2.Event] = self._iterate_events()
 
         if self.show_progress:
             if self._event_count:
-                iterator = tqdm(
-                    iterator,
+                events_iterator = tqdm(
+                    events_iterator,
                     total=self._event_count,
                     desc="Extracting data",
                     unit=" events",
                 )  # type: ignore[assignment]
             else:
-                iterator = tqdm(iterator, desc="Extracting data", unit=" events")  # type: ignore[assignment]
+                events_iterator = tqdm(
+                    events_iterator, desc="Extracting data", unit=" events"
+                )  # type: ignore[assignment]
 
         try:
-            for event in iterator:
+            # Process all events through pipeline in single pass
+            event_count = 0
+            for event in events_iterator:
                 event_count += 1
+                # Let pipeline handle its types
+                pipeline._process_single_event(event)
 
-                if event.HasField("summary"):
-                    for value in event.summary.value:
-                        # Dispatch to appropriate save function based on data type
+                # Handle legacy types in same event
+                if {"audio", "text", "mesh", "hyperparameter", "pr_curve"}.intersection(
+                    enabled_types
+                ):
+                    self._process_legacy_event(
+                        event,
+                        output_path,
+                        enabled_types,
+                        digits,
+                        audio_format,
+                        ply_format,
+                    )
 
-                        # Check metadata for plugin type first
-                        plugin_name = None
-                        if value.HasField("metadata"):
-                            plugin_name = value.metadata.plugin_data.plugin_name
+            # Finalize pipeline processors
+            for processor in pipeline.processors:
+                processor.finalize()
 
-                        try:
-                            if plugin_name == "scalars" or value.HasField(
-                                "simple_value"
-                            ):
-                                if scalar_exporter:
-                                    scalar_exporter.save_data(event, value)
-                            else:
-                                # Prioritize histogram detection first
-                                if plugin_name == "histograms" or value.HasField(
-                                    "histo"
-                                ):
-                                    if histogram_exporter:
-                                        histogram_exporter.save_data(
-                                            event,
-                                            value,
-                                            histogram_images=histogram_images,
-                                        )
-                                elif plugin_name == "audio" or value.HasField("audio"):
-                                    if "audio" in enabled_types:
-                                        self._save_audio(
-                                            event,
-                                            value,
-                                            output_path,
-                                            digits,
-                                            audio_format,
-                                        )
-                                elif plugin_name == "mesh" or (
-                                    value.HasField("tensor")
-                                    and (
-                                        value.tag.endswith("_VERTEX")
-                                        or value.tag.endswith("_FACE")
-                                        or value.tag.endswith("_COLOR")
-                                    )
-                                ):
-                                    if "mesh" in enabled_types:
-                                        self._save_mesh(
-                                            event,
-                                            value,
-                                            output_path,
-                                            digits,
-                                            ply_format,
-                                            mesh_cache,
-                                        )
-                                elif plugin_name == "hparams":
-                                    if "hyperparameter" in enabled_types:
-                                        self._collect_hyperparameters(
-                                            event, value, hyperparameters_data
-                                        )
-                                else:
-                                    # Check for images/videos before text to avoid misclassification
-                                    is_image = False
-                                    is_video = False
+            # Finalize legacy types
+            if {"audio", "text", "mesh", "hyperparameter", "pr_curve"}.intersection(
+                enabled_types
+            ):
+                self._finalize_legacy_types(output_path, enabled_types, ply_format)
 
-                                    if value.HasField("image"):
-                                        # Check if this image is actually a video (GIF)
-                                        if self._is_video_data(
-                                            value.image.encoded_image_string, value.tag
-                                        ):
-                                            is_video = True
-                                        else:
-                                            is_image = True
-                                    elif value.HasField(
-                                        "tensor"
-                                    ) and self._is_image_tensor(
-                                        value.tensor, value.tag
-                                    ):
-                                        is_image = True
+        except Exception as e:
+            logger.error(f"Error during extraction: {e}")
+            raise
 
-                                    if is_video:
-                                        if image_exporter:
-                                            image_exporter.save_video(event, value)
-                                    elif plugin_name == "images" or is_image:
-                                        if image_exporter:
-                                            image_exporter.save_image(
-                                                event,
-                                                value,
-                                                image_format=image_format,
-                                                image_quality=image_quality,
-                                            )
-                                    elif plugin_name == "text" or (
-                                        value.HasField("tensor")
-                                        and value.tensor.dtype == 7
-                                    ):
-                                        if "text" in enabled_types:
-                                            self._save_text(
-                                                event, value, output_path, digits
-                                            )
-                                    elif value.HasField(
-                                        "tensor"
-                                    ) and self._is_pr_curve_tensor(
-                                        value.tensor, value.tag
-                                    ):
-                                        if "pr_curve" in enabled_types:
-                                            self._save_pr_curve(
-                                                event, value, output_path, digits
-                                            )
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to save data for tag '{value.tag}': {e}"
-                            )
-        finally:
-            # Finalize exporters to ensure all data is written
-            if scalar_exporter:
-                scalar_exporter.finalize_export()
+        logger.debug(f"Extraction completed. Processed {event_count} events.")
 
-            if histogram_exporter:
-                histogram_exporter.finalize_export()
+    def _process_legacy_event(
+        self,
+        event: event_pb2.Event,
+        output_path: Path,
+        enabled_types: set[str],
+        digits: int,
+        audio_format: str,
+        ply_format: str,
+    ) -> None:
+        """Process a single event for legacy data types not yet migrated to the export pipeline.
 
-            # Legacy scalar file handling for backward compatibility
-            for scalar_file in scalar_files.values():
-                scalar_file.close()
+        TODO: Replace this with proper processors when implemented.
+        """
+        if not event.HasField("summary"):
+            return
 
-            # Legacy unified formats (will be removed after full migration)
-            if scalar_data_buffers and "scalar" in enabled_types:
-                logger.debug("Exporting legacy unified scalar formats (CSV + NPZ)")
-                self._save_unified_scalars(scalar_data_buffers, output_path)
+        # These need to be instance variables to persist across events
+        if not hasattr(self, "_legacy_mesh_cache"):
+            self._legacy_mesh_cache: dict[str, dict[int, dict[str, np.ndarray]]] = {}
+        if not hasattr(self, "_legacy_hyperparameters_data"):
+            self._legacy_hyperparameters_data: dict[str, Any] = {}
 
-            if histogram_data_buffers and "histogram" in enabled_types:
-                logger.debug("Exporting legacy unified histogram formats (CSV + NPZ)")
-                self._save_unified_histograms(histogram_data_buffers, output_path)
+        for value in event.summary.value:
+            plugin_name = None
+            if value.HasField("metadata"):
+                plugin_name = value.metadata.plugin_data.plugin_name
 
-            # Write hyperparameters to YAML file if any were collected
-            if hyperparameters_data and "hyperparameter" in enabled_types:
-                self._export_hyperparameters_yaml(output_path, hyperparameters_data)
+            try:
+                if plugin_name == "audio" or value.HasField("audio"):
+                    if "audio" in enabled_types:
+                        self._save_audio(
+                            event, value, output_path, digits, audio_format
+                        )
+                elif plugin_name == "mesh" or TensorDataDetector.is_mesh_tensor(
+                    value.tag
+                ):
+                    if "mesh" in enabled_types:
+                        self._save_mesh(
+                            event,
+                            value,
+                            output_path,
+                            digits,
+                            ply_format,
+                            self._legacy_mesh_cache,
+                        )
+                elif plugin_name == "hparams":
+                    if "hyperparameter" in enabled_types:
+                        self._collect_hyperparameters(
+                            event, value, self._legacy_hyperparameters_data
+                        )
+                elif value.HasField("tensor"):
+                    if TensorDataDetector.is_pr_curve_tensor(value.tensor, value.tag):
+                        if "pr_curve" in enabled_types:
+                            self._save_pr_curve(event, value, output_path, digits)
+                    elif TensorDataDetector.is_text_tensor(value.tensor):
+                        if "text" in enabled_types:
+                            self._save_text(event, value, output_path, digits)
+            except Exception as e:
+                logger.error(f"Error processing legacy type for {value.tag}: {e}")
 
-        logger.debug(
-            f"Single-pass extraction completed. Processed {event_count} events."
-        )
+    def _finalize_legacy_types(
+        self, output_path: Path, enabled_types: set[str], ply_format: str
+    ) -> None:
+        """Finalize legacy data structures after all events are processed."""
+        # Finalize legacy data structures
+        # TODO: Implement proper mesh finalization when mesh processor is created
+        if hasattr(self, "_legacy_mesh_cache") and self._legacy_mesh_cache:
+            logger.debug(
+                f"Mesh cache contains {len(self._legacy_mesh_cache)} entries (not yet finalized)"
+            )
+        if (
+            hasattr(self, "_legacy_hyperparameters_data")
+            and self._legacy_hyperparameters_data
+            and "hyperparameter" in enabled_types
+        ):
+            self._export_hyperparameters_yaml(
+                output_path, self._legacy_hyperparameters_data
+            )
 
     def get_virtual_paths(self, digits: int = 6) -> list[str]:
         """Get all virtual paths that would exist in the filesystem."""

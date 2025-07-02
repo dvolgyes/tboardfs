@@ -9,6 +9,7 @@ from tensorboard.util import tensor_util
 from loguru import logger
 
 from .base_exporter import BaseExporter
+from ..core.data_detector import TensorDataDetector
 
 
 class ImageExporter(BaseExporter):
@@ -78,8 +79,10 @@ class ImageExporter(BaseExporter):
         if value.HasField("image"):
             image_byte_list.append(value.image.encoded_image_string)
         elif value.HasField("tensor"):
-            if self._is_image_tensor(value.tensor, tag):
-                decoded_image = self._decode_image_from_tensor(value.tensor)
+            if TensorDataDetector.is_encoded_image_tensor(value.tensor, tag):
+                decoded_image = TensorDataDetector.decode_image_from_tensor(
+                    value.tensor
+                )
                 if decoded_image:
                     image_byte_list.append(decoded_image)
             elif value.tensor.dtype == 7:  # DT_STRING
@@ -88,7 +91,7 @@ class ImageExporter(BaseExporter):
                     for item in arr:
                         if isinstance(item, bytes):
                             # Filter out non-image data by checking if it's actually image bytes
-                            if self._is_valid_image_bytes(item):
+                            if TensorDataDetector.is_valid_image_bytes(item):
                                 image_byte_list.append(item)
                 except Exception as e:
                     logger.warning(
@@ -178,51 +181,9 @@ class ImageExporter(BaseExporter):
             logger.info("Please install it with: pip install Pillow")
             sys.exit(1)
 
-    def _is_image_tensor(self, tensor_proto: Any, tag: str) -> bool:
-        """Check if tensor contains image data."""
-        # This is a simplified version - will be moved to data_detector later
-        try:
-            arr = tensor_util.make_ndarray(tensor_proto)
-            if arr.dtype == "object" and len(arr) > 0:
-                first_item = arr.flat[0]
-                if isinstance(first_item, bytes):
-                    return self._is_valid_image_bytes(first_item)
-        except Exception:
-            pass
-        return False
-
-    def _decode_image_from_tensor(self, tensor_proto: Any) -> bytes | None:
-        """Decode image data from tensor."""
-        try:
-            arr = tensor_util.make_ndarray(tensor_proto)
-            if arr.dtype == "object" and len(arr) > 0:
-                first_item = arr.flat[0]
-                if isinstance(first_item, bytes) and self._is_valid_image_bytes(
-                    first_item
-                ):
-                    return first_item
-        except Exception as e:
-            logger.warning(f"Could not decode image from tensor: {e}")
-        return None
-
-    def _is_valid_image_bytes(self, data: bytes) -> bool:
-        """Check if bytes represent valid image data."""
-        # Check for common image format headers
-        if data.startswith(b"\x89PNG"):  # PNG
-            return True
-        elif data.startswith(b"\xff\xd8\xff"):  # JPEG
-            return True
-        elif data.startswith(b"GIF8"):  # GIF
-            return True
-        elif data.startswith(b"BM"):  # BMP
-            return True
-        return False
-
     def _is_video_data(self, image_data: bytes, tag: str) -> bool:
         """Check if image data is actually video data."""
-        return image_data.startswith(b"GIF") and (
-            "video" in tag.lower() or "animation" in tag.lower()
-        )
+        return TensorDataDetector.is_video_data(image_data, tag)
 
     # Expose save_data for BaseExporter compatibility
     def save_data(self, event: event_pb2.Event, value: Any, **kwargs: Any) -> None:

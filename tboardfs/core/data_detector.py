@@ -131,6 +131,70 @@ class TensorDataDetector:
             return False
 
     @staticmethod
+    def is_encoded_image_tensor(tensor_proto: Any, tag: str) -> bool:
+        """Check if tensor contains encoded image bytes.
+
+        Args:
+            tensor_proto: TensorBoard tensor proto
+            tag: Tag name for context
+
+        Returns:
+            True if tensor contains encoded image data (PNG, JPEG, GIF, BMP)
+        """
+        try:
+            arr = tensor_util.make_ndarray(tensor_proto)
+            if arr.dtype == "object" and len(arr) > 0:
+                first_item = arr.flat[0]
+                if isinstance(first_item, bytes):
+                    return TensorDataDetector.is_valid_image_bytes(first_item)
+        except Exception as e:
+            logger.debug(f"Encoded image detection failed for tag '{tag}': {e}")
+        return False
+
+    @staticmethod
+    def is_valid_image_bytes(data: bytes) -> bool:
+        """Check if bytes represent valid image data.
+
+        Args:
+            data: Raw bytes data
+
+        Returns:
+            True if data has valid image format headers
+        """
+        # Check for common image format headers
+        if data.startswith(b"\x89PNG"):  # PNG
+            return True
+        elif data.startswith(b"\xff\xd8\xff"):  # JPEG
+            return True
+        elif data.startswith(b"GIF8"):  # GIF
+            return True
+        elif data.startswith(b"BM"):  # BMP
+            return True
+        return False
+
+    @staticmethod
+    def decode_image_from_tensor(tensor_proto: Any) -> bytes | None:
+        """Decode image data from tensor.
+
+        Args:
+            tensor_proto: TensorBoard tensor proto
+
+        Returns:
+            Image bytes if found, None otherwise
+        """
+        try:
+            arr = tensor_util.make_ndarray(tensor_proto)
+            if arr.dtype == "object" and len(arr) > 0:
+                first_item = arr.flat[0]
+                if isinstance(
+                    first_item, bytes
+                ) and TensorDataDetector.is_valid_image_bytes(first_item):
+                    return first_item
+        except Exception as e:
+            logger.warning(f"Could not decode image from tensor: {e}")
+        return None
+
+    @staticmethod
     def is_text_tensor(tensor_proto: Any) -> bool:
         """Check if a tensor contains text data.
 
