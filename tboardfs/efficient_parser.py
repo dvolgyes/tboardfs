@@ -30,6 +30,13 @@ from tboardfs.core.data_types import (
 from tboardfs.core.data_detector import TensorDataDetector
 from tboardfs.core.export_pipeline import ExportPipeline, ExportConfig
 from tboardfs.core.data_source import DataSource, FileDataSource
+from tboardfs.core.histogram_utils import HistogramExportUtils
+from tboardfs.core.constants import (
+    TensorFlowDTypes,
+    AudioFormats,
+    DEFAULT_DIGITS,
+    FileSystemConstants,
+)
 
 # Import pydub for audio format conversion
 try:
@@ -142,13 +149,13 @@ class EfficientTensorBoardParser:
 
         yield from self.data_source.get_event_iterator()
 
-    def _scan_tags(self) -> dict[str, list[str]]:
-        """Scan the file once to build a directory of all tags by type."""
-        if self._tags_cache is not None:
-            return self._tags_cache
+    def _get_cached_tags(self) -> dict[str, list[str]] | None:
+        """Return cached tags if available."""
+        return self._tags_cache
 
-        logger.debug("Scanning file for tags...")
-        tags: dict[str, set[str]] = {
+    def _initialize_tag_collections(self) -> dict[str, set[str]]:
+        """Initialize empty tag collections for all supported types."""
+        return {
             "scalars": set(),
             "images": set(),
             "videos": set(),
@@ -161,132 +168,149 @@ class EfficientTensorBoardParser:
             "pr_curves": set(),
         }
 
-        event_count = 0
-        iterator: Iterator[event_pb2.Event] = self._iterate_events()
-
+    def _setup_event_iterator(self) -> Iterator[event_pb2.Event]:
+        """Create event iterator with optional progress tracking."""
+        iterator = self._iterate_events()
         if self.show_progress:
             iterator = tqdm(iterator, desc="Scanning for tags", unit=" events")  # type: ignore[assignment]
+        return iterator
 
-        for event in iterator:
-            event_count += 1
+    def _classify_tag_by_metadata(
+        self, value: Any, tags: dict[str, set[str]], tag: str
+    ) -> bool:
+        """Classify tag based on metadata plugin name. Returns True if classified."""
+        if not value.HasField("metadata"):
+            return False
 
-            # Check for summary data
-            if event.HasField("summary"):
-                for value in event.summary.value:
-                    tag = value.tag
+        plugin_name = value.metadata.plugin_data.plugin_name
 
-                    # Check metadata for plugin type
-                    if value.HasField("metadata"):
-                        plugin_name = value.metadata.plugin_data.plugin_name
+        # Plugin name to category mapping
+        plugin_mappings = {
+            "scalars": "scalars",
+            "images": "images",
+            "histograms": "histograms",
+            "audio": "audio",
+            "text": "text",
+            "mesh": "meshes",
+            "hparams": "hyperparameters",
+            "pr_curves": "pr_curves",
+        }
 
-                        if plugin_name == "scalars":
-                            tags["scalars"].add(tag)
-                        elif plugin_name == "images":
-                            tags["images"].add(tag)
-                        elif plugin_name == "histograms":
-                            tags["histograms"].add(tag)
-                        elif plugin_name == "audio":
-                            tags["audio"].add(tag)
-                        elif plugin_name == "text":
-                            tags["text"].add(tag)
-                        elif plugin_name == "mesh":
-                            tags["meshes"].add(tag)
-                        elif plugin_name == "hparams":
-                            tags["hyperparameters"].add(tag)
-                        elif plugin_name == "pr_curves":
-                            tags["pr_curves"].add(tag)
-                        else:
-                            # Default to tensors
-                            tags["tensors"].add(tag)
-                    else:
-                        # Legacy format detection based on field presence
-                        if value.HasField("simple_value"):
-                            tags["scalars"].add(tag)
-                        elif value.HasField("image"):
-                            # Check if this image is actually a video (GIF)
-                            if TensorDataDetector.is_video_data(
-                                value.image.encoded_image_string, tag
-                            ):
-                                tags["videos"].add(tag)
-                            else:
-                                tags["images"].add(tag)
-                        elif value.HasField("histo"):
-                            tags["histograms"].add(tag)
-                        elif value.HasField("audio"):
-                            tags["audio"].add(tag)
-                        elif value.HasField("tensor"):
-                            # Attempt to make ndarray to check size for scalar
-                            try:
-                                arr = tensor_util.make_ndarray(value.tensor)
-                                if arr.size == 1:
-                                    tags["scalars"].add(tag)
-                                elif (
-                                    value.tensor.dtype == 7
-                                ):  # Check if it's text (DT_STRING = 7)
-                                    tags["text"].add(tag)
-                                elif TensorDataDetector.is_pr_curve_tensor(
-                                    value.tensor, tag
-                                ):  # Check if it's a PR curve
-                                    tags["pr_curves"].add(tag)
-                                elif TensorDataDetector.is_image_tensor(
-                                    value.tensor, tag
-                                ):  # Check if it's an image
-                                    tags["images"].add(tag)
-                                else:
-                                    tags["tensors"].add(tag)
-                            except Exception as e:
-                                logger.debug(
-                                    f"Could not make ndarray for tensor tag {tag}: {e}. Treating as generic tensor."
-                                )
-                                tags["tensors"].add(tag)
+        category = plugin_mappings.get(plugin_name, "tensors")
+        tags[category].add(tag)
+        return True
 
-        # Store the specific categorization for internal use (correct categorization)
+    def _classify_tag_legacy_format(
+        self, value: Any, tags: dict[str, set[str]], tag: str
+    ) -> None:
+        """Classify tag based on legacy format field presence."""
+        if value.HasField("simple_value"):
+            tags["scalars"].add(tag)
+        elif value.HasField("image"):
+            if TensorDataDetector.is_video_data(value.image.encoded_image_string, tag):
+                tags["videos"].add(tag)
+            else:
+                tags["images"].add(tag)
+        elif value.HasField("histo"):
+            tags["histograms"].add(tag)
+        elif value.HasField("audio"):
+            tags["audio"].add(tag)
+        elif value.HasField("tensor"):
+            self._classify_tensor_tag(value.tensor, tags, tag)
+
+    def _classify_tensor_tag(
+        self, tensor: Any, tags: dict[str, set[str]], tag: str
+    ) -> None:
+        """Classify tag based on tensor analysis."""
+        try:
+            arr = tensor_util.make_ndarray(tensor)
+            if arr.size == 1:
+                tags["scalars"].add(tag)
+            elif tensor.dtype == TensorFlowDTypes.DT_STRING:
+                tags["text"].add(tag)
+            elif TensorDataDetector.is_pr_curve_tensor(tensor, tag):
+                tags["pr_curves"].add(tag)
+            elif TensorDataDetector.is_image_tensor(tensor, tag):
+                tags["images"].add(tag)
+            else:
+                tags["tensors"].add(tag)
+        except Exception as e:
+            logger.debug(
+                f"Could not make ndarray for tensor tag {tag}: {e}. Treating as generic tensor."
+            )
+            tags["tensors"].add(tag)
+
+    def _organize_scan_results(self, tags: dict[str, set[str]]) -> dict[str, list[str]]:
+        """Convert tag sets to sorted lists and prepare final cache structure."""
+        # Store detailed tags for internal use
         self._detailed_tags = {k: sorted(v) for k, v in tags.items()}
 
-        # For backward compatibility with v2 format: EventAccumulator puts everything in tensors
-        # and leaves other categories empty. We'll match this behavior for list_* methods.
-        all_data_tags = set()
-        all_data_tags.update(tags["scalars"])
-        all_data_tags.update(tags["images"])
-        all_data_tags.update(tags["videos"])
-        all_data_tags.update(tags["histograms"])
-        all_data_tags.update(tags["audio"])
-        all_data_tags.update(tags["text"])
-        all_data_tags.update(tags["meshes"])
-        all_data_tags.update(tags["hyperparameters"])
-        all_data_tags.update(tags["pr_curves"])
-        all_data_tags.update(tags["tensors"])
-
-        # For external API, mostly match EventAccumulator behavior but keep text separate
-        # since the original parser did identify text tags by scanning tensors
-        self._tags_cache = {
+        # Create backward-compatible cache structure
+        return {
             "scalars": self._detailed_tags["scalars"],
             "images": self._detailed_tags["images"],
             "videos": self._detailed_tags["videos"],
             "histograms": self._detailed_tags["histograms"],
             "audio": self._detailed_tags["audio"],
-            "text": self._detailed_tags["text"],  # Keep text tags identifiable
+            "text": self._detailed_tags["text"],
             "meshes": self._detailed_tags["meshes"],
             "hyperparameters": self._detailed_tags["hyperparameters"],
             "pr_curves": self._detailed_tags["pr_curves"],
             "tensors": self._detailed_tags["tensors"],
         }
 
-        self._event_count = event_count
-
+    def _log_scan_summary(
+        self, event_count: int, tags_cache: dict[str, list[str]]
+    ) -> None:
+        """Log summary of tag scan results."""
         logger.debug(f"Tag scan complete. Found {event_count} events")
         logger.debug(
-            f"Tags found - scalars: {len(self._tags_cache['scalars'])}, "
-            f"images: {len(self._tags_cache['images'])}, "
-            f"videos: {len(self._tags_cache['videos'])}, "
-            f"histograms: {len(self._tags_cache['histograms'])}, "
-            f"audio: {len(self._tags_cache['audio'])}, "
-            f"text: {len(self._tags_cache['text'])}, "
-            f"meshes: {len(self._tags_cache['meshes'])}, "
-            f"hyperparameters: {len(self._tags_cache['hyperparameters'])}, "
-            f"pr_curves: {len(self._tags_cache['pr_curves'])}, "
-            f"tensors: {len(self._tags_cache['tensors'])}"
+            f"Tags found - scalars: {len(tags_cache['scalars'])}, "
+            f"images: {len(tags_cache['images'])}, "
+            f"videos: {len(tags_cache['videos'])}, "
+            f"histograms: {len(tags_cache['histograms'])}, "
+            f"audio: {len(tags_cache['audio'])}, "
+            f"text: {len(tags_cache['text'])}, "
+            f"meshes: {len(tags_cache['meshes'])}, "
+            f"hyperparameters: {len(tags_cache['hyperparameters'])}, "
+            f"pr_curves: {len(tags_cache['pr_curves'])}, "
+            f"tensors: {len(tags_cache['tensors'])}"
         )
+
+    def _scan_tags(self) -> dict[str, list[str]]:
+        """Scan the file once to build a directory of all tags by type."""
+        # Check cache first
+        cached_tags = self._get_cached_tags()
+        if cached_tags is not None:
+            return cached_tags
+
+        logger.debug("Scanning file for tags...")
+
+        # Initialize data structures
+        tags = self._initialize_tag_collections()
+        event_count = 0
+
+        # Process all events
+        iterator = self._setup_event_iterator()
+
+        for event in iterator:
+            event_count += 1
+
+            if event.HasField("summary"):
+                for value in event.summary.value:
+                    tag = value.tag
+
+                    # Try metadata-based classification first
+                    if not self._classify_tag_by_metadata(value, tags, tag):
+                        # Fall back to legacy format detection
+                        self._classify_tag_legacy_format(value, tags, tag)
+
+        # Organize results and update cache
+        self._tags_cache = self._organize_scan_results(tags)
+        self._event_count = event_count
+
+        # Log summary
+        self._log_scan_summary(event_count, self._tags_cache)
 
         return self._tags_cache
 
@@ -555,7 +579,7 @@ class EfficientTensorBoardParser:
                                             step=event.step,
                                             encoded_audio_string=audio_bytes,
                                             content_type="audio/wav",  # Default assumption
-                                            sample_rate=22050.0,  # Default assumption
+                                            sample_rate=AudioFormats.DEFAULT_SAMPLE_RATE,
                                             length_frames=len(audio_bytes),
                                             wall_time=event.wall_time,
                                         )
@@ -572,7 +596,7 @@ class EfficientTensorBoardParser:
                     if (
                         value.tag == tag
                         and value.HasField("tensor")
-                        and value.tensor.dtype == 7
+                        and value.tensor.dtype == TensorFlowDTypes.DT_STRING
                     ):
                         # Decode text from tensor
                         text_value = tensor_util.make_ndarray(value.tensor)
@@ -817,181 +841,13 @@ class EfficientTensorBoardParser:
         histogram_data_buffers: dict[str, list[tuple[int, dict, float]]],
         output_path: Path,
     ) -> None:
-        """Save histogram data in unified CSV + NPZ formats."""
-        histograms_dir = output_path / "histograms"
+        """Save histogram data in unified CSV + NPZ formats using shared utility."""
 
-        for tag, data_points in histogram_data_buffers.items():
-            if not data_points:
-                continue
+        def sanitize_tag(tag: str) -> str:
+            return tag.replace("/", FileSystemConstants.PATH_REPLACEMENT_CHAR)
 
-            # Create histograms directory only when we have data to save
-            histograms_dir.mkdir(parents=True, exist_ok=True)
-
-            safe_tag = tag.replace("/", "_")
-
-            # Sort by step
-            data_points.sort(key=lambda x: x[0])
-
-            # Check histogram format (legacy vs tensor)
-            first_format = data_points[0][1].get("format", "unknown")
-
-            if first_format == "legacy_histo":
-                # Save legacy histogram format
-                self._save_legacy_histogram_unified(
-                    tag, safe_tag, data_points, histograms_dir
-                )
-            elif first_format == "tensor":
-                # Save tensor histogram format
-                self._save_tensor_histogram_unified(
-                    tag, safe_tag, data_points, histograms_dir
-                )
-            else:
-                logger.warning(
-                    f"Unknown histogram format for tag '{tag}': {first_format}"
-                )
-
-    def _save_legacy_histogram_unified(
-        self, tag: str, safe_tag: str, data_points: list, histograms_dir: Path
-    ) -> None:
-        """Save legacy histogram data in unified formats."""
-        # Prepare data for CSV
-        csv_rows = []
-        npz_data: dict[str, list[Any]] = {
-            "step": [],
-            "wall_time": [],
-            "min": [],
-            "max": [],
-            "num": [],
-            "sum": [],
-            "sum_squares": [],
-            "bucket_limits": [],
-            "bucket_counts": [],
-        }
-
-        for step, hist_data, wall_time in data_points:
-            # CSV row
-            bucket_limits = hist_data["bucket_limit"]
-            bucket_counts = hist_data["bucket"]
-
-            csv_rows.append(
-                {
-                    "step": step,
-                    "wall_time": wall_time,
-                    "min": hist_data["min"],
-                    "max": hist_data["max"],
-                    "num": hist_data["num"],
-                    "sum": hist_data["sum"],
-                    "sum_squares": hist_data["sum_squares"],
-                    "num_buckets": len(bucket_limits),
-                    "bucket_limits_str": "|".join(map(str, bucket_limits)),
-                    "bucket_counts_str": "|".join(map(str, bucket_counts)),
-                }
-            )
-
-            # NPZ arrays
-            npz_data["step"].append(step)
-            npz_data["wall_time"].append(wall_time)
-            npz_data["min"].append(hist_data["min"])
-            npz_data["max"].append(hist_data["max"])
-            npz_data["num"].append(hist_data["num"])
-            npz_data["sum"].append(hist_data["sum"])
-            npz_data["sum_squares"].append(hist_data["sum_squares"])
-            npz_data["bucket_limits"].append(bucket_limits)
-            npz_data["bucket_counts"].append(bucket_counts)
-
-        # Save CSV
-        csv_file = histograms_dir / f"{safe_tag}.csv"
-        with csv_file.open("w") as f:
-            f.write(
-                "step,wall_time,min,max,num,sum,sum_squares,num_buckets,bucket_limits,bucket_counts\n"
-            )
-            for row in csv_rows:
-                f.write(
-                    f"{row['step']},{row['wall_time']:.6f},{row['min']:.10g},{row['max']:.10g},"
-                    f"{row['num']},{row['sum']:.10g},{row['sum_squares']:.10g},{row['num_buckets']},"
-                    f'"{row["bucket_limits_str"]}","{row["bucket_counts_str"]}"\n'
-                )
-
-        # Save NPZ
-        npz_file = histograms_dir / f"{safe_tag}.npz"
-        # Convert lists to arrays for npz
-        npz_arrays: dict[str, Any] = {
-            key: np.array(values)
-            if key not in ["bucket_limits", "bucket_counts"]
-            else values
-            for key, values in npz_data.items()
-        }
-        npz_arrays["tag"] = tag
-        npz_arrays["format"] = "legacy_histo"
-        np.savez_compressed(npz_file, **npz_arrays)
-
-        logger.debug(
-            f"Saved histogram '{tag}' to {csv_file} and {npz_file} ({len(data_points)} points)"
-        )
-
-    def _save_tensor_histogram_unified(
-        self, tag: str, safe_tag: str, data_points: list, histograms_dir: Path
-    ) -> None:
-        """Save tensor histogram data in unified formats."""
-        # For tensor histograms, save raw tensor data and metadata
-        csv_rows = []
-        npz_data: dict[str, list[Any]] = {
-            "step": [],
-            "wall_time": [],
-            "tensor_shapes": [],
-            "tensor_dtypes": [],
-            "tensor_data": [],
-        }
-
-        for step, hist_data, wall_time in data_points:
-            tensor_data = hist_data["tensor_data"]
-            tensor_shape = hist_data["tensor_shape"]
-            tensor_dtype = hist_data["tensor_dtype"]
-
-            csv_rows.append(
-                {
-                    "step": step,
-                    "wall_time": wall_time,
-                    "tensor_shape": str(tensor_shape),
-                    "tensor_dtype": tensor_dtype,
-                    "tensor_size": len(tensor_data),
-                    "tensor_data_str": "|".join(map(str, tensor_data)),
-                }
-            )
-
-            npz_data["step"].append(step)
-            npz_data["wall_time"].append(wall_time)
-            npz_data["tensor_shapes"].append(tensor_shape)
-            npz_data["tensor_dtypes"].append(tensor_dtype)
-            npz_data["tensor_data"].append(tensor_data)
-
-        # Save CSV
-        csv_file = histograms_dir / f"{safe_tag}.csv"
-        with csv_file.open("w") as f:
-            f.write(
-                "step,wall_time,tensor_shape,tensor_dtype,tensor_size,tensor_data\n"
-            )
-            for row in csv_rows:
-                f.write(
-                    f'{row["step"]},{row["wall_time"]:.6f},"{row["tensor_shape"]}",'
-                    f'"{row["tensor_dtype"]}",{row["tensor_size"]},"{row["tensor_data_str"]}"\n'
-                )
-
-        # Save NPZ - handle variable-length tensor data as object arrays
-        npz_file = histograms_dir / f"{safe_tag}.npz"
-        np.savez_compressed(
-            npz_file,
-            step=np.array(npz_data["step"]),
-            wall_time=np.array(npz_data["wall_time"]),
-            tensor_shapes=np.array(npz_data["tensor_shapes"], dtype=object),
-            tensor_dtypes=np.array(npz_data["tensor_dtypes"]),
-            tensor_data=np.array(npz_data["tensor_data"], dtype=object),
-            tag=tag,
-            format="tensor",
-        )
-
-        logger.debug(
-            f"Saved tensor histogram '{tag}' to {csv_file} and {npz_file} ({len(data_points)} points)"
+        HistogramExportUtils.save_unified_histograms(
+            histogram_data_buffers, output_path, sanitize_tag_func=sanitize_tag
         )
 
     def _save_image(
@@ -1283,199 +1139,224 @@ class EfficientTensorBoardParser:
 
         logger.debug(f"Extraction completed. Processed {event_count} events.")
 
-    def get_virtual_paths(self, digits: int = 6) -> list[str]:
-        """Get all virtual paths that would exist in the filesystem."""
-        paths = []
-
+    def _determine_processing_mode(self) -> dict[str, list[str]] | None:
+        """Determine processing mode and return tags if available."""
         # Check if we have proper initialization
         if hasattr(self, "_tags_cache") and hasattr(self, "event_file_path"):
             try:
                 self._scan_tags()  # Ensure cache is populated
                 all_tags = self._detailed_tags
                 if all_tags is None:
-                    return []
+                    return None
+                return all_tags
             except Exception:
                 # If scanning fails, fall back to mock-based method
                 pass
 
         # Check if we have detailed tags from scanning
         if hasattr(self, "_detailed_tags") and self._detailed_tags is not None:
-            all_tags = self._detailed_tags
+            return self._detailed_tags
         else:
             # Fallback for tests using mocks - call the individual methods
-            all_tags = None
+            return None
 
-        # Add directories
-        paths.extend(
-            [
-                "scalars/",
-                "images/",
-                "histograms/",
-                "audio/",
-                "text/",
-                "meshes/",
-                "hp_params/",
-            ]
-        )
+    def _get_base_directories(self) -> list[str]:
+        """Return base directory paths for virtual filesystem."""
+        return [
+            "scalars/",
+            "images/",
+            "histograms/",
+            "audio/",
+            "text/",
+            "meshes/",
+            "hp_params/",
+        ]
 
+    def _sanitize_tag_for_path(self, tag: str) -> str:
+        """Convert tag to filesystem-safe name."""
+        return tag.replace("/", FileSystemConstants.PATH_REPLACEMENT_CHAR)
+
+    def _get_tags_with_fallback(
+        self, data_type: str, all_tags: dict[str, list[str]] | None
+    ) -> list[str]:
+        """Get tags using normal mode or fallback to individual methods."""
         if all_tags is not None:
-            # Normal mode - use scanned tags
-            # Scalar paths
-            for tag in all_tags["scalars"]:
-                safe_tag = tag.replace("/", "_")
-                paths.append(f"scalars/{safe_tag}.txt")
-        else:
-            # Fallback mode for tests using mocks - call the individual methods
-            # Scalar paths
-            try:
-                for tag in self.list_scalars():
-                    safe_tag = tag.replace("/", "_")
-                    paths.append(f"scalars/{safe_tag}.txt")
-            except Exception:
-                pass
+            return all_tags.get(data_type, [])
 
+        # Fallback mode - call individual list methods
+        method_map = {
+            "scalars": self.list_scalars,
+            "images": self.list_images,
+            "histograms": self.list_histograms,
+            "audio": self.list_audio,
+            "text": self.list_text,
+            "meshes": self.list_meshes,
+            "hyperparameters": self.list_hyperparameters,
+        }
+
+        try:
+            method = method_map.get(data_type)
+            if method:
+                return method()
+            return []
+        except Exception:
+            return []
+
+    def _generate_simple_paths(
+        self, data_type: str, tags: list[str], extension: str
+    ) -> list[str]:
+        """Generate simple file paths for data types without steps."""
+        paths = []
+        for tag in tags:
+            safe_tag = self._sanitize_tag_for_path(tag)
+            paths.append(f"{data_type}/{safe_tag}.{extension}")
+        return paths
+
+    def _iterate_data_with_fallback(
+        self, data_type: str, tag: str, all_tags: dict[str, list[str]] | None
+    ) -> Iterator[Any]:
+        """Iterate data using normal mode or fallback with error handling."""
         if all_tags is not None:
-            # Normal mode - use scanned tags
-            # For other types, we need to iterate to get step numbers
-            # This is less efficient but necessary for virtual paths
-
-            # Image paths
-            for tag in all_tags["images"]:
-                safe_tag = tag.replace("/", "_")
-                paths.append(f"images/{safe_tag}/")
-                for data in self.iterate_image_data(tag):
-                    ext = self.get_image_extension(data.encoded_image_string, tag)
-                    padded_step = str(data.step).zfill(digits)
-                    paths.append(f"images/{safe_tag}/{padded_step}.{ext}")
-
-            # Histogram paths
-            for tag in all_tags["histograms"]:
-                safe_tag = tag.replace("/", "_")
-                paths.append(f"histograms/{safe_tag}.txt")
-
-            # Audio paths
-            for tag in all_tags["audio"]:
-                safe_tag = tag.replace("/", "_")
-                paths.append(f"audio/{safe_tag}/")
-                for data_audio in self.iterate_audio_data(tag):
-                    ext = self.get_audio_extension(data_audio.content_type)
-                    padded_step = str(data_audio.step).zfill(digits)
-                    paths.append(f"audio/{safe_tag}/{padded_step}.{ext}")
-
-            # Text paths
-            for tag in all_tags["text"]:
-                safe_tag = tag.replace("/", "_")
-                paths.append(f"text/{safe_tag}/")
-                for data_text in self.iterate_text_data(tag):
-                    padded_step = str(data_text.step).zfill(digits)
-                    paths.append(f"text/{safe_tag}/{padded_step}.txt")
-
-            # Mesh paths - group by base tag (without _VERTEX, _FACE, _COLOR suffixes)
-            mesh_base_tags = set()
-            for tag in all_tags["meshes"]:
-                base_tag = tag.rstrip("_VERTEX").rstrip("_FACE").rstrip("_COLOR")
-                mesh_base_tags.add(base_tag)
-
-            for base_tag in mesh_base_tags:
-                safe_tag = base_tag.replace("/", "_")
-                paths.append(f"meshes/{safe_tag}/")
-                try:
-                    for data_mesh in self.iterate_mesh_data(base_tag):
-                        padded_step = str(data_mesh.step).zfill(digits)
-                        paths.append(f"meshes/{safe_tag}/{padded_step}.ply")
-                except Exception:
-                    # Skip if mesh data iteration fails
-                    pass
+            # Normal mode - direct iteration
+            method_map = {
+                "images": self.iterate_image_data,
+                "audio": self.iterate_audio_data,
+                "text": self.iterate_text_data,
+                "meshes": self.iterate_mesh_data,
+            }
+            method = method_map.get(data_type)
+            if method:
+                return method(tag)
+            return []
         else:
-            # Fallback mode for tests using mocks - call the individual methods
-            # Image paths
+            # Fallback mode with error handling
             try:
-                for tag in self.list_images():
-                    safe_tag = tag.replace("/", "_")
-                    paths.append(f"images/{safe_tag}/")
-                    try:
-                        image_data = list(self.iterate_image_data(tag))
-                        for image_item in image_data:
-                            ext = self.get_image_extension(
-                                image_item.encoded_image_string
-                            )
-                            padded_step = str(image_item.step).zfill(digits)
-                            paths.append(f"images/{safe_tag}/{padded_step}.{ext}")
-                    except Exception:
-                        pass
+                method_map = {
+                    "images": self.iterate_image_data,
+                    "audio": self.iterate_audio_data,
+                    "text": self.iterate_text_data,
+                    "meshes": self.iterate_mesh_data,
+                }
+                method = method_map.get(data_type)
+                if method:
+                    return method(tag)
+                return []
             except Exception:
-                pass
+                return []
 
-            # Histogram paths
-            try:
-                for tag in self.list_histograms():
-                    safe_tag = tag.replace("/", "_")
-                    paths.append(f"histograms/{safe_tag}.txt")
-            except Exception:
-                pass
-
-            # Audio paths
-            try:
-                for tag in self.list_audio():
-                    safe_tag = tag.replace("/", "_")
-                    paths.append(f"audio/{safe_tag}/")
-                    try:
-                        audio_data = list(self.iterate_audio_data(tag))
-                        for audio_item in audio_data:
-                            ext = self.get_audio_extension(audio_item.content_type)
-                            padded_step = str(audio_item.step).zfill(digits)
-                            paths.append(f"audio/{safe_tag}/{padded_step}.{ext}")
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            # Text paths
-            try:
-                for tag in self.list_text():
-                    safe_tag = tag.replace("/", "_")
-                    paths.append(f"text/{safe_tag}/")
-                    try:
-                        text_data = list(self.iterate_text_data(tag))
-                        for text_item in text_data:
-                            padded_step = str(text_item.step).zfill(digits)
-                            paths.append(f"text/{safe_tag}/{padded_step}.txt")
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            # Mesh paths - group by base tag (without _VERTEX, _FACE, _COLOR suffixes)
-            try:
-                mesh_base_tags = set()
-                for tag in self.list_meshes():
-                    base_tag = tag.rstrip("_VERTEX").rstrip("_FACE").rstrip("_COLOR")
-                    mesh_base_tags.add(base_tag)
-
-                for base_tag in mesh_base_tags:
-                    safe_tag = base_tag.replace("/", "_")
-                    paths.append(f"meshes/{safe_tag}/")
-                    try:
-                        mesh_data = list(self.iterate_mesh_data(base_tag))
-                        for mesh_item in mesh_data:
-                            padded_step = str(mesh_item.step).zfill(digits)
-                            paths.append(f"meshes/{safe_tag}/{padded_step}.ply")
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-        # Hyperparameter paths - single file per entire log
-        if all_tags is not None:
-            if all_tags["hyperparameters"]:
-                paths.append("hp_params/hp_params.yaml")
+    def _get_file_extension(self, data_type: str, data_item: Any = None) -> str:
+        """Get file extension for data type."""
+        if data_type == "images":
+            if data_item and hasattr(data_item, "encoded_image_string"):
+                return self.get_image_extension(data_item.encoded_image_string)
+            return "png"
+        elif data_type == "audio":
+            if data_item and hasattr(data_item, "content_type"):
+                return self.get_audio_extension(data_item.content_type)
+            return "wav"
+        elif data_type == "text":
+            return "txt"
+        elif data_type == "meshes":
+            return "ply"
         else:
-            # Fallback mode for tests
-            try:
-                hyperparams = self.list_hyperparameters()
-                if hyperparams:
-                    paths.append("hp_params/hp_params.yaml")
-            except Exception:
-                pass
+            return "txt"
+
+    def _generate_step_based_paths(
+        self,
+        data_type: str,
+        tags: list[str],
+        digits: int,
+        all_tags: dict[str, list[str]] | None,
+    ) -> list[str]:
+        """Generate step-based file paths with error handling."""
+        paths = []
+
+        for tag in tags:
+            safe_tag = self._sanitize_tag_for_path(tag)
+            # Add tag directory
+            paths.append(f"{data_type}/{safe_tag}/")
+
+            # Add individual step files
+            for data_item in self._iterate_data_with_fallback(data_type, tag, all_tags):
+                step = data_item.step
+                padded_step = str(step).zfill(digits)
+                extension = self._get_file_extension(data_type, data_item)
+                paths.append(f"{data_type}/{safe_tag}/{padded_step}.{extension}")
+
+        return paths
+
+    def _generate_mesh_paths(
+        self, tags: list[str], digits: int, all_tags: dict[str, list[str]] | None
+    ) -> list[str]:
+        """Generate mesh paths with base tag grouping."""
+        paths = []
+
+        # Group mesh tags by base tag
+        base_tags = set()
+        for tag in tags:
+            if (
+                tag.endswith("_VERTEX")
+                or tag.endswith("_FACE")
+                or tag.endswith("_COLOR")
+            ):
+                base_tag = tag.rsplit("_", 1)[0]
+                base_tags.add(base_tag)
+
+        for base_tag in base_tags:
+            safe_tag = self._sanitize_tag_for_path(base_tag)
+            # Add tag directory
+            paths.append(f"meshes/{safe_tag}/")
+
+            # Get steps from vertex tag (most reliable)
+            vertex_tag = f"{base_tag}_VERTEX"
+            if vertex_tag in tags:
+                for data_item in self._iterate_data_with_fallback(
+                    "meshes", vertex_tag, all_tags
+                ):
+                    step = data_item.step
+                    padded_step = str(step).zfill(digits)
+                    paths.append(f"meshes/{safe_tag}/{padded_step}.ply")
+
+        return paths
+
+    def _generate_hyperparameter_paths(
+        self, all_tags: dict[str, list[str]] | None
+    ) -> list[str]:
+        """Generate hyperparameter paths."""
+        tags = self._get_tags_with_fallback("hyperparameters", all_tags)
+        if tags:
+            return ["hp_params/hp_params.yaml"]
+        return []
+
+    def get_virtual_paths(self, digits: int = DEFAULT_DIGITS) -> list[str]:
+        """Get all virtual paths that would exist in the filesystem."""
+        # Determine processing mode
+        all_tags = self._determine_processing_mode()
+
+        # Start with base directories
+        paths = self._get_base_directories()
+
+        # Generate paths for each data type
+        # Scalars (simple files)
+        scalar_tags = self._get_tags_with_fallback("scalars", all_tags)
+        paths.extend(self._generate_simple_paths("scalars", scalar_tags, "txt"))
+
+        # Histograms (simple files)
+        histogram_tags = self._get_tags_with_fallback("histograms", all_tags)
+        paths.extend(self._generate_simple_paths("histograms", histogram_tags, "txt"))
+
+        # Step-based data types
+        for data_type in ["images", "audio", "text"]:
+            tags = self._get_tags_with_fallback(data_type, all_tags)
+            paths.extend(
+                self._generate_step_based_paths(data_type, tags, digits, all_tags)
+            )
+
+        # Meshes (special handling for base tags)
+        mesh_tags = self._get_tags_with_fallback("meshes", all_tags)
+        paths.extend(self._generate_mesh_paths(mesh_tags, digits, all_tags))
+
+        # Hyperparameters (special case)
+        paths.extend(self._generate_hyperparameter_paths(all_tags))
 
         return sorted(set(paths))

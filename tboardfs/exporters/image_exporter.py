@@ -10,12 +10,17 @@ from loguru import logger
 
 from .base_exporter import BaseExporter
 from ..core.data_detector import TensorDataDetector
+from ..core.constants import (
+    TensorFlowDTypes,
+    ImageFormats,
+    DEFAULT_DIGITS,
+)
 
 
 class ImageExporter(BaseExporter):
     """Export image and video data from TensorBoard events."""
 
-    def __init__(self, output_path: Path, digits: int = 6):
+    def __init__(self, output_path: Path, digits: int = DEFAULT_DIGITS):
         """Initialize image exporter."""
         super().__init__(output_path, digits)
 
@@ -23,8 +28,8 @@ class ImageExporter(BaseExporter):
         self,
         event: event_pb2.Event,
         value: Any,
-        image_format: str = "jpg",
-        image_quality: int = 90,
+        image_format: str = ImageFormats.DEFAULT_FORMAT,
+        image_quality: int = ImageFormats.DEFAULT_QUALITY,
         **kwargs: Any,
     ) -> None:
         """Save image data from a TensorBoard event.
@@ -85,7 +90,7 @@ class ImageExporter(BaseExporter):
                 )
                 if decoded_image:
                     image_byte_list.append(decoded_image)
-            elif value.tensor.dtype == 7:  # DT_STRING
+            elif value.tensor.dtype == TensorFlowDTypes.DT_STRING:
                 try:
                     arr = tensor_util.make_ndarray(value.tensor)
                     for item in arr:

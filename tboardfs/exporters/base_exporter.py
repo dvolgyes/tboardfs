@@ -7,12 +7,13 @@ from tensorboard.compat.proto import event_pb2
 from loguru import logger
 
 from ..core.unified_virtual_paths import VirtualPathBuilder
+from ..core.constants import DEFAULT_DIGITS
 
 
 class BaseExporter(ABC):
     """Abstract base class for TensorBoard data exporters."""
 
-    def __init__(self, output_path: Path, digits: int = 6):
+    def __init__(self, output_path: Path, digits: int = DEFAULT_DIGITS):
         """Initialize base exporter.
 
         Args:

@@ -4,8 +4,12 @@ from typing import Any
 from tensorboard.util import tensor_util
 from loguru import logger
 
-# TensorBoard tensor data type constants
-DT_STRING = 7  # TensorFlow string tensor dtype
+from .constants import (
+    TensorFlowDTypes,
+    ImageFormats,
+    TensorBoardConstants,
+    DataTypeShapes,
+)
 
 
 class TensorDataDetector:
@@ -29,20 +33,23 @@ class TensorDataDetector:
             )
 
             # Check shape: (H, W, C) or (N, H, W, C) or (C, H, W) or (N, C, H, W)
-            if arr.ndim < 2 or arr.ndim > 4:
+            if (
+                arr.ndim < DataTypeShapes.IMAGE_MIN_DIMS
+                or arr.ndim > DataTypeShapes.IMAGE_MAX_DIMS
+            ):
                 logger.debug(f"Tensor '{tag}' is not image: ndim is {arr.ndim}")
                 return False
 
             # Check channels: last or second dimension should be 1, 3, or 4
             # For (H, W, C) or (N, H, W, C)
-            if arr.shape[-1] in [1, 3, 4]:
+            if arr.shape[-1] in ImageFormats.VALID_CHANNELS:
                 logger.debug(f"Tensor '{tag}' is image: shape[-1] is {arr.shape[-1]}")
                 return True
             # For (C, H, W) or (N, C, H, W)
-            if arr.ndim > 2 and arr.shape[-3] in [1, 3, 4]:
+            if arr.ndim > 2 and arr.shape[-3] in ImageFormats.VALID_CHANNELS:
                 logger.debug(f"Tensor '{tag}' is image: shape[-3] is {arr.shape[-3]}")
                 return True
-            if arr.ndim == 3 and arr.shape[0] in [1, 3, 4]:  # (C,H,W)
+            if arr.ndim == 3 and arr.shape[0] in ImageFormats.VALID_CHANNELS:  # (C,H,W)
                 logger.debug(f"Tensor '{tag}' is image: shape[0] is {arr.shape[0]}")
                 return True
 
@@ -100,7 +107,10 @@ class TensorDataDetector:
             )
 
             # PR curves have specific shape [6, N] where N is number of thresholds
-            if arr.ndim == 2 and arr.shape[0] == 6:
+            if (
+                arr.ndim == 2
+                and arr.shape[0] == TensorBoardConstants.PR_CURVE_REQUIRED_COMPONENTS
+            ):
                 # Additional checks: tag name contains pr_curve, precision, recall
                 tag_lower = tag.lower()
                 pr_keywords = [
@@ -204,7 +214,7 @@ class TensorDataDetector:
         Returns:
             True if tensor contains string data
         """
-        return tensor_proto.dtype == DT_STRING
+        return tensor_proto.dtype == TensorFlowDTypes.DT_STRING
 
     @staticmethod
     def is_mesh_tensor(tag: str) -> bool:
