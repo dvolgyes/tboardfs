@@ -13,9 +13,9 @@ class TestTensorBoardParserWithRealData:
 
     @pytest.fixture
     def real_log_file(self):
-        """Use a real TensorBoard log file from example-logs."""
+        """Use a real TensorBoard log file from test-logs."""
         log_path = Path(
-            "example-logs/martijn_original/events.out.tfevents.1737033457.FG-PROC-SURE01.2930639.0"
+            "test-logs/images/events.out.tfevents.1751399792.FG-OSL-WS122.70334.26"
         )
         if log_path.exists():
             return str(log_path)
@@ -147,24 +147,24 @@ class TestTensorBoardParserErrorHandling:
         """Test handling of nonexistent tags."""
         # Use a real file but test with nonexistent tags
         log_path = Path(
-            "example-logs/martijn_original/events.out.tfevents.1737033457.FG-PROC-SURE01.2930639.0"
+            "test-logs/images/events.out.tfevents.1751399792.FG-OSL-WS122.70334.26"
         )
         if not log_path.exists():
             pytest.skip("Real log file not found")
 
         parser = TensorBoardParser(str(log_path))
 
-        # Test with nonexistent scalar tag
-        with pytest.raises(Exception):  # Should raise KeyError
-            parser.get_scalar_data("nonexistent_scalar")
+        # Test with nonexistent scalar tag - should return empty list
+        scalar_data = parser.get_scalar_data("nonexistent_scalar")
+        assert scalar_data == []
 
-        # Test with nonexistent image tag
-        with pytest.raises(Exception):
-            parser.get_image_data("nonexistent_image")
+        # Test with nonexistent image tag - should return empty list
+        image_data = parser.get_image_data("nonexistent_image")
+        assert image_data == []
 
-        # Test export with nonexistent tag - should raise KeyError
-        with pytest.raises(Exception):
-            parser.export_image("nonexistent_image", 0)
+        # Test export with nonexistent tag - should return None
+        export_result = parser.export_image("nonexistent_image", 0)
+        assert export_result is None
 
         # Test export with nonexistent step
         images = parser.list_images()

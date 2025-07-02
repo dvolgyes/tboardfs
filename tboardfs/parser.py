@@ -18,6 +18,7 @@ from tboardfs.core.data_types import (
     TextData,
     MeshData,
     HyperparameterData,
+    PRCurveData,
 )
 from loguru import logger
 import magic
@@ -99,6 +100,12 @@ class TensorBoardParser:
             return self._efficient_parser.list_hyperparameters()
         return []
 
+    def list_pr_curves(self) -> list[str]:
+        """List all PR curve tags in the event file."""
+        if hasattr(self, "_efficient_parser"):
+            return self._efficient_parser.list_pr_curves()
+        return []
+
     def get_scalar_data(self, tag: str) -> list[ScalarData]:
         """Get all scalar data for a given tag."""
         if hasattr(self, "_efficient_parser"):
@@ -139,6 +146,12 @@ class TensorBoardParser:
         """Get all hyperparameter data for a given tag."""
         if hasattr(self, "_efficient_parser"):
             return list(self._efficient_parser.iterate_hyperparameter_data(tag))
+        return []
+
+    def get_pr_curve_data(self, tag: str) -> list[PRCurveData]:
+        """Get all PR curve data for a given tag."""
+        if hasattr(self, "_efficient_parser"):
+            return list(self._efficient_parser.iterate_pr_curve_data(tag))
         return []
 
     def export_scalar_to_text(self, tag: str) -> str:
@@ -237,6 +250,7 @@ class TensorBoardParser:
                 "text/",
                 "meshes/",
                 "hp_params/",
+                "pr_curves/",
             ]
         )
 
