@@ -27,6 +27,7 @@ from tboardfs.core.data_types import (
     TextData,
     MeshData,
     HyperparameterData,
+    PRCurveData,
 )
 
 # Import pydub for audio format conversion
@@ -99,6 +100,7 @@ class EfficientTensorBoardParser:
                 "tensors": [],
                 "meshes": [],
                 "hyperparameters": [],
+                "pr_curves": [],
             }
             self._detailed_tags = {
                 "scalars": [],
@@ -110,6 +112,7 @@ class EfficientTensorBoardParser:
                 "tensors": [],
                 "meshes": [],
                 "hyperparameters": [],
+                "pr_curves": [],
             }
             self._event_count = 0
             return
@@ -182,6 +185,45 @@ class EfficientTensorBoardParser:
             logger.debug(f"Video detection failed for tag '{tag}': {e}")
             return False
 
+    def _is_pr_curve_tensor(self, tensor_proto: Any, tag: str) -> bool:
+        """Check if a tensor contains PR curve data."""
+        try:
+            arr = tensor_util.make_ndarray(tensor_proto)
+            logger.debug(
+                f"Checking if tensor '{tag}' is PR curve: shape={arr.shape}, dtype={arr.dtype}"
+            )
+
+            # PR curves have specific shape [6, N] where N is number of thresholds
+            if arr.ndim == 2 and arr.shape[0] == 6:
+                # Additional checks: tag name contains pr_curve, precision, recall
+                tag_lower = tag.lower()
+                pr_keywords = [
+                    "pr_curve",
+                    "precision",
+                    "recall",
+                    "pr",
+                    "binary_classification",
+                    "multi_class",
+                    "model_comparison",
+                    "threshold_analysis",
+                ]
+
+                for keyword in pr_keywords:
+                    if keyword in tag_lower:
+                        logger.debug(
+                            f"Detected PR curve tensor for tag '{tag}' (keyword: {keyword})"
+                        )
+                        return True
+
+                # Even without keyword match, [6, N] shape is strong indicator for PR curves
+                logger.debug(f"Detected PR curve tensor for tag '{tag}' (shape-based)")
+                return True
+
+            return False
+        except Exception as e:
+            logger.debug(f"PR curve detection failed for tag '{tag}': {e}")
+            return False
+
     def _scan_tags(self) -> dict[str, list[str]]:
         """Scan the file once to build a directory of all tags by type."""
         if self._tags_cache is not None:
@@ -198,6 +240,7 @@ class EfficientTensorBoardParser:
             "text": set(),
             "meshes": set(),
             "hyperparameters": set(),
+            "pr_curves": set(),
         }
 
         event_count = 0
@@ -232,6 +275,8 @@ class EfficientTensorBoardParser:
                             tags["meshes"].add(tag)
                         elif plugin_name == "hparams":
                             tags["hyperparameters"].add(tag)
+                        elif plugin_name == "pr_curves":
+                            tags["pr_curves"].add(tag)
                         else:
                             # Default to tensors
                             tags["tensors"].add(tag)
@@ -261,6 +306,10 @@ class EfficientTensorBoardParser:
                                     value.tensor.dtype == 7
                                 ):  # Check if it's text (DT_STRING = 7)
                                     tags["text"].add(tag)
+                                elif self._is_pr_curve_tensor(
+                                    value.tensor, tag
+                                ):  # Check if it's a PR curve
+                                    tags["pr_curves"].add(tag)
                                 elif self._is_image_tensor(
                                     value.tensor, tag
                                 ):  # Check if it's an image
@@ -287,6 +336,7 @@ class EfficientTensorBoardParser:
         all_data_tags.update(tags["text"])
         all_data_tags.update(tags["meshes"])
         all_data_tags.update(tags["hyperparameters"])
+        all_data_tags.update(tags["pr_curves"])
         all_data_tags.update(tags["tensors"])
 
         # For external API, mostly match EventAccumulator behavior but keep text separate
@@ -300,6 +350,7 @@ class EfficientTensorBoardParser:
             "text": self._detailed_tags["text"],  # Keep text tags identifiable
             "meshes": self._detailed_tags["meshes"],
             "hyperparameters": self._detailed_tags["hyperparameters"],
+            "pr_curves": self._detailed_tags["pr_curves"],
             "tensors": self._detailed_tags["tensors"],
         }
 
@@ -315,6 +366,7 @@ class EfficientTensorBoardParser:
             f"text: {len(self._tags_cache['text'])}, "
             f"meshes: {len(self._tags_cache['meshes'])}, "
             f"hyperparameters: {len(self._tags_cache['hyperparameters'])}, "
+            f"pr_curves: {len(self._tags_cache['pr_curves'])}, "
             f"tensors: {len(self._tags_cache['tensors'])}"
         )
 
@@ -355,6 +407,10 @@ class EfficientTensorBoardParser:
     def list_hyperparameters(self) -> list[str]:
         """List all hyperparameter tags in the event file."""
         return self._scan_tags()["hyperparameters"]
+
+    def list_pr_curves(self) -> list[str]:
+        """List all PR curve tags in the event file."""
+        return self._scan_tags()["pr_curves"]
 
     def list_all_content(self) -> dict[str, list[str]]:
         """List all content organized by type."""
@@ -768,6 +824,44 @@ class EfficientTensorBoardParser:
     def get_hyperparameter_data(self, tag: str) -> list[HyperparameterData]:
         """Get all hyperparameter data for a given tag."""
         return list(self.iterate_hyperparameter_data(tag))
+
+    def iterate_pr_curve_data(self, tag: str) -> Iterator[PRCurveData]:
+        """Iterate over PR curve data for a given tag."""
+        for event in self._iterate_events():
+            if event.HasField("summary"):
+                for value in event.summary.value:
+                    if value.tag == tag and value.HasField("tensor"):
+                        if self._is_pr_curve_tensor(value.tensor, tag):
+                            try:
+                                # Extract tensor data
+                                arr = tensor_util.make_ndarray(value.tensor)
+                                logger.debug(
+                                    f"Processing PR curve data for tag '{tag}', shape: {arr.shape}"
+                                )
+
+                                # Based on TensorBoard format, PR curves are [6, N] where:
+                                # Row 4 = precision values, Row 5 = recall values
+                                # Generate thresholds as linspace from 0 to 1
+                                num_thresholds = arr.shape[1]
+                                thresholds = np.linspace(0.0, 1.0, num_thresholds)
+                                precision = arr[4, :]  # Row 4 contains precision
+                                recall = arr[5, :]  # Row 5 contains recall
+
+                                yield PRCurveData(
+                                    step=event.step,
+                                    precision=precision,
+                                    recall=recall,
+                                    thresholds=thresholds,
+                                    wall_time=event.wall_time,
+                                )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to extract PR curve data for tag '{tag}': {e}"
+                                )
+
+    def get_pr_curve_data(self, tag: str) -> list[PRCurveData]:
+        """Get all PR curve data for a given tag."""
+        return list(self.iterate_pr_curve_data(tag))
 
     def export_scalar_to_text(self, tag: str) -> str:
         """Export scalar data to text format (iteration, value)."""
@@ -1305,6 +1399,46 @@ class EfficientTensorBoardParser:
             except Exception as e:
                 logger.error(f"Error processing mesh tensor for tag {tag}: {e}")
 
+    def _save_pr_curve(
+        self, event: event_pb2.Event, value: Any, output_path: Path, digits: int
+    ) -> None:
+        """Save PR curve data to CSV files."""
+        tag = value.tag
+        safe_tag = tag.replace("/", "_")
+        tag_dir = output_path / "pr_curves" / safe_tag
+        tag_dir.mkdir(parents=True, exist_ok=True)
+
+        if value.HasField("tensor") and self._is_pr_curve_tensor(value.tensor, tag):
+            try:
+                # Extract tensor data
+                arr = tensor_util.make_ndarray(value.tensor)
+                logger.debug(
+                    f"Saving PR curve data for tag '{tag}', shape: {arr.shape}"
+                )
+
+                # Extract precision and recall data
+                num_thresholds = arr.shape[1]
+                thresholds = np.linspace(0.0, 1.0, num_thresholds)
+                precision = arr[4, :]  # Row 4 contains precision
+                recall = arr[5, :]  # Row 5 contains recall
+
+                # Create padded step filename
+                padded_step = str(event.step).zfill(digits)
+                csv_file = tag_dir / f"{padded_step}.csv"
+
+                # Write CSV file with headers
+                with csv_file.open("w") as f:
+                    f.write("threshold,precision,recall\n")
+                    for i in range(num_thresholds):
+                        f.write(
+                            f"{thresholds[i]:.6f},{precision[i]:.6f},{recall[i]:.6f}\n"
+                        )
+
+                logger.debug(f"Saved PR curve to {csv_file} ({num_thresholds} points)")
+
+            except Exception as e:
+                logger.warning(f"Failed to save PR curve {tag}: {e}")
+
     def _get_enabled_types(
         self, all_types: set[str], type_filters: dict[str, set[str]] | None
     ) -> set[str]:
@@ -1351,6 +1485,7 @@ class EfficientTensorBoardParser:
             "text",
             "mesh",
             "hyperparameter",
+            "pr_curve",
         }
         enabled_types = self._get_enabled_types(all_types, type_filters)
 
@@ -1370,6 +1505,7 @@ class EfficientTensorBoardParser:
             "text": "text",
             "mesh": "meshes",
             "hyperparameter": "hp_params",
+            "pr_curve": "pr_curves",
         }
 
         for data_type in enabled_types:
@@ -1507,6 +1643,15 @@ class EfficientTensorBoardParser:
                                     ):
                                         if "text" in enabled_types:
                                             self._save_text(
+                                                event, value, output_path, digits
+                                            )
+                                    elif value.HasField(
+                                        "tensor"
+                                    ) and self._is_pr_curve_tensor(
+                                        value.tensor, value.tag
+                                    ):
+                                        if "pr_curve" in enabled_types:
+                                            self._save_pr_curve(
                                                 event, value, output_path, digits
                                             )
                         except Exception as e:

@@ -169,10 +169,13 @@ def _process_all_event_files(
     total_extracted = {
         "scalars": 0,
         "images": 0,
+        "videos": 0,
         "histograms": 0,
         "audio": 0,
         "text": 0,
         "meshes": 0,
+        "hyperparameters": 0,
+        "pr_curves": 0,
     }
 
     for file_path in event_files:

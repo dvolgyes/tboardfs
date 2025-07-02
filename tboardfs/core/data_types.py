@@ -145,3 +145,19 @@ class HyperparameterData:
     monitor_url: str | None = None
     group_name: str | None = None
     wall_time: float = 0.0
+
+
+@dataclass
+class PRCurveData:
+    """Container for Precision-Recall curve data."""
+
+    step: int
+    precision: np.ndarray  # Precision values at different thresholds
+    recall: np.ndarray  # Recall values at different thresholds
+    thresholds: np.ndarray  # Threshold values
+    wall_time: float = 0.0
+
+    @property
+    def num_points(self) -> int:
+        """Get number of points in the PR curve."""
+        return len(self.precision) if self.precision is not None else 0
