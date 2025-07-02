@@ -2,12 +2,22 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from tensorboard.compat.proto import event_pb2
 from loguru import logger
 
 from ..core.unified_virtual_paths import VirtualPathBuilder
 from ..core.constants import DEFAULT_DIGITS
+
+
+class SummaryValue(Protocol):
+    """Protocol for TensorBoard summary values."""
+
+    tag: str
+
+    def HasField(self, field_name: str) -> bool:
+        """Check if a field is present in the summary value."""
+        ...
 
 
 class BaseExporter(ABC):
@@ -25,8 +35,16 @@ class BaseExporter(ABC):
         self.path_builder = VirtualPathBuilder(digits=digits)
 
     @abstractmethod
-    def save_data(self, event: event_pb2.Event, value: Any, **kwargs: Any) -> None:
-        """Save data from a TensorBoard event."""
+    def save_data(
+        self, event: event_pb2.Event, value: SummaryValue, **kwargs: Any
+    ) -> None:
+        """Save data from a TensorBoard event.
+
+        Args:
+            event: TensorBoard event containing metadata
+            value: Summary value containing the actual data
+            **kwargs: Additional exporter-specific parameters
+        """
         pass
 
     def _sanitize_tag(self, tag: str) -> str:

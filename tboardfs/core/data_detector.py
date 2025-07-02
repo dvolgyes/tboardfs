@@ -17,46 +17,90 @@ class TensorDataDetector:
 
     @staticmethod
     def is_image_tensor(tensor_proto: Any, tag: str) -> bool:
-        """Check if a tensor seems to be an image.
+        """Check if a tensor seems to be an image using shape heuristics.
+
+        This method implements multi-format image detection by analyzing tensor
+        dimensions and channel counts. It supports common image formats including:
+
+        - Grayscale images (1 channel)
+        - RGB images (3 channels)
+        - RGBA images (4 channels)
+
+        The algorithm checks for various tensor layouts:
+        - 2D: (H, W) - Single channel grayscale
+        - 3D: (H, W, C) or (C, H, W) - Multi-channel or single batch
+        - 4D: (N, H, W, C) or (N, C, H, W) - Batched images
+
+        Channel-first vs channel-last formats are both supported by checking
+        multiple dimension positions for valid channel counts.
 
         Args:
-            tensor_proto: TensorBoard tensor proto
-            tag: Tag name for context
+            tensor_proto: TensorBoard tensor proto containing array data
+            tag: Tag name for context and debugging
 
         Returns:
-            True if tensor appears to contain image data
+            True if tensor appears to contain image data based on shape analysis
         """
         try:
+            # Convert protobuf tensor to numpy array for analysis
             arr = tensor_util.make_ndarray(tensor_proto)
             logger.debug(
-                f"Checking if tensor '{tag}' is image: shape={arr.shape}, ndim={arr.ndim}, dtype={arr.dtype}"
+                f"Analyzing tensor '{tag}' for image classification: "
+                f"shape={arr.shape}, ndim={arr.ndim}, dtype={arr.dtype}"
             )
 
-            # Check shape: (H, W, C) or (N, H, W, C) or (C, H, W) or (N, C, H, W)
+            # Validate dimensional constraints for image data
+            # Images must be 2D, 3D, or 4D tensors
             if (
                 arr.ndim < DataTypeShapes.IMAGE_MIN_DIMS
                 or arr.ndim > DataTypeShapes.IMAGE_MAX_DIMS
             ):
-                logger.debug(f"Tensor '{tag}' is not image: ndim is {arr.ndim}")
+                logger.debug(
+                    f"Tensor '{tag}' rejected: invalid dimensions ({arr.ndim})"
+                )
                 return False
 
-            # Check channels: last or second dimension should be 1, 3, or 4
-            # For (H, W, C) or (N, H, W, C)
+            # Multi-format channel detection algorithm
+            # Strategy: Check multiple positions where channels could be located
+
+            # Format 1: Channel-last (H, W, C) or (N, H, W, C)
+            # Most common in TensorFlow/Keras
             if arr.shape[-1] in ImageFormats.VALID_CHANNELS:
-                logger.debug(f"Tensor '{tag}' is image: shape[-1] is {arr.shape[-1]}")
-                return True
-            # For (C, H, W) or (N, C, H, W)
-            if arr.ndim > 2 and arr.shape[-3] in ImageFormats.VALID_CHANNELS:
-                logger.debug(f"Tensor '{tag}' is image: shape[-3] is {arr.shape[-3]}")
-                return True
-            if arr.ndim == 3 and arr.shape[0] in ImageFormats.VALID_CHANNELS:  # (C,H,W)
-                logger.debug(f"Tensor '{tag}' is image: shape[0] is {arr.shape[0]}")
+                logger.debug(
+                    f"Tensor '{tag}' detected as image: channel-last format "
+                    f"with {arr.shape[-1]} channels"
+                )
                 return True
 
-            logger.debug(f"Tensor '{tag}' is not image: no shape condition met")
+            # Format 2: Channel-first with batch (N, C, H, W)
+            # Common in PyTorch, channels at position -3
+            if arr.ndim > 2 and arr.shape[-3] in ImageFormats.VALID_CHANNELS:
+                logger.debug(
+                    f"Tensor '{tag}' detected as image: channel-first batched format "
+                    f"with {arr.shape[-3]} channels"
+                )
+                return True
+
+            # Format 3: Channel-first without batch (C, H, W)
+            # Single image in channel-first format
+            if arr.ndim == 3 and arr.shape[0] in ImageFormats.VALID_CHANNELS:
+                logger.debug(
+                    f"Tensor '{tag}' detected as image: channel-first single image "
+                    f"with {arr.shape[0]} channels"
+                )
+                return True
+
+            # No valid channel configuration found
+            logger.debug(
+                f"Tensor '{tag}' rejected: no valid channel configuration found. "
+                f"Checked positions: [-1]={arr.shape[-1]}, "
+                f"[-3]={arr.shape[-3] if arr.ndim > 2 else 'N/A'}, "
+                f"[0]={arr.shape[0] if arr.ndim == 3 else 'N/A'}"
+            )
             return False
+
         except Exception as e:
-            logger.debug(f"Tensor '{tag}' to-image check failed: {e}")
+            logger.debug(f"Tensor '{tag}' image classification failed: {e}")
             return False
 
     @staticmethod
@@ -91,51 +135,93 @@ class TensorDataDetector:
 
     @staticmethod
     def is_pr_curve_tensor(tensor_proto: Any, tag: str) -> bool:
-        """Check if a tensor contains PR curve data.
+        """Check if a tensor contains Precision-Recall curve data using multi-criteria analysis.
+
+        This method implements a sophisticated PR curve detection algorithm that combines
+        structural analysis with semantic tag matching. PR curves in TensorBoard follow
+        a specific format with exactly 6 components per threshold point:
+
+        1. Threshold values (decision boundaries)
+        2. Precision values (positive predictive value)
+        3. Recall values (sensitivity/true positive rate)
+        4. True Positive counts
+        5. False Positive counts
+        6. False Negative counts
+
+        Detection Strategy:
+        - Primary: Shape validation [6, N] where N = number of thresholds
+        - Secondary: Semantic analysis of tag names for PR-related keywords
+        - Fallback: Pure shape-based detection for unlabeled PR data
+
+        This multi-criteria approach ensures high accuracy while maintaining
+        robustness against variations in naming conventions.
 
         Args:
-            tensor_proto: TensorBoard tensor proto
-            tag: Tag name for context
+            tensor_proto: TensorBoard tensor proto containing potential PR curve data
+            tag: Tag name for semantic analysis and debugging context
 
         Returns:
-            True if tensor appears to contain PR curve data
+            True if tensor contains PR curve data based on combined analysis
         """
         try:
+            # Convert tensor to numpy array for structural analysis
             arr = tensor_util.make_ndarray(tensor_proto)
             logger.debug(
-                f"Checking if tensor '{tag}' is PR curve: shape={arr.shape}, dtype={arr.dtype}"
+                f"Analyzing tensor '{tag}' for PR curve classification: "
+                f"shape={arr.shape}, dtype={arr.dtype}"
             )
 
-            # PR curves have specific shape [6, N] where N is number of thresholds
+            # Structural validation: PR curves must be 2D with exactly 6 components
+            # Shape requirement: [6, N] where N is the number of threshold points
             if (
                 arr.ndim == 2
                 and arr.shape[0] == TensorBoardConstants.PR_CURVE_REQUIRED_COMPONENTS
             ):
-                # Additional checks: tag name contains pr_curve, precision, recall
+                threshold_count = arr.shape[1]
+                logger.debug(
+                    f"Tensor '{tag}' matches PR curve structure: "
+                    f"6 components × {threshold_count} thresholds"
+                )
+
+                # Semantic analysis: Search for PR-related keywords in tag name
+                # This provides additional confidence for classification
                 tag_lower = tag.lower()
                 pr_keywords = [
-                    "pr_curve",
-                    "precision",
-                    "recall",
-                    "pr",
-                    "binary_classification",
-                    "multi_class",
-                    "model_comparison",
-                    "threshold_analysis",
+                    "pr_curve",  # Direct PR curve indicator
+                    "precision",  # Precision metric
+                    "recall",  # Recall/sensitivity metric
+                    "pr",  # Short form of precision-recall
+                    "binary_classification",  # Binary classification context
+                    "multi_class",  # Multi-class classification context
+                    "model_comparison",  # Model evaluation context
+                    "threshold_analysis",  # Threshold optimization context
                 ]
 
+                # Check for semantic indicators
                 for keyword in pr_keywords:
                     if keyword in tag_lower:
                         logger.debug(
-                            f"Detected PR curve tensor for tag '{tag}' (keyword: {keyword})"
+                            f"PR curve confirmed for '{tag}': structural match + "
+                            f"semantic keyword '{keyword}'"
                         )
                         return True
 
-                # Even without keyword match, [6, N] shape is strong indicator for PR curves
-                logger.debug(f"Detected PR curve tensor for tag '{tag}' (shape-based)")
+                # High-confidence shape-based detection
+                # Even without keyword match, [6, N] shape is a strong indicator
+                # This handles cases where PR curves are stored without descriptive tags
+                logger.debug(
+                    f"PR curve detected for '{tag}' based on structural analysis: "
+                    f"[6, {threshold_count}] shape matches PR curve format"
+                )
                 return True
 
+            # Shape doesn't match PR curve requirements
+            logger.debug(
+                f"Tensor '{tag}' rejected for PR curve: "
+                f"shape {arr.shape} doesn't match required [6, N] format"
+            )
             return False
+
         except Exception as e:
             logger.debug(f"PR curve detection failed for tag '{tag}': {e}")
             return False

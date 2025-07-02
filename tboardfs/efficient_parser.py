@@ -1198,9 +1198,9 @@ class EfficientTensorBoardParser:
             method = method_map.get(data_type)
             if method:
                 return method()
-            return []
+            return iter([])
         except Exception:
-            return []
+            return iter([])
 
     def _generate_simple_paths(
         self, data_type: str, tags: list[str], extension: str
@@ -1227,7 +1227,7 @@ class EfficientTensorBoardParser:
             method = method_map.get(data_type)
             if method:
                 return method(tag)
-            return []
+            return iter([])
         else:
             # Fallback mode with error handling
             try:
@@ -1240,9 +1240,9 @@ class EfficientTensorBoardParser:
                 method = method_map.get(data_type)
                 if method:
                     return method(tag)
-                return []
+                return iter([])
             except Exception:
-                return []
+                return iter([])
 
     def _get_file_extension(self, data_type: str, data_item: Any = None) -> str:
         """Get file extension for data type."""

@@ -13,6 +13,7 @@ import numpy as np
 from loguru import logger
 
 from .constants import FileSystemConstants
+from .exceptions import FileWriteError, DirectoryCreationError
 
 
 class HistogramExportUtils:
@@ -41,9 +42,15 @@ class HistogramExportUtils:
 
             # Create histograms directory only when we have data to save
             if ensure_directory_func:
-                ensure_directory_func(histograms_dir)
+                try:
+                    ensure_directory_func(histograms_dir)
+                except Exception as e:
+                    raise DirectoryCreationError(histograms_dir, e) from e
             else:
-                histograms_dir.mkdir(parents=True, exist_ok=True)
+                try:
+                    histograms_dir.mkdir(parents=True, exist_ok=True)
+                except Exception as e:
+                    raise DirectoryCreationError(histograms_dir, e) from e
 
             # Sanitize tag name
             if sanitize_tag_func:
@@ -177,6 +184,7 @@ class HistogramExportUtils:
                         writer.writerow(csv_row)
         except Exception as e:
             logger.error(f"Failed to write CSV file {csv_file}: {e}")
+            raise FileWriteError(csv_file, e) from e
 
     @staticmethod
     def _write_tensor_csv_file(csv_file: Path, csv_rows: list[dict[str, Any]]) -> None:
@@ -200,6 +208,7 @@ class HistogramExportUtils:
                         writer.writerow(csv_row)
         except Exception as e:
             logger.error(f"Failed to write tensor CSV file {csv_file}: {e}")
+            raise FileWriteError(csv_file, e) from e
 
     @staticmethod
     def _write_npz_file(npz_file: Path, npz_data: dict[str, Any]) -> None:
@@ -213,6 +222,7 @@ class HistogramExportUtils:
                 else:
                     np_data[key] = np.array(value)
 
-            np.savez_compressed(str(npz_file), **np_data)
+            np.savez_compressed(npz_file, **np_data)
         except Exception as e:
             logger.error(f"Failed to write NPZ file {npz_file}: {e}")
+            raise FileWriteError(npz_file, e) from e

@@ -1,7 +1,6 @@
 """Shared data types for TensorBoard parsing."""
 
 from dataclasses import dataclass
-from typing import Any
 import numpy as np
 
 
@@ -140,7 +139,7 @@ class HyperparameterData:
     """Container for hyperparameter data."""
 
     step: int
-    hparams: dict[str, Any]  # parameter_name -> value
+    hparams: dict[str, str | int | float | bool]  # parameter_name -> value
     model_uri: str | None = None
     monitor_url: str | None = None
     group_name: str | None = None
