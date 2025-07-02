@@ -2,213 +2,53 @@
 
 This module provides a comprehensive configuration system that consolidates
 export settings, format options, and processing parameters into a single
-configurable class hierarchy.
+configurable class hierarchy. It now uses modular configuration classes
+for better organization and maintainability.
 """
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
+# Import the new modular configuration classes
+from .export_config import (
+    ExportFormatConfig,
+    OutputOrganizationConfig,
+)
+from .format_config import FormatConfig
+from .processing_config import (
+    ProcessingConfig,
+    create_minimal_processing_config,
+    create_high_performance_config,
+)
 from .constants import (
     ImageFormats,
     AudioFormats,
     PLYFormats,
-    ExportSettings,
-    ValidationLimits,
-    TensorBoardConstants,
 )
 from .exceptions import InvalidConfigurationError
 
 
 @dataclass
-class ExportFormatConfig:
-    """Configuration for export format options."""
-
-    # Image export settings
-    image_format: str = ImageFormats.DEFAULT_FORMAT
-    image_quality: int = ImageFormats.DEFAULT_QUALITY
-
-    # Audio export settings
-    audio_format: str = AudioFormats.DEFAULT_FORMAT
-    audio_sample_rate: float = AudioFormats.DEFAULT_SAMPLE_RATE
-
-    # PLY mesh export settings
-    ply_format: str = PLYFormats.DEFAULT_FORMAT
-
-    # Step formatting
-    step_digits: int = TensorBoardConstants.DEFAULT_STEP_DIGITS
-
-    def validate(self) -> None:
-        """Validate export format configuration."""
-        if self.image_format not in {
-            ImageFormats.PNG,
-            ImageFormats.JPG,
-            ImageFormats.JPEG,
-            ImageFormats.GIF,
-        }:
-            raise InvalidConfigurationError(
-                "image_format",
-                self.image_format,
-                f"must be one of: {ImageFormats.PNG}, {ImageFormats.JPG}, {ImageFormats.JPEG}, {ImageFormats.GIF}",
-            )
-
-        if not (0 <= self.image_quality <= 100):
-            raise InvalidConfigurationError(
-                "image_quality", self.image_quality, "must be between 0 and 100"
-            )
-
-        if self.audio_format not in {AudioFormats.WAV, AudioFormats.MP3}:
-            raise InvalidConfigurationError(
-                "audio_format",
-                self.audio_format,
-                f"must be one of: {AudioFormats.WAV}, {AudioFormats.MP3}",
-            )
-
-        if not (
-            AudioFormats.MIN_SAMPLE_RATE
-            <= self.audio_sample_rate
-            <= AudioFormats.MAX_SAMPLE_RATE
-        ):
-            raise InvalidConfigurationError(
-                "audio_sample_rate",
-                self.audio_sample_rate,
-                f"must be between {AudioFormats.MIN_SAMPLE_RATE} and {AudioFormats.MAX_SAMPLE_RATE}",
-            )
-
-        if self.ply_format not in {
-            PLYFormats.BINARY,
-            PLYFormats.TEXT,
-            PLYFormats.ASCII,
-        }:
-            raise InvalidConfigurationError(
-                "ply_format",
-                self.ply_format,
-                f"must be one of: {PLYFormats.BINARY}, {PLYFormats.TEXT}, {PLYFormats.ASCII}",
-            )
-
-        if not (1 <= self.step_digits <= 20):
-            raise InvalidConfigurationError(
-                "step_digits", self.step_digits, "must be between 1 and 20"
-            )
-
-
-@dataclass
-class OutputOrganizationConfig:
-    """Configuration for output file organization."""
-
-    # Directory structure options
-    create_step_directories: bool = ExportSettings.CREATE_STEP_DIRECTORIES
-    aggregate_scalars: bool = ExportSettings.AGGREGATE_SCALARS
-    aggregate_histograms: bool = ExportSettings.AGGREGATE_HISTOGRAMS
-
-    # File naming options
-    use_zero_padding: bool = ExportSettings.USE_ZERO_PADDING
-    sanitize_tags: bool = ExportSettings.SANITIZE_TAGS
-
-    # Output formats by data type
-    scalar_formats: list[str] = field(default_factory=lambda: ["txt", "csv"])
-    histogram_formats: list[str] = field(default_factory=lambda: ["csv", "npz"])
-    image_formats: list[str] = field(default_factory=lambda: ["png"])
-    video_formats: list[str] = field(default_factory=lambda: ["gif"])
-    audio_formats: list[str] = field(default_factory=lambda: ["wav"])
-    text_formats: list[str] = field(default_factory=lambda: ["txt"])
-    mesh_formats: list[str] = field(default_factory=lambda: ["ply"])
-    hyperparameter_formats: list[str] = field(default_factory=lambda: ["yaml"])
-    pr_curve_formats: list[str] = field(default_factory=lambda: ["csv", "npz"])
-
-    # Supported formats by type (for validation)
-    _SUPPORTED_FORMATS: ClassVar[dict[str, list[str]]] = {
-        "scalar": ["txt", "csv", "json"],
-        "histogram": ["txt", "csv", "npz"],
-        "image": ["png", "jpg", "jpeg", "gif", "bmp"],
-        "video": ["gif", "mp4", "avi"],
-        "audio": ["wav", "mp3", "flac"],
-        "text": ["txt", "md", "json"],
-        "mesh": ["ply", "obj", "stl"],
-        "hyperparameter": ["yaml", "json", "txt"],
-        "pr_curve": ["csv", "npz", "json"],
-    }
-
-    def validate(self) -> None:
-        """Validate output organization configuration."""
-        format_configs = {
-            "scalar": self.scalar_formats,
-            "histogram": self.histogram_formats,
-            "image": self.image_formats,
-            "video": self.video_formats,
-            "audio": self.audio_formats,
-            "text": self.text_formats,
-            "mesh": self.mesh_formats,
-            "hyperparameter": self.hyperparameter_formats,
-            "pr_curve": self.pr_curve_formats,
-        }
-
-        for data_type, formats in format_configs.items():
-            supported = self._SUPPORTED_FORMATS[data_type]
-            for fmt in formats:
-                if fmt not in supported:
-                    raise InvalidConfigurationError(
-                        f"{data_type}_formats",
-                        fmt,
-                        f"unsupported format (supported: {', '.join(supported)})",
-                    )
-
-
-@dataclass
-class ProcessingConfig:
-    """Configuration for data processing options."""
-
-    # Progress display
-    show_progress: bool = ExportSettings.SHOW_PROGRESS_DEFAULT
-
-    # Memory management
-    max_events_in_memory: int = ExportSettings.MAX_EVENTS_IN_MEMORY
-    chunk_size_bytes: int = ExportSettings.CHUNK_SIZE_BYTES
-
-    # Validation limits
-    max_tag_length: int = ValidationLimits.MAX_TAG_LENGTH
-    max_filename_length: int = ValidationLimits.MAX_FILENAME_LENGTH
-    max_tensor_size_bytes: int = ValidationLimits.MAX_TENSOR_SIZE_BYTES
-    max_string_length: int = ValidationLimits.MAX_STRING_LENGTH
-    max_tags_per_type: int = ValidationLimits.MAX_TAGS_PER_TYPE
-    max_steps_per_tag: int = ValidationLimits.MAX_STEPS_PER_TAG
-
-    def validate(self) -> None:
-        """Validate processing configuration."""
-        if self.max_events_in_memory < 1:
-            raise InvalidConfigurationError(
-                "max_events_in_memory", self.max_events_in_memory, "must be at least 1"
-            )
-
-        if self.chunk_size_bytes < 1024:  # 1KB minimum
-            raise InvalidConfigurationError(
-                "chunk_size_bytes", self.chunk_size_bytes, "must be at least 1024 bytes"
-            )
-
-        if self.max_tag_length < 1:
-            raise InvalidConfigurationError(
-                "max_tag_length", self.max_tag_length, "must be at least 1"
-            )
-
-        if self.max_filename_length < 1:
-            raise InvalidConfigurationError(
-                "max_filename_length", self.max_filename_length, "must be at least 1"
-            )
-
-
-@dataclass
 class TBoardFSConfig:
-    """Main configuration class for tboardfs operations."""
+    """Main configuration class for tboardfs operations.
+
+    This class maintains backward compatibility while using the new modular
+    configuration system under the hood.
+    """
 
     # Output path
     output_path: Path = field(default_factory=lambda: Path.cwd() / "exported_data")
 
-    # Sub-configurations
+    # Sub-configurations (using new modular classes)
     export_formats: ExportFormatConfig = field(default_factory=ExportFormatConfig)
     output_organization: OutputOrganizationConfig = field(
         default_factory=OutputOrganizationConfig
     )
     processing: ProcessingConfig = field(default_factory=ProcessingConfig)
+
+    # New modular format configuration
+    format_config: FormatConfig = field(default_factory=FormatConfig)
 
     def validate(self) -> None:
         """Validate the entire configuration."""
@@ -216,6 +56,7 @@ class TBoardFSConfig:
         self.export_formats.validate()
         self.output_organization.validate()
         self.processing.validate()
+        self.format_config.validate()
 
     @classmethod
     def from_dict(cls, config_dict: dict[str, Any]) -> "TBoardFSConfig":
@@ -240,11 +81,13 @@ class TBoardFSConfig:
             export_formats_dict = config_dict.get("export_formats", {})
             output_org_dict = config_dict.get("output_organization", {})
             processing_dict = config_dict.get("processing", {})
+            format_config_dict = config_dict.get("format_config", {})
 
             # Create sub-configuration objects
             export_formats = ExportFormatConfig(**export_formats_dict)
             output_organization = OutputOrganizationConfig(**output_org_dict)
-            processing = ProcessingConfig(**processing_dict)
+            processing = ProcessingConfig.from_dict(processing_dict)
+            format_config = FormatConfig.from_dict(format_config_dict)
 
             # Create main configuration
             config = cls(
@@ -252,6 +95,7 @@ class TBoardFSConfig:
                 export_formats=export_formats,
                 output_organization=output_organization,
                 processing=processing,
+                format_config=format_config,
             )
 
             # Validate configuration
@@ -298,17 +142,8 @@ class TBoardFSConfig:
                 "hyperparameter_formats": self.output_organization.hyperparameter_formats,
                 "pr_curve_formats": self.output_organization.pr_curve_formats,
             },
-            "processing": {
-                "show_progress": self.processing.show_progress,
-                "max_events_in_memory": self.processing.max_events_in_memory,
-                "chunk_size_bytes": self.processing.chunk_size_bytes,
-                "max_tag_length": self.processing.max_tag_length,
-                "max_filename_length": self.processing.max_filename_length,
-                "max_tensor_size_bytes": self.processing.max_tensor_size_bytes,
-                "max_string_length": self.processing.max_string_length,
-                "max_tags_per_type": self.processing.max_tags_per_type,
-                "max_steps_per_tag": self.processing.max_steps_per_tag,
-            },
+            "processing": self.processing.to_dict(),
+            "format_config": self.format_config.to_dict(),
         }
 
 
@@ -324,7 +159,10 @@ def create_minimal_config(output_path: str | Path) -> TBoardFSConfig:
     Returns:
         TBoardFSConfig with minimal settings
     """
-    return TBoardFSConfig(output_path=Path(output_path))
+    return TBoardFSConfig(
+        output_path=Path(output_path),
+        processing=create_minimal_processing_config(),
+    )
 
 
 def create_high_quality_config(output_path: str | Path) -> TBoardFSConfig:
@@ -353,6 +191,7 @@ def create_high_quality_config(output_path: str | Path) -> TBoardFSConfig:
         output_path=Path(output_path),
         export_formats=export_formats,
         output_organization=output_org,
+        processing=create_minimal_processing_config(),
     )
 
 
@@ -380,15 +219,9 @@ def create_fast_config(output_path: str | Path) -> TBoardFSConfig:
         histogram_formats=["npz"],  # Binary format for speed
     )
 
-    processing = ProcessingConfig(
-        show_progress=True,
-        max_events_in_memory=50000,  # Increased for speed
-        chunk_size_bytes=5 * 1024 * 1024,  # 5MB chunks
-    )
-
     return TBoardFSConfig(
         output_path=Path(output_path),
         export_formats=export_formats,
         output_organization=output_org,
-        processing=processing,
+        processing=create_high_performance_config(),
     )
