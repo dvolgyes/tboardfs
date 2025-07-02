@@ -222,7 +222,8 @@ class HistogramExportUtils:
                 else:
                     np_data[key] = np.array(value)
 
-            np.savez_compressed(npz_file, **np_data)
+            # Type ignore needed for numpy's flexible savez_compressed signature
+            np.savez_compressed(npz_file, **np_data)  # type: ignore[arg-type]
         except Exception as e:
             logger.error(f"Failed to write NPZ file {npz_file}: {e}")
             raise FileWriteError(npz_file, e) from e

@@ -1198,9 +1198,9 @@ class EfficientTensorBoardParser:
             method = method_map.get(data_type)
             if method:
                 return method()
-            return iter([])
+            return []
         except Exception:
-            return iter([])
+            return []
 
     def _generate_simple_paths(
         self, data_type: str, tags: list[str], extension: str
