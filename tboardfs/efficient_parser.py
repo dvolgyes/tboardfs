@@ -915,10 +915,13 @@ class EfficientTensorBoardParser:
         value: Any,
         output_path: Path,
         scalar_files: dict[Path, ScalarFile],
+        scalar_data_buffers: dict[str, list[tuple[int, float, float]]] | None = None,
     ) -> None:
-        """Save scalar data to file using ScalarFile."""
+        """Save scalar data to unified CSV + NPZ format."""
         tag = value.tag
         safe_tag = tag.replace("/", "_")
+
+        # Legacy text format for backwards compatibility
         scalar_file_path = output_path / "scalars" / f"{safe_tag}.txt"
 
         scalar_val = None
@@ -939,15 +942,241 @@ class EfficientTensorBoardParser:
                 )
 
         if scalar_val is not None:
-            # Get or create ScalarFile instance
+            # Save to legacy text format
             if scalar_file_path not in scalar_files:
                 scalar_files[scalar_file_path] = ScalarFile(scalar_file_path)
-
             scalar_files[scalar_file_path].append(event.step, scalar_val)
+
+            # Buffer data for unified CSV + NPZ export
+            if scalar_data_buffers is not None:
+                if tag not in scalar_data_buffers:
+                    scalar_data_buffers[tag] = []
+                scalar_data_buffers[tag].append(
+                    (event.step, scalar_val, event.wall_time)
+                )
         else:
             logger.warning(
                 f"Could not extract scalar value for tag '{tag}' at step {event.step}"
             )
+
+    def _save_unified_scalars(
+        self,
+        scalar_data_buffers: dict[str, list[tuple[int, float, float]]],
+        output_path: Path,
+    ) -> None:
+        """Save scalar data in unified CSV + NPZ formats."""
+        scalars_dir = output_path / "scalars"
+        scalars_dir.mkdir(parents=True, exist_ok=True)
+
+        for tag, data_points in scalar_data_buffers.items():
+            if not data_points:
+                continue
+
+            safe_tag = tag.replace("/", "_")
+
+            # Sort by step
+            data_points.sort(key=lambda x: x[0])
+
+            steps = np.array([dp[0] for dp in data_points])
+            values = np.array([dp[1] for dp in data_points])
+            wall_times = np.array([dp[2] for dp in data_points])
+
+            # Save CSV format
+            csv_file = scalars_dir / f"{safe_tag}.csv"
+            with csv_file.open("w") as f:
+                f.write("step,value,wall_time\n")
+                for step, value, wall_time in data_points:
+                    f.write(f"{step},{value:.10g},{wall_time:.6f}\n")
+
+            # Save NPZ format
+            npz_file = scalars_dir / f"{safe_tag}.npz"
+            np.savez_compressed(
+                npz_file, step=steps, value=values, wall_time=wall_times, tag=tag
+            )
+
+            logger.debug(
+                f"Saved scalar '{tag}' to {csv_file} and {npz_file} ({len(data_points)} points)"
+            )
+
+    def _save_unified_histograms(
+        self,
+        histogram_data_buffers: dict[str, list[tuple[int, dict, float]]],
+        output_path: Path,
+    ) -> None:
+        """Save histogram data in unified CSV + NPZ formats."""
+        histograms_dir = output_path / "histograms"
+        histograms_dir.mkdir(parents=True, exist_ok=True)
+
+        for tag, data_points in histogram_data_buffers.items():
+            if not data_points:
+                continue
+
+            safe_tag = tag.replace("/", "_")
+
+            # Sort by step
+            data_points.sort(key=lambda x: x[0])
+
+            # Check histogram format (legacy vs tensor)
+            first_format = data_points[0][1].get("format", "unknown")
+
+            if first_format == "legacy_histo":
+                # Save legacy histogram format
+                self._save_legacy_histogram_unified(
+                    tag, safe_tag, data_points, histograms_dir
+                )
+            elif first_format == "tensor":
+                # Save tensor histogram format
+                self._save_tensor_histogram_unified(
+                    tag, safe_tag, data_points, histograms_dir
+                )
+            else:
+                logger.warning(
+                    f"Unknown histogram format for tag '{tag}': {first_format}"
+                )
+
+    def _save_legacy_histogram_unified(
+        self, tag: str, safe_tag: str, data_points: list, histograms_dir: Path
+    ) -> None:
+        """Save legacy histogram data in unified formats."""
+        # Prepare data for CSV
+        csv_rows = []
+        npz_data: dict[str, list[Any]] = {
+            "step": [],
+            "wall_time": [],
+            "min": [],
+            "max": [],
+            "num": [],
+            "sum": [],
+            "sum_squares": [],
+            "bucket_limits": [],
+            "bucket_counts": [],
+        }
+
+        for step, hist_data, wall_time in data_points:
+            # CSV row
+            bucket_limits = hist_data["bucket_limit"]
+            bucket_counts = hist_data["bucket"]
+
+            csv_rows.append(
+                {
+                    "step": step,
+                    "wall_time": wall_time,
+                    "min": hist_data["min"],
+                    "max": hist_data["max"],
+                    "num": hist_data["num"],
+                    "sum": hist_data["sum"],
+                    "sum_squares": hist_data["sum_squares"],
+                    "num_buckets": len(bucket_limits),
+                    "bucket_limits_str": "|".join(map(str, bucket_limits)),
+                    "bucket_counts_str": "|".join(map(str, bucket_counts)),
+                }
+            )
+
+            # NPZ arrays
+            npz_data["step"].append(step)
+            npz_data["wall_time"].append(wall_time)
+            npz_data["min"].append(hist_data["min"])
+            npz_data["max"].append(hist_data["max"])
+            npz_data["num"].append(hist_data["num"])
+            npz_data["sum"].append(hist_data["sum"])
+            npz_data["sum_squares"].append(hist_data["sum_squares"])
+            npz_data["bucket_limits"].append(bucket_limits)
+            npz_data["bucket_counts"].append(bucket_counts)
+
+        # Save CSV
+        csv_file = histograms_dir / f"{safe_tag}.csv"
+        with csv_file.open("w") as f:
+            f.write(
+                "step,wall_time,min,max,num,sum,sum_squares,num_buckets,bucket_limits,bucket_counts\n"
+            )
+            for row in csv_rows:
+                f.write(
+                    f"{row['step']},{row['wall_time']:.6f},{row['min']:.10g},{row['max']:.10g},"
+                    f"{row['num']},{row['sum']:.10g},{row['sum_squares']:.10g},{row['num_buckets']},"
+                    f'"{row["bucket_limits_str"]}","{row["bucket_counts_str"]}"\n'
+                )
+
+        # Save NPZ
+        npz_file = histograms_dir / f"{safe_tag}.npz"
+        # Convert lists to arrays for npz
+        npz_arrays: dict[str, Any] = {
+            key: np.array(values)
+            if key not in ["bucket_limits", "bucket_counts"]
+            else values
+            for key, values in npz_data.items()
+        }
+        npz_arrays["tag"] = tag
+        npz_arrays["format"] = "legacy_histo"
+        np.savez_compressed(npz_file, **npz_arrays)
+
+        logger.debug(
+            f"Saved histogram '{tag}' to {csv_file} and {npz_file} ({len(data_points)} points)"
+        )
+
+    def _save_tensor_histogram_unified(
+        self, tag: str, safe_tag: str, data_points: list, histograms_dir: Path
+    ) -> None:
+        """Save tensor histogram data in unified formats."""
+        # For tensor histograms, save raw tensor data and metadata
+        csv_rows = []
+        npz_data: dict[str, list[Any]] = {
+            "step": [],
+            "wall_time": [],
+            "tensor_shapes": [],
+            "tensor_dtypes": [],
+            "tensor_data": [],
+        }
+
+        for step, hist_data, wall_time in data_points:
+            tensor_data = hist_data["tensor_data"]
+            tensor_shape = hist_data["tensor_shape"]
+            tensor_dtype = hist_data["tensor_dtype"]
+
+            csv_rows.append(
+                {
+                    "step": step,
+                    "wall_time": wall_time,
+                    "tensor_shape": str(tensor_shape),
+                    "tensor_dtype": tensor_dtype,
+                    "tensor_size": len(tensor_data),
+                    "tensor_data_str": "|".join(map(str, tensor_data)),
+                }
+            )
+
+            npz_data["step"].append(step)
+            npz_data["wall_time"].append(wall_time)
+            npz_data["tensor_shapes"].append(tensor_shape)
+            npz_data["tensor_dtypes"].append(tensor_dtype)
+            npz_data["tensor_data"].append(tensor_data)
+
+        # Save CSV
+        csv_file = histograms_dir / f"{safe_tag}.csv"
+        with csv_file.open("w") as f:
+            f.write(
+                "step,wall_time,tensor_shape,tensor_dtype,tensor_size,tensor_data\n"
+            )
+            for row in csv_rows:
+                f.write(
+                    f'{row["step"]},{row["wall_time"]:.6f},"{row["tensor_shape"]}",'
+                    f'"{row["tensor_dtype"]}",{row["tensor_size"]},"{row["tensor_data_str"]}"\n'
+                )
+
+        # Save NPZ - handle variable-length tensor data as object arrays
+        npz_file = histograms_dir / f"{safe_tag}.npz"
+        np.savez_compressed(
+            npz_file,
+            step=np.array(npz_data["step"]),
+            wall_time=np.array(npz_data["wall_time"]),
+            tensor_shapes=np.array(npz_data["tensor_shapes"], dtype=object),
+            tensor_dtypes=np.array(npz_data["tensor_dtypes"]),
+            tensor_data=np.array(npz_data["tensor_data"], dtype=object),
+            tag=tag,
+            format="tensor",
+        )
+
+        logger.debug(
+            f"Saved tensor histogram '{tag}' to {csv_file} and {npz_file} ({len(data_points)} points)"
+        )
 
     def _save_image(
         self,
@@ -1070,86 +1299,58 @@ class EfficientTensorBoardParser:
         value: Any,
         output_path: Path,
         histogram_images: bool = False,
+        histogram_data_buffers: dict[str, list[tuple[int, dict, float]]] | None = None,
     ) -> None:
-        """Save histogram data to file."""
+        """Save histogram data using unified CSV + NPZ export only."""
         tag = value.tag
-        safe_tag = tag.replace("/", "_")
 
         if histogram_images:
             # Save as visualization images (old behavior)
             self._save_histogram_as_image(event, value, output_path)
         else:
-            # Save as numpy arrays in text format (new default behavior)
+            # Only buffer data for unified CSV + NPZ export (no legacy text files)
             if value.HasField("histo"):
                 # Legacy format with histo field
-                self._save_histogram_as_numpy_arrays(
-                    event, value, output_path, safe_tag
-                )
+                if histogram_data_buffers is not None:
+                    hist = value.histo
+                    hist_data = {
+                        "min": float(hist.min),
+                        "max": float(hist.max),
+                        "num": int(hist.num),
+                        "sum": float(hist.sum),
+                        "sum_squares": float(hist.sum_squares),
+                        "bucket_limit": list(hist.bucket_limit),
+                        "bucket": list(hist.bucket),
+                        "format": "legacy_histo",
+                    }
+                    if tag not in histogram_data_buffers:
+                        histogram_data_buffers[tag] = []
+                    histogram_data_buffers[tag].append(
+                        (event.step, hist_data, event.wall_time)
+                    )
+
             elif value.HasField("tensor"):
                 # TensorBoard v2 format with tensor field
-                self._save_histogram_tensor_as_numpy_arrays(
-                    event, value, output_path, safe_tag
-                )
+                if histogram_data_buffers is not None:
+                    try:
+                        arr = tensor_util.make_ndarray(value.tensor)
+                        hist_data = {
+                            "tensor_data": arr.flatten().tolist(),
+                            "tensor_shape": arr.shape,
+                            "tensor_dtype": str(arr.dtype),
+                            "format": "tensor",
+                        }
+                        if tag not in histogram_data_buffers:
+                            histogram_data_buffers[tag] = []
+                        histogram_data_buffers[tag].append(
+                            (event.step, hist_data, event.wall_time)
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to buffer tensor histogram data for {tag}: {e}"
+                        )
             else:
                 logger.warning(f"Unknown histogram format for tag '{tag}'")
-
-    def _save_histogram_as_numpy_arrays(
-        self, event: event_pb2.Event, value: Any, output_path: Path, safe_tag: str
-    ) -> None:
-        """Save histogram data as numpy arrays in text format."""
-        histogram_file = output_path / "histograms" / f"{safe_tag}.txt"
-        histogram_file.parent.mkdir(parents=True, exist_ok=True)
-
-        hist = value.histo
-
-        # Create numpy arrays for histogram data
-        bucket_limits = list(hist.bucket_limit)
-        bucket_counts = list(hist.bucket)
-
-        with histogram_file.open("a") as f:
-            f.write(f"# Step: {event.step}\n")
-            f.write(f"# Min: {hist.min}, Max: {hist.max}\n")
-            f.write(
-                f"# Count: {hist.num}, Sum: {hist.sum}, Sum_squares: {hist.sum_squares}\n"
-            )
-            f.write("# Format: bucket_limit bucket_count\n")
-
-            # Write bucket data as space-separated values
-            for limit, count in zip(bucket_limits, bucket_counts):
-                f.write(f"{limit:.6f} {count}\n")
-            f.write("\n")
-
-    def _save_histogram_tensor_as_numpy_arrays(
-        self, event: event_pb2.Event, value: Any, output_path: Path, safe_tag: str
-    ) -> None:
-        """Save histogram tensor data as numpy arrays in text format (TensorBoard v2 format)."""
-        histogram_file = output_path / "histograms" / f"{safe_tag}.txt"
-        histogram_file.parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            # Decode tensor to numpy array
-            arr = tensor_util.make_ndarray(value.tensor)
-            logger.debug(
-                f"Histogram tensor shape for '{safe_tag}': {arr.shape}, dtype: {arr.dtype}"
-            )
-
-            with histogram_file.open("a") as f:
-                f.write(f"# Step: {event.step}\n")
-                f.write(f"# Tensor shape: {arr.shape}, dtype: {arr.dtype}\n")
-                f.write("# Format: histogram_data (flattened)\n")
-
-                # Flatten and write the histogram data
-                flattened = arr.flatten()
-                for i, val in enumerate(flattened):
-                    if i > 0 and i % 10 == 0:  # 10 values per line for readability
-                        f.write("\n")
-                    f.write(f"{val:.6f} ")
-                f.write("\n\n")
-
-        except Exception as e:
-            logger.warning(
-                f"Failed to process histogram tensor for tag '{safe_tag}': {e}"
-            )
 
     def _save_histogram_as_image(
         self, event: event_pb2.Event, value: Any, output_path: Path
@@ -1402,7 +1603,7 @@ class EfficientTensorBoardParser:
     def _save_pr_curve(
         self, event: event_pb2.Event, value: Any, output_path: Path, digits: int
     ) -> None:
-        """Save PR curve data to CSV files."""
+        """Save PR curve data to unified CSV + NPZ files."""
         tag = value.tag
         safe_tag = tag.replace("/", "_")
         tag_dir = output_path / "pr_curves" / safe_tag
@@ -1425,6 +1626,7 @@ class EfficientTensorBoardParser:
                 # Create padded step filename
                 padded_step = str(event.step).zfill(digits)
                 csv_file = tag_dir / f"{padded_step}.csv"
+                npz_file = tag_dir / f"{padded_step}.npz"
 
                 # Write CSV file with headers
                 with csv_file.open("w") as f:
@@ -1434,7 +1636,21 @@ class EfficientTensorBoardParser:
                             f"{thresholds[i]:.6f},{precision[i]:.6f},{recall[i]:.6f}\n"
                         )
 
-                logger.debug(f"Saved PR curve to {csv_file} ({num_thresholds} points)")
+                # Write NPZ file
+                np.savez_compressed(
+                    npz_file,
+                    step=event.step,
+                    wall_time=event.wall_time,
+                    threshold=thresholds,
+                    precision=precision,
+                    recall=recall,
+                    tag=tag,
+                    num_thresholds=num_thresholds,
+                )
+
+                logger.debug(
+                    f"Saved PR curve to {csv_file} and {npz_file} ({num_thresholds} points)"
+                )
 
             except Exception as e:
                 logger.warning(f"Failed to save PR curve {tag}: {e}")
@@ -1517,6 +1733,10 @@ class EfficientTensorBoardParser:
         # ScalarFile instances for handling scalar data
         scalar_files: dict[Path, ScalarFile] = {}
 
+        # Unified data buffers for CSV + NPZ export
+        scalar_data_buffers: dict[str, list[tuple[int, float, float]]] = {}
+        histogram_data_buffers: dict[str, list[tuple[int, dict, float]]] = {}
+
         # Mesh cache for collecting mesh components across events
         mesh_cache: dict[str, dict[int, dict[str, np.ndarray]]] = {}
 
@@ -1557,7 +1777,11 @@ class EfficientTensorBoardParser:
                             ):
                                 if "scalar" in enabled_types:
                                     self._save_scalar(
-                                        event, value, output_path, scalar_files
+                                        event,
+                                        value,
+                                        output_path,
+                                        scalar_files,
+                                        scalar_data_buffers,
                                     )
                             else:
                                 # Prioritize histogram detection first
@@ -1566,7 +1790,11 @@ class EfficientTensorBoardParser:
                                 ):
                                     if "histogram" in enabled_types:
                                         self._save_histogram(
-                                            event, value, output_path, histogram_images
+                                            event,
+                                            value,
+                                            output_path,
+                                            histogram_images,
+                                            histogram_data_buffers,
                                         )
                                 elif plugin_name == "audio" or value.HasField("audio"):
                                     if "audio" in enabled_types:
@@ -1662,6 +1890,15 @@ class EfficientTensorBoardParser:
             # Always close all scalar files to ensure data is written and sorted
             for scalar_file in scalar_files.values():
                 scalar_file.close()
+
+            # Export unified formats for numerical data
+            if scalar_data_buffers and "scalar" in enabled_types:
+                logger.debug("Exporting unified scalar formats (CSV + NPZ)")
+                self._save_unified_scalars(scalar_data_buffers, output_path)
+
+            if histogram_data_buffers and "histogram" in enabled_types:
+                logger.debug("Exporting unified histogram formats (CSV + NPZ)")
+                self._save_unified_histograms(histogram_data_buffers, output_path)
 
             # Write hyperparameters to YAML file if any were collected
             if hyperparameters_data and "hyperparameter" in enabled_types:
