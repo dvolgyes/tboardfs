@@ -492,17 +492,23 @@ class EfficientTensorBoardParser:
                             and value.metadata.plugin_data.plugin_name == "audio"
                         ):
                             # Audio data may be stored in tensor format
-                            if value.HasField("tensor"):
+                            if value.HasField("tensor") and value.tensor.dtype == 7:
                                 try:
-                                    # Try to extract audio data from tensor
+                                    # Extract audio data from tensor (dtype 7 = DT_STRING)
                                     arr = tensor_util.make_ndarray(value.tensor)
                                     if arr.size > 0:
-                                        # For audio stored as tensor, assume it's raw bytes
-                                        audio_bytes = (
-                                            arr.tobytes()
-                                            if arr.dtype == np.uint8
-                                            else arr.astype(np.uint8).tobytes()
+                                        # For string tensors containing audio data
+                                        audio_data = (
+                                            arr.item() if arr.ndim == 0 else arr[0]
                                         )
+                                        if isinstance(audio_data, bytes):
+                                            audio_bytes = audio_data
+                                        else:
+                                            # If it's a string, encode it to bytes
+                                            audio_bytes = str(audio_data).encode(
+                                                "utf-8"
+                                            )
+
                                         yield AudioData(
                                             step=event.step,
                                             encoded_audio_string=audio_bytes,
@@ -982,8 +988,31 @@ class EfficientTensorBoardParser:
 
         # For now, save as-is since audio conversion requires additional libraries
         # TODO: Add audio format conversion using pydub or similar library
-        with audio_file.open("wb") as f:
-            f.write(value.audio.encoded_audio_string)
+        try:
+            with audio_file.open("wb") as f:
+                if value.HasField("audio"):
+                    # Legacy audio format
+                    f.write(value.audio.encoded_audio_string)
+                elif value.HasField("tensor") and value.tensor.dtype == 7:
+                    # Modern tensor-based audio format
+                    arr = tensor_util.make_ndarray(value.tensor)
+                    if arr.size > 0:
+                        # For string tensors, extract the bytes directly
+                        audio_data = arr.item() if arr.ndim == 0 else arr[0]
+                        if isinstance(audio_data, bytes):
+                            f.write(audio_data)
+                        else:
+                            # If it's a string, encode it to bytes
+                            f.write(str(audio_data).encode("utf-8"))
+                    else:
+                        logger.warning(f"Empty audio tensor for tag {tag}")
+                else:
+                    logger.warning(f"No audio data found for tag {tag}")
+        except Exception as e:
+            logger.error(f"Failed to save audio for tag {tag}: {e}")
+            # Remove the empty file if it was created
+            if audio_file.exists():
+                audio_file.unlink()
 
     def _save_text(
         self, event: event_pb2.Event, value: Any, output_path: Path, digits: int
