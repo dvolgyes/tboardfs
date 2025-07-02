@@ -26,6 +26,17 @@ class ImageData:
 
 
 @dataclass
+class VideoData:
+    """Container for video data (stored as GIF in TensorBoard)."""
+
+    step: int
+    encoded_video_string: bytes  # GIF or other video format
+    width: int
+    height: int
+    wall_time: float
+
+
+@dataclass
 class HistogramData:
     """Container for histogram data."""
 

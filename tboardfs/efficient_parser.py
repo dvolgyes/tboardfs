@@ -21,6 +21,7 @@ from tboardfs.scalar_file import ScalarFile
 from tboardfs.core.data_types import (
     ScalarData,
     ImageData,
+    VideoData,
     HistogramData,
     AudioData,
     TextData,
@@ -91,6 +92,7 @@ class EfficientTensorBoardParser:
             self._tags_cache = {
                 "scalars": [],
                 "images": [],
+                "videos": [],
                 "histograms": [],
                 "audio": [],
                 "text": [],
@@ -101,6 +103,7 @@ class EfficientTensorBoardParser:
             self._detailed_tags = {
                 "scalars": [],
                 "images": [],
+                "videos": [],
                 "histograms": [],
                 "audio": [],
                 "text": [],
@@ -158,6 +161,27 @@ class EfficientTensorBoardParser:
             logger.debug(f"Tensor '{tag}' to-image check failed: {e}")
             return False
 
+    def _is_video_data(self, image_data: bytes, tag: str) -> bool:
+        """Check if image data is actually a GIF video."""
+        try:
+            # Check for GIF header (videos in TensorBoard are stored as GIF)
+            if image_data.startswith(b"GIF87a") or image_data.startswith(b"GIF89a"):
+                logger.debug(f"Detected GIF video for tag '{tag}'")
+                return True
+
+            # Additional heuristics: check tag name for video-like patterns
+            video_keywords = ["video", "animation", "movie", "gif", "sequence"]
+            tag_lower = tag.lower()
+            for keyword in video_keywords:
+                if keyword in tag_lower:
+                    logger.debug(f"Tag '{tag}' contains video keyword '{keyword}'")
+                    return True
+
+            return False
+        except Exception as e:
+            logger.debug(f"Video detection failed for tag '{tag}': {e}")
+            return False
+
     def _scan_tags(self) -> dict[str, list[str]]:
         """Scan the file once to build a directory of all tags by type."""
         if self._tags_cache is not None:
@@ -167,6 +191,7 @@ class EfficientTensorBoardParser:
         tags: dict[str, set[str]] = {
             "scalars": set(),
             "images": set(),
+            "videos": set(),
             "histograms": set(),
             "tensors": set(),
             "audio": set(),
@@ -215,7 +240,13 @@ class EfficientTensorBoardParser:
                         if value.HasField("simple_value"):
                             tags["scalars"].add(tag)
                         elif value.HasField("image"):
-                            tags["images"].add(tag)
+                            # Check if this image is actually a video (GIF)
+                            if self._is_video_data(
+                                value.image.encoded_image_string, tag
+                            ):
+                                tags["videos"].add(tag)
+                            else:
+                                tags["images"].add(tag)
                         elif value.HasField("histo"):
                             tags["histograms"].add(tag)
                         elif value.HasField("audio"):
@@ -250,6 +281,7 @@ class EfficientTensorBoardParser:
         all_data_tags = set()
         all_data_tags.update(tags["scalars"])
         all_data_tags.update(tags["images"])
+        all_data_tags.update(tags["videos"])
         all_data_tags.update(tags["histograms"])
         all_data_tags.update(tags["audio"])
         all_data_tags.update(tags["text"])
@@ -262,6 +294,7 @@ class EfficientTensorBoardParser:
         self._tags_cache = {
             "scalars": self._detailed_tags["scalars"],
             "images": self._detailed_tags["images"],
+            "videos": self._detailed_tags["videos"],
             "histograms": self._detailed_tags["histograms"],
             "audio": self._detailed_tags["audio"],
             "text": self._detailed_tags["text"],  # Keep text tags identifiable
@@ -276,6 +309,7 @@ class EfficientTensorBoardParser:
         logger.debug(
             f"Tags found - scalars: {len(self._tags_cache['scalars'])}, "
             f"images: {len(self._tags_cache['images'])}, "
+            f"videos: {len(self._tags_cache['videos'])}, "
             f"histograms: {len(self._tags_cache['histograms'])}, "
             f"audio: {len(self._tags_cache['audio'])}, "
             f"text: {len(self._tags_cache['text'])}, "
@@ -293,6 +327,10 @@ class EfficientTensorBoardParser:
     def list_images(self) -> list[str]:
         """List all image tags in the event file."""
         return self._scan_tags()["images"]
+
+    def list_videos(self) -> list[str]:
+        """List all video tags in the event file."""
+        return self._scan_tags()["videos"]
 
     def list_histograms(self) -> list[str]:
         """List all histogram tags in the event file."""
@@ -460,6 +498,25 @@ class EfficientTensorBoardParser:
         except Exception as e:
             logger.error(f"Failed to decode image from tensor: {e}")
             return None
+
+    def iterate_video_data(self, tag: str) -> Iterator[VideoData]:
+        """Iterate over video data for a given tag."""
+        for event in self._iterate_events():
+            if event.HasField("summary"):
+                for value in event.summary.value:
+                    if value.tag == tag:
+                        if value.HasField("image"):
+                            # Video data is stored as images (GIF) in TensorBoard
+                            if self._is_video_data(
+                                value.image.encoded_image_string, tag
+                            ):
+                                yield VideoData(
+                                    step=event.step,
+                                    encoded_video_string=value.image.encoded_image_string,
+                                    width=value.image.width,
+                                    height=value.image.height,
+                                    wall_time=event.wall_time,
+                                )
 
     def iterate_histogram_data(self, tag: str) -> Iterator[HistogramData]:
         """Iterate over histogram data for a given tag."""
@@ -872,6 +929,47 @@ class EfficientTensorBoardParser:
                 f"Could not extract image for tag '{tag}' at step {event.step}"
             )
 
+    def _save_video(
+        self,
+        event: event_pb2.Event,
+        value: Any,
+        output_path: Path,
+        digits: int,
+    ) -> None:
+        """Save video data to file."""
+        tag = value.tag
+        safe_tag = tag.replace("/", "_")
+        tag_dir = output_path / "videos" / safe_tag
+        tag_dir.mkdir(parents=True, exist_ok=True)
+
+        video_data = None
+        if value.HasField("image"):
+            # Video data stored as image (GIF) in TensorBoard
+            video_data = value.image.encoded_image_string
+
+        if video_data:
+            padded_step = str(event.step).zfill(digits)
+
+            # Determine file extension based on content type
+            if video_data.startswith(b"GIF"):
+                ext = "gif"
+            else:
+                ext = "bin"  # Unknown format
+
+            filename = f"{padded_step}.{ext}"
+            video_file = tag_dir / filename
+
+            try:
+                with video_file.open("wb") as f:
+                    f.write(video_data)
+                logger.debug(f"Saved video to {video_file} ({len(video_data)} bytes)")
+            except Exception as e:
+                logger.warning(f"Failed to save video {video_file}: {e}")
+        else:
+            logger.warning(
+                f"Could not extract video data for tag '{tag}' at step {event.step}"
+            )
+
     def _save_histogram(
         self,
         event: event_pb2.Event,
@@ -1247,6 +1345,7 @@ class EfficientTensorBoardParser:
         all_types = {
             "scalar",
             "image",
+            "video",
             "histogram",
             "audio",
             "text",
@@ -1265,6 +1364,7 @@ class EfficientTensorBoardParser:
         type_to_dir = {
             "scalar": "scalars",
             "image": "images",
+            "video": "videos",
             "histogram": "histograms",
             "audio": "audio",
             "text": "text",
@@ -1364,10 +1464,18 @@ class EfficientTensorBoardParser:
                                             event, value, hyperparameters_data
                                         )
                                 else:
-                                    # Check for images before text to avoid misclassification
+                                    # Check for images/videos before text to avoid misclassification
                                     is_image = False
+                                    is_video = False
+
                                     if value.HasField("image"):
-                                        is_image = True
+                                        # Check if this image is actually a video (GIF)
+                                        if self._is_video_data(
+                                            value.image.encoded_image_string, value.tag
+                                        ):
+                                            is_video = True
+                                        else:
+                                            is_image = True
                                     elif value.HasField(
                                         "tensor"
                                     ) and self._is_image_tensor(
@@ -1375,7 +1483,15 @@ class EfficientTensorBoardParser:
                                     ):
                                         is_image = True
 
-                                    if plugin_name == "images" or is_image:
+                                    if is_video:
+                                        if "video" in enabled_types:
+                                            self._save_video(
+                                                event,
+                                                value,
+                                                output_path,
+                                                digits,
+                                            )
+                                    elif plugin_name == "images" or is_image:
                                         if "image" in enabled_types:
                                             self._save_image(
                                                 event,
