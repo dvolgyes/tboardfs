@@ -259,7 +259,10 @@ class VirtualPathHandler:
             logger.error(f"Available scalar tags: {', '.join(scalars)}")
             sys.exit(1)
 
-        data = self.parser.export_scalar_to_text(path_info.tag)
+        lines = []
+        for scalar_data in self.parser.iterate_scalar_data(path_info.tag):
+            lines.append(f"{scalar_data.step}\t{scalar_data.value}")
+        data = "\n".join(lines)
         self._handle_output(data, output_file, "scalar data")
 
     def _export_image_data(

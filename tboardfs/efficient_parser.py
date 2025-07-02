@@ -719,10 +719,6 @@ class EfficientTensorBoardParser:
         else:
             return None
 
-    def get_hyperparameter_data(self, tag: str) -> list[HyperparameterData]:
-        """Get all hyperparameter data for a given tag."""
-        return list(self.iterate_hyperparameter_data(tag))
-
     def iterate_pr_curve_data(self, tag: str) -> Iterator[PRCurveData]:
         """Iterate over PR curve data for a given tag."""
         for event in self._iterate_events():
@@ -756,17 +752,6 @@ class EfficientTensorBoardParser:
                                 logger.warning(
                                     f"Failed to extract PR curve data for tag '{tag}': {e}"
                                 )
-
-    def get_pr_curve_data(self, tag: str) -> list[PRCurveData]:
-        """Get all PR curve data for a given tag."""
-        return list(self.iterate_pr_curve_data(tag))
-
-    def export_scalar_to_text(self, tag: str) -> str:
-        """Export scalar data to text format (iteration, value)."""
-        lines = []
-        for data in self.iterate_scalar_data(tag):
-            lines.append(f"{data.step}\t{data.value}")
-        return "\n".join(lines)
 
     def get_image_extension(self, image_bytes: bytes, tag: str = "unknown") -> str:
         """Determine image extension from bytes using python-magic."""
