@@ -1,6 +1,6 @@
 # tboardfs
 
-A powerful command-line tool for extracting and analyzing TensorBoard log data. Parse TensorBoard event files, export specific metrics, and extract complete datasets with ease.
+A command-line tool for extracting and analyzing TensorBoard log data. Parse TensorBoard event files, export specific metrics, and extract complete datasets with ease.
 
 ## 🚀 Features
 
