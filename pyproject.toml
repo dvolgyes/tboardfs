@@ -1,43 +1,29 @@
 [project]
 name = "tboardfs"
 version = "0.1.0"
-description = "FUSE filesystem interface for TensorBoard logs"
+description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+authors = [
+    { name = "David Völgyes", email = "dvolgyes@deepconv.ai" }
+]
+requires-python = ">=3.12"
 dependencies = [
-    "tensorboard>=2.0.0",
-    "fusepy>=3.0.0",
-    "click>=8.0.0",
-    "numpy>2.0",
-    "Pillow>=8.0.0",
-    "loguru>=0.7.0",
-    "tqdm>=4.65.0",
-    "python-magic>=0.4.27",
-    "pyyaml>=6.0.2",
-    "pydub>=0.25.1",
+    "click>=8.4.1",
+    "loguru>=0.7.3",
+    "tqdm>=4.67.3",
 ]
 
-[project.scripts]
-tboardfs = "tboardfs.cli:main"
-
-[project.optional-dependencies]
-test = [
-    "coverage>=7.8.2",
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-]
+[build-system]
+requires = ["uv_build>=0.11.18,<0.12.0"]
+build-backend = "uv_build"
+[tool.uv.build-backend]
+module-name = "tboardfs"
+module-root = ""
 
 [dependency-groups]
 dev = [
-    "coverage>=7.8.2",
-    "pytest>=8.3.5",
-    "pytest-cov>=6.1.1",
-    "tensorflow>=2.19.0",
-    "torch>=2.7.1",
-    "torchvision>=0.22.1",
-    "types-click>=7.1.8",
-    "types-tqdm>=4.67.0.20250516",
+    "coverage>=7.14.1",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8.0",
 ]
-
-[tool.uv]
-package = true
