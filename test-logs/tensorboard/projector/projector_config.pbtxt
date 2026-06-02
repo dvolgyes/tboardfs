@@ -1,0 +1,1 @@
+embeddings { tensor_name: "embedding/sample" }
