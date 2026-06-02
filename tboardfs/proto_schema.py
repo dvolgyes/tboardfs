@@ -157,6 +157,13 @@ class _SchemaBuilder:
         add(tensor, "dtype", 1, descriptor_pb2.FieldDescriptorProto.TYPE_INT32)
         add(
             tensor,
+            "tensor_shape",
+            2,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            type_name=".tensorflow.TensorShapeProto",
+        )
+        add(
+            tensor,
             "tensor_content",
             4,
             descriptor_pb2.FieldDescriptorProto.TYPE_BYTES,
@@ -178,6 +185,17 @@ class _SchemaBuilder:
                 field_type,
                 label=descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED,
             )
+        shape = proto.message_type.add(name="TensorShapeProto")
+        add(
+            shape,
+            "dim",
+            2,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            label=descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED,
+            type_name=".tensorflow.TensorShapeDim",
+        )
+        dim = proto.message_type.add(name="TensorShapeDim")
+        add(dim, "size", 1, descriptor_pb2.FieldDescriptorProto.TYPE_INT64)
         return proto
 
     @staticmethod

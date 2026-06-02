@@ -148,7 +148,7 @@ class _EventIndexer:
             (epoch, step, wall_time, relative_time),
         )
         _EventIndexer.add_histogram(
-            cache, value, histogram_rows, (step, wall_time, relative_time)
+            cache, value, histogram_rows, (epoch, step, wall_time, relative_time)
         )
         _EventIndexer.add_binary(cache, path, record, value, (tag, step, wall_time))
         _EventIndexer.add_plugin(cache, value, (tag, step, wall_time))
@@ -185,14 +185,14 @@ class _EventIndexer:
         cache: EventFileCache,
         value: dict[str, Any],
         histogram_rows: dict[str, dict[str, list[Any]]],
-        timing: tuple[Any, float, float],
+        timing: tuple[Any, Any, float, float],
     ) -> None:
         """Append histogram bucket rows when present."""
         histogram = value.get("histo")
         if histogram is None:
             return
         tag = value["tag"]
-        step, wall_time, relative_time = timing
+        epoch, step, wall_time, relative_time = timing
         rows = histogram_rows[tag]
         limits = histogram.get("bucket_limit", [])
         counts = histogram.get("bucket", [])
@@ -200,6 +200,7 @@ class _EventIndexer:
         for limit, count in zip(limits, counts, strict=False):
             right = float(limit)
             rows["step"].append(step)
+            rows["epoch"].append(epoch)
             rows["wall_time"].append(wall_time)
             rows["relative_time"].append(relative_time)
             rows["bucket_left"].append(left)

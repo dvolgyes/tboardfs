@@ -39,7 +39,11 @@ PLUGIN_TAB = MappingProxyType(
         "profile": "profile",
         "projector": "projector",
         "scalars": "scalars",
+        "tensor": "tensors",
+        "tensors": "tensors",
         "text": "text",
+        "video": "videos",
+        "videos": "videos",
     }
 )
 

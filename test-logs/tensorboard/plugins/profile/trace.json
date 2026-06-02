@@ -1,0 +1,10 @@
+{
+  "traceEvents": [
+    {
+      "name": "step",
+      "ph": "X",
+      "ts": 1,
+      "dur": 3
+    }
+  ]
+}

@@ -86,7 +86,10 @@ class _Classifier:
     @staticmethod
     def binary_kind(value: dict[str, Any]) -> str | None:
         """Classify summary values whose raw bytes should be exposed as files."""
-        if value.get("image", {}).get("encoded_image_string"):
+        image_blob = value.get("image", {}).get("encoded_image_string")
+        if image_blob and bytes(image_blob).startswith((b"GIF87a", b"GIF89a")):
+            return "videos"
+        if image_blob:
             return "images"
         if value.get("audio", {}).get("encoded_audio_string"):
             return "audio"
@@ -94,8 +97,6 @@ class _Classifier:
         plugin_name = (value.get("plugin_name") or "").lower()
         if plugin_name in {"video", "videos"}:
             return "videos"
-        if plugin_name in {"mesh", "meshes"}:
-            return "meshes"
 
         tensor = value.get("tensor")
         if tensor and _Classifier.large_tensor_like(tensor):
@@ -136,12 +137,16 @@ class _Classifier:
                 plugin_name = "text"
             else:
                 return None
+        if str(plugin_name).lower() in {"video", "videos"} and _Classifier.binary_blob(
+            value
+        ):
+            return None
         payload = {"plugin_name": plugin_name, "tag": value.get("tag")}
         if value.get("plugin_content"):
             payload["plugin_content"] = value["plugin_content"]
         tensor = value.get("tensor")
         if tensor:
-            payload["tensor"] = _Classifier.json_tensor(tensor)
+            payload["tensor"] = tensor
         return payload
 
     @staticmethod

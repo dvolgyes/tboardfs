@@ -54,7 +54,7 @@ class _TableExport:
             {column: _TableExport.json_safe(series[column][index]) for column in series}
             for index in range(_TableExport.series_len(series))
         ]
-        return (json.dumps(rows, allow_nan=False) + "\n").encode()
+        return (json.dumps(rows, allow_nan=False, indent=2) + "\n").encode()
 
     @staticmethod
     def dataframe(series: dict[str, np.ndarray]) -> pd.DataFrame:
@@ -205,6 +205,7 @@ class _TableRows:
                     rows["step"],
                     dtype=np.int64 if _Decode.all_ints(rows["step"]) else np.float64,
                 ),
+                "epoch": np.asarray(rows["epoch"], dtype=np.float64),
                 "wall_time": np.asarray(rows["wall_time"], dtype=np.float64),
                 "relative_time": np.asarray(rows["relative_time"], dtype=np.float64),
                 "bucket_left": np.asarray(rows["bucket_left"], dtype=np.float64),
@@ -224,6 +225,7 @@ class _TableRows:
         """Create mutable storage for histogram table rows."""
         return {
             "step": [],
+            "epoch": [],
             "wall_time": [],
             "relative_time": [],
             "bucket_left": [],
@@ -272,12 +274,19 @@ class _TableMerge:
         rows = _TableMerge.rows_from_series(series)
         out = defaultdict(list)
         percentiles = (0.0, 25.0, 50.0, 75.0, 100.0)
-        by_step: dict[tuple[Any, float, float], list[dict[str, Any]]] = defaultdict(
-            list
+        by_step: dict[tuple[Any, Any, float, float], list[dict[str, Any]]] = (
+            defaultdict(list)
         )
         for row in rows:
-            by_step[(row["step"], row["wall_time"], row["relative_time"])].append(row)
-        for (step, wall_time, relative_time), buckets in by_step.items():
+            by_step[
+                (
+                    row["step"],
+                    row.get("epoch", np.nan),
+                    row["wall_time"],
+                    row["relative_time"],
+                )
+            ].append(row)
+        for (step, epoch, wall_time, relative_time), buckets in by_step.items():
             total = sum(float(row["count"]) for row in buckets)
             cumulative = 0.0
             targets = {p: total * p / 100.0 for p in percentiles}
@@ -289,6 +298,7 @@ class _TableMerge:
                         found[percentile] = float(row["bucket_right"])
             for percentile in percentiles:
                 out["step"].append(step)
+                out["epoch"].append(epoch)
                 out["wall_time"].append(wall_time)
                 out["relative_time"].append(relative_time)
                 out["percentile"].append(percentile)
@@ -302,3 +312,11 @@ class _TableMerge:
             {column: series[column][index] for column in series}
             for index in range(_TableExport.series_len(series))
         ]
+
+    @staticmethod
+    def series_for_step(
+        series: dict[str, np.ndarray], step: object
+    ) -> dict[str, np.ndarray]:
+        """Return a column-oriented table for one TensorBoard step."""
+        mask = series["step"] == step
+        return {column: values[mask] for column, values in series.items()}

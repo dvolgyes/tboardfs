@@ -1,4 +1,5 @@
 from io import BytesIO
+import json
 from pathlib import Path
 import shutil
 
@@ -7,7 +8,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 import soundfile as sf
-from tensorboard.compat.proto import event_pb2, summary_pb2, tensor_pb2, types_pb2
+from tensorboard.compat.proto import (
+    event_pb2,
+    graph_pb2,
+    node_def_pb2,
+    summary_pb2,
+    tensor_pb2,
+    tensor_shape_pb2,
+    types_pb2,
+)
 from tensorboard.summary.writer.event_file_writer import EventFileWriter
 from tensorboardX import SummaryWriter
 import torch
@@ -22,9 +31,9 @@ def main() -> None:
     if ROOT.exists():
         shutil.rmtree(ROOT)
 
-    images = []
-    waves = []
-    histograms = []
+    images: list[np.ndarray] = []
+    waves: list[np.ndarray] = []
+    histograms: list[np.ndarray] = []
     for index in range(5):
         grid = np.indices((8, 8)).sum(axis=0)
         red = ((grid + index) % 2) * 255
@@ -40,15 +49,13 @@ def main() -> None:
     tensorboardx_dir = ROOT / "tensorboardx"
     writer = SummaryWriter(log_dir=tensorboardx_dir)
     labels = np.array([0, 1, 1, 0, 1, 0], dtype=np.uint8)
-    base_predictions = np.array([0.1, 0.8, 0.7, 0.3, 0.9, 0.4], dtype=np.float32)
-    vertices = torch.tensor([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]])
-    faces = torch.tensor([[[0, 1, 2]]])
+    predictions = np.array([0.1, 0.8, 0.7, 0.3, 0.9, 0.4], dtype=np.float32)
     for index in range(3):
         step = index + 1
         wall_time = WALL_TIME + step
         writer.add_scalar("epoch", index, step, walltime=wall_time)
         writer.add_scalar("loss", 1.0 / step, step, walltime=wall_time)
-        writer.add_scalar("train/loss", 2.0 / step, step, walltime=wall_time)
+        writer.add_scalar("train/f1_score", 0.6 + index * 0.1, step, walltime=wall_time)
         writer.add_image(
             "sample", images[index], step, walltime=wall_time, dataformats="HWC"
         )
@@ -72,16 +79,8 @@ def main() -> None:
         writer.add_pr_curve(
             "quality/pr",
             labels,
-            np.clip(base_predictions - index * 0.05, 0.0, 1.0),
+            np.clip(predictions - index * 0.05, 0.0, 1.0),
             step,
-            walltime=wall_time,
-        )
-        writer.add_mesh(
-            "shape/triangle",
-            vertices=vertices,
-            colors=torch.tensor([[[255, index * 60, 0], [0, 255, 0], [0, 0, 255]]]),
-            faces=faces,
-            global_step=step,
             walltime=wall_time,
         )
         frames = np.stack([images[index], images[index + 1], images[index + 2]])
@@ -91,24 +90,113 @@ def main() -> None:
     axis.plot([0, 1, 2], [1, 0.5, 0.25])
     axis.set_title("loss")
     writer.add_figure("figure/curve", figure, 1, walltime=WALL_TIME + 1)
-    writer.add_graph(torch.nn.Linear(2, 1), torch.zeros(1, 2))
-    writer.add_embedding(
-        torch.tensor([[0.0, 0.0], [1.0, 0.5], [0.5, 1.0]], dtype=torch.float32),
-        metadata=["zero", "one", "two"],
-        label_img=torch.from_numpy(np.stack(images[:3]).transpose(0, 3, 1, 2)),
-        global_step=0,
-        tag="embedding/sample",
+    writer.add_graph(
+        torch.nn.Sequential(
+            torch.nn.Linear(4, 3), torch.nn.ReLU(), torch.nn.Linear(3, 1)
+        ),
+        torch.zeros(1, 4),
     )
-    writer.add_hparams(
-        {"optimizer": "sgd", "lr": 0.1},
-        {"hparam/loss": 0.25, "hparam/accuracy": 0.75},
+    writer.add_custom_scalars(
+        {"Metrics": {"loss_and_f1": ["Multiline", ["loss", "train/f1_score"]]}}
     )
+    writer.add_scalar("hparam/loss", 0.25, 0, walltime=WALL_TIME)
+    writer.add_scalar("hparam/f1_score", 0.82, 0, walltime=WALL_TIME)
     writer.flush()
     writer.close()
 
+    raw_x = EventFileWriter(str(tensorboardx_dir))
+    for index in range(3):
+        step = index + 1
+        shape = tensor_shape_pb2.TensorShapeProto(
+            dim=[
+                tensor_shape_pb2.TensorShapeProto.Dim(size=3),
+                tensor_shape_pb2.TensorShapeProto.Dim(size=4),
+            ]
+        )
+        tensor = (np.arange(12, dtype=np.float32).reshape(3, 4) + step).astype("<f4")
+        gif_handle = BytesIO()
+        imageio.mimsave(
+            gif_handle,
+            [images[step - 1], images[step], images[step + 1]],
+            format="GIF",
+            duration=0.25,
+        )
+        summary = summary_pb2.Summary(
+            value=[
+                summary_pb2.Summary.Value(
+                    tag="box",
+                    tensor=tensor_pb2.TensorProto(
+                        dtype=types_pb2.DT_FLOAT,
+                        tensor_shape=tensor_shape_pb2.TensorShapeProto(
+                            dim=[tensor_shape_pb2.TensorShapeProto.Dim(size=1)]
+                        ),
+                        tensor_content=np.asarray([step], dtype="<f4").tobytes(),
+                    ),
+                    metadata=summary_pb2.SummaryMetadata(
+                        plugin_data=summary_pb2.SummaryMetadata.PluginData(
+                            plugin_name="mesh"
+                        )
+                    ),
+                ),
+                summary_pb2.Summary.Value(
+                    tag="activations",
+                    tensor=tensor_pb2.TensorProto(
+                        dtype=types_pb2.DT_FLOAT,
+                        tensor_shape=shape,
+                        tensor_content=tensor.tobytes(),
+                    ),
+                    metadata=summary_pb2.SummaryMetadata(
+                        plugin_data=summary_pb2.SummaryMetadata.PluginData(
+                            plugin_name="tensor"
+                        )
+                    ),
+                ),
+                summary_pb2.Summary.Value(
+                    tag="clip/raw",
+                    tensor=tensor_pb2.TensorProto(
+                        dtype=types_pb2.DT_STRING, string_val=[gif_handle.getvalue()]
+                    ),
+                    metadata=summary_pb2.SummaryMetadata(
+                        plugin_data=summary_pb2.SummaryMetadata.PluginData(
+                            plugin_name="video"
+                        )
+                    ),
+                ),
+            ]
+        )
+        raw_x.add_event(
+            event_pb2.Event(wall_time=WALL_TIME + step, step=step, summary=summary)
+        )
+    raw_x.add_event(
+        event_pb2.Event(
+            wall_time=WALL_TIME,
+            step=0,
+            summary=summary_pb2.Summary(
+                value=[
+                    summary_pb2.Summary.Value(
+                        tag="session",
+                        metadata=summary_pb2.SummaryMetadata(
+                            plugin_data=summary_pb2.SummaryMetadata.PluginData(
+                                plugin_name="hparams",
+                                content=json.dumps(
+                                    {"optimizer": "sgd", "lr": 0.1}
+                                ).encode(),
+                            )
+                        ),
+                    )
+                ]
+            ),
+        )
+    )
+    raw_x.flush()
+    raw_x.close()
+
     tensorboard_dir = ROOT / "tensorboard"
     tensorboard_dir.mkdir(parents=True, exist_ok=True)
-    raw_writer = EventFileWriter(str(tensorboard_dir))
+    raw = EventFileWriter(str(tensorboard_dir))
+    custom_scalars = json.dumps(
+        {"Metrics": {"loss_and_f1": ["Multiline", ["loss", "train/f1_score"]]}}
+    ).encode()
     for index in range(3):
         step = index + 1
         wall_time = WALL_TIME + step
@@ -126,11 +214,33 @@ def main() -> None:
             duration=0.25,
         )
         counts, edges = np.histogram(histograms[index], bins=4)
+        pr = np.asarray(
+            [[3, 0, 3, 0, 1.0, 1.0], [2, 1, 3, 0, 0.67, 1.0], [1, 0, 4, 1, 1.0, 0.5]],
+            dtype="<f4",
+        )
+        tensor = (np.arange(12, dtype=np.float32).reshape(3, 4) + step).astype("<f4")
+        pr_shape = tensor_shape_pb2.TensorShapeProto(
+            dim=[
+                tensor_shape_pb2.TensorShapeProto.Dim(size=3),
+                tensor_shape_pb2.TensorShapeProto.Dim(size=6),
+            ]
+        )
+        tensor_shape = tensor_shape_pb2.TensorShapeProto(
+            dim=[
+                tensor_shape_pb2.TensorShapeProto.Dim(size=3),
+                tensor_shape_pb2.TensorShapeProto.Dim(size=4),
+            ]
+        )
+        mesh_shape = tensor_shape_pb2.TensorShapeProto(
+            dim=[tensor_shape_pb2.TensorShapeProto.Dim(size=1)]
+        )
         summary = summary_pb2.Summary(
             value=[
                 summary_pb2.Summary.Value(tag="epoch", simple_value=float(index)),
                 summary_pb2.Summary.Value(tag="loss", simple_value=1.5 / step),
-                summary_pb2.Summary.Value(tag="train/loss", simple_value=2.5 / step),
+                summary_pb2.Summary.Value(
+                    tag="train/f1_score", simple_value=0.55 + index * 0.1
+                ),
                 summary_pb2.Summary.Value(
                     tag="sample",
                     image=summary_pb2.Summary.Image(
@@ -185,48 +295,126 @@ def main() -> None:
                         )
                     ),
                 ),
-            ]
-        )
-        plugin_payloads = (
-            ("quality/pr", "pr_curve", b'{"name": "pr", "values": [1, 2, 3]}\n'),
-            ("shape/triangle", "mesh", b'{"name": "mesh", "values": [1, 2, 3]}\n'),
-            ("clip", "video", gif_handle.getvalue()),
-            (
-                "tensor/blob",
-                "blob",
-                b'{"name": "tensor", "values": [1, 2, 3]}\n' * 40,
-            ),
-            ("hparams/session", "hparams", b"session-start"),
-        )
-        for tag, plugin_name, payload in plugin_payloads:
-            summary.value.append(
                 summary_pb2.Summary.Value(
-                    tag=tag,
+                    tag="quality/pr",
                     tensor=tensor_pb2.TensorProto(
-                        dtype=types_pb2.DT_STRING, string_val=[payload]
+                        dtype=types_pb2.DT_FLOAT,
+                        tensor_shape=pr_shape,
+                        tensor_content=pr.tobytes(),
                     ),
                     metadata=summary_pb2.SummaryMetadata(
                         plugin_data=summary_pb2.SummaryMetadata.PluginData(
-                            plugin_name=plugin_name,
-                            content=payload if plugin_name == "hparams" else b"",
+                            plugin_name="pr_curve"
                         )
                     ),
-                )
-            )
-        raw_writer.add_event(
-            event_pb2.Event(wall_time=wall_time, step=step, summary=summary)
+                ),
+                summary_pb2.Summary.Value(
+                    tag="box",
+                    tensor=tensor_pb2.TensorProto(
+                        dtype=types_pb2.DT_FLOAT,
+                        tensor_shape=mesh_shape,
+                        tensor_content=np.asarray([step], dtype="<f4").tobytes(),
+                    ),
+                    metadata=summary_pb2.SummaryMetadata(
+                        plugin_data=summary_pb2.SummaryMetadata.PluginData(
+                            plugin_name="mesh"
+                        )
+                    ),
+                ),
+                summary_pb2.Summary.Value(
+                    tag="clip",
+                    tensor=tensor_pb2.TensorProto(
+                        dtype=types_pb2.DT_STRING, string_val=[gif_handle.getvalue()]
+                    ),
+                    metadata=summary_pb2.SummaryMetadata(
+                        plugin_data=summary_pb2.SummaryMetadata.PluginData(
+                            plugin_name="video"
+                        )
+                    ),
+                ),
+                summary_pb2.Summary.Value(
+                    tag="activations",
+                    tensor=tensor_pb2.TensorProto(
+                        dtype=types_pb2.DT_FLOAT,
+                        tensor_shape=tensor_shape,
+                        tensor_content=tensor.tobytes(),
+                    ),
+                    metadata=summary_pb2.SummaryMetadata(
+                        plugin_data=summary_pb2.SummaryMetadata.PluginData(
+                            plugin_name="tensor"
+                        )
+                    ),
+                ),
+            ]
         )
-    raw_writer.add_event(
-        event_pb2.Event(wall_time=WALL_TIME, step=0, graph_def=b"graph-def-fixture")
+        raw.add_event(event_pb2.Event(wall_time=wall_time, step=step, summary=summary))
+
+    raw.add_event(
+        event_pb2.Event(
+            wall_time=WALL_TIME,
+            step=0,
+            summary=summary_pb2.Summary(
+                value=[
+                    summary_pb2.Summary.Value(
+                        tag="custom_scalars",
+                        metadata=summary_pb2.SummaryMetadata(
+                            plugin_data=summary_pb2.SummaryMetadata.PluginData(
+                                plugin_name="custom_scalars", content=custom_scalars
+                            )
+                        ),
+                    ),
+                    summary_pb2.Summary.Value(
+                        tag="session",
+                        metadata=summary_pb2.SummaryMetadata(
+                            plugin_data=summary_pb2.SummaryMetadata.PluginData(
+                                plugin_name="hparams",
+                                content=json.dumps(
+                                    {"optimizer": "adam", "lr": 0.01}
+                                ).encode(),
+                            )
+                        ),
+                    ),
+                ]
+            ),
+        )
     )
-    raw_writer.flush()
-    raw_writer.close()
-    projector = tensorboard_dir / "projector"
-    projector.mkdir()
-    (projector / "projector_config.pbtxt").write_text(
-        'embeddings { tensor_name: "embedding/sample" }\n'
+
+    graph = graph_pb2.GraphDef()
+    graph.node.extend(
+        [
+            node_def_pb2.NodeDef(name="input", op="Placeholder"),
+            node_def_pb2.NodeDef(name="weights", op="Const"),
+            node_def_pb2.NodeDef(name="bias", op="Const"),
+            node_def_pb2.NodeDef(
+                name="matmul", op="MatMul", input=["input", "weights"]
+            ),
+            node_def_pb2.NodeDef(name="logits", op="BiasAdd", input=["matmul", "bias"]),
+        ]
     )
-    (projector / "metadata.tsv").write_text("label\nzero\none\ntwo\n")
+    raw.add_event(
+        event_pb2.Event(
+            wall_time=WALL_TIME, step=0, graph_def=graph.SerializeToString()
+        )
+    )
+    raw.flush()
+    raw.close()
+
+    for root in (tensorboardx_dir, tensorboard_dir):
+        projector = root / "projector"
+        projector.mkdir(parents=True, exist_ok=True)
+        (projector / "projector_config.pbtxt").write_text(
+            'embeddings { tensor_name: "embedding/sample" metadata_path: "metadata.tsv" }\n'
+        )
+        (projector / "metadata.tsv").write_text("label\nzero\none\ntwo\n")
+        (projector / "tensors.tsv").write_text("0.0\t0.0\n1.0\t0.5\n0.5\t1.0\n")
+        profile = root / "plugins" / "profile"
+        profile.mkdir(parents=True, exist_ok=True)
+        (profile / "trace.json").write_text(
+            json.dumps(
+                {"traceEvents": [{"name": "step", "ph": "X", "ts": 1, "dur": 3}]},
+                indent=2,
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -211,7 +211,7 @@ def test_parse_file_reads_summary_metadata_plugin_name(tmp_path: Path) -> None:
 
 
 def test_parse_file_skips_plugin_binary_without_blob(tmp_path: Path) -> None:
-    """Plugin metadata without tensor bytes is not listed as a binary file."""
+    """Plugin metadata without tensor bytes is not listed as a mesh file."""
     path = tmp_path / "events.out.tfevents"
     plugin_data = _string_field(1, "mesh")
     metadata = _bytes_field(1, plugin_data)
@@ -222,8 +222,7 @@ def test_parse_file_skips_plugin_binary_without_blob(tmp_path: Path) -> None:
     fs = TensorBoardFS(tmp_path, step_digits=3)
 
     assert result["binary_entries"] == []
-    assert "001.json" in fs.readdir("/meshes/shape/config")
-    assert "001.bin" not in fs.readdir("/meshes/shape/config")
+    assert fs.readdir("/meshes") == [".", ".."]
 
 
 def test_parse_file_reads_integer_tensor_scalars(tmp_path: Path) -> None:

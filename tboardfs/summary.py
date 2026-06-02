@@ -102,6 +102,10 @@ class _SummaryParser:
         tensor: dict[str, Any] = {}
         if message.HasField("dtype"):
             tensor["dtype"] = message.dtype
+        if message.HasField("tensor_shape"):
+            tensor["shape"] = [
+                dim.size for dim in message.tensor_shape.dim if dim.HasField("size")
+            ]
         if message.HasField("tensor_content"):
             tensor["tensor_content"] = message.tensor_content
         values = _SummaryParser.parse_tensor_values(message)
