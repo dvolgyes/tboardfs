@@ -2,6 +2,45 @@
 # Changes will be overwritten on next `pcm render`.
 
 repos:
+# Source: local pcr hook
+- repo: local
+  hooks:
+  - id: pcr
+    name: pcr
+    entry: uvx --from /home/dvolgyes/workspace/pcr pcr check
+    language: system
+    types: [python]
+    args:
+    - --max-sloc=800
+    - --max-func-sloc=500
+    - --max-class-sloc=800
+    - --max-method-sloc=300
+    - --max-function-nesting-depth=2
+    - --max-constructs=1
+    - --max-classes=1
+    - --max-funcs=1
+    - --max-local-helpers=2
+    - --max-args=6
+    - --max-methods=10
+    - --max-class-members=10
+    - --require-class-member-hint
+    - --require-class-doc
+    - --require-function-doc
+    - --require-top-level-import
+    - --ban-future-import
+    - --require-type-hint
+    - --ban-typing-alias
+    - --ban-mutable-global
+    - --ban-pass-only-except
+    - --ban-output-construct
+    - --ban-placeholder-comment
+    - --ban-placeholder-pass
+    - --ban-notimplemented-placeholder
+    - --max-bool-args=1
+    - --require-kw-only-defaults
+    - --max-elifs=2
+    - --max-nested-ifs=2
+
 # Source: 050_uv_secure.yaml [central]
 - repo: https://github.com/owenlamont/uv-secure
   rev: v0.17.2
