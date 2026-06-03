@@ -23,6 +23,13 @@ Mount a TensorBoard log directory:
 tboardfs SOURCE MOUNTPOINT
 ```
 
+For non-developers, the simplest way to run it without cloning this repository
+or managing a local virtual environment is:
+
+```bash
+uvx tboardfs SOURCE MOUNTPOINT
+```
+
 Example:
 
 ```bash
