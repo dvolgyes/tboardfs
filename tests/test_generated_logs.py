@@ -1,6 +1,8 @@
-import json
-from pathlib import Path
 from io import BytesIO
+import json
+import subprocess
+import sys
+from pathlib import Path
 
 import numpy as np
 
@@ -16,6 +18,38 @@ def test_generated_logs_include_both_producers() -> None:
 
     assert (FIXTURE_ROOT / "tensorboardx") in {path.parent for path in event_files}
     assert (FIXTURE_ROOT / "tensorboard") in {path.parent for path in event_files}
+
+
+def test_runtime_filesystem_does_not_import_tensorboard() -> None:
+    """Production import and filesystem parsing do not require TensorBoard."""
+    script = """
+import builtins
+from pathlib import Path
+
+real_import = builtins.__import__
+
+def blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == "tensorboard" or name.startswith("tensorboard."):
+        raise ModuleNotFoundError(name)
+    return real_import(name, globals, locals, fromlist, level)
+
+builtins.__import__ = blocked_import
+
+from tboardfs import TensorBoardFS
+
+fs = TensorBoardFS(Path("test-logs"), step_digits=3)
+assert "layout.json" in fs.readdir("/tensorboard/custom_scalars")
+assert "hparams.json" in fs.readdir("/tensorboard/hparams")
+assert "001.npz" in fs.readdir("/tensorboard/meshes/box")
+"""
+
+    subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path.cwd(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_tensorboardx_fixture_exposes_clean_representations() -> None:

@@ -1,12 +1,17 @@
 from io import BytesIO
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
-from tensorboard.plugins.mesh import plugin_data_pb2 as mesh_plugin_data_pb2
 
 from tboardfs.model import JsonEntry
 from tboardfs.paths import _Paths
+from tboardfs.proto_schema import protobuf_message_from_bytes
 from tboardfs.tensor import tensor_to_array
+
+_MESH_COLOR = 3
+_MESH_FACE = 2
+_MESH_UNDEFINED = 0
+_MESH_VERTEX = 1
 
 
 def mesh_nodes(
@@ -23,9 +28,11 @@ def mesh_nodes(
         data = tensor_to_array(entry.payload.get("tensor") or {})
         if not isinstance(content, bytes) or data.size == 0:
             continue
-        metadata = mesh_plugin_data_pb2.MeshPluginData()
-        metadata.ParseFromString(content)
-        if metadata.content_type == mesh_plugin_data_pb2.MeshPluginData.UNDEFINED:
+        metadata = cast(
+            Any,
+            protobuf_message_from_bytes(content, "tensorboard.mesh.MeshPluginData"),
+        )
+        if getattr(metadata, "content_type") == _MESH_UNDEFINED:
             continue
         group_key = (metadata.name or entry.tag.rsplit("_", 1)[0], int(entry.step))
         group = groups.setdefault(
@@ -43,13 +50,13 @@ def mesh_nodes(
 
     nodes: list[tuple[tuple[str, ...], dict[str, Any]]] = []
     names = {
-        mesh_plugin_data_pb2.MeshPluginData.VERTEX: "vertices",
-        mesh_plugin_data_pb2.MeshPluginData.FACE: "faces",
-        mesh_plugin_data_pb2.MeshPluginData.COLOR: "colors",
+        _MESH_VERTEX: "vertices",
+        _MESH_FACE: "faces",
+        _MESH_COLOR: "colors",
     }
     for (name, step_number), group in sorted(groups.items()):
         components = group["components"]
-        if mesh_plugin_data_pb2.MeshPluginData.VERTEX not in components:
+        if _MESH_VERTEX not in components:
             continue
         mesh = {
             label: components[key] for key, label in names.items() if key in components

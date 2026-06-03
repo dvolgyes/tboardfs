@@ -223,7 +223,7 @@ def test_file_cli_copy_all_creates_tree_and_reports_conflicts(
             "copy-all",
             str(FIXTURE_EVENT),
             str(outdir),
-            "--force",
+            "-f",
             "--step-digits",
             "3",
         ],
@@ -260,7 +260,7 @@ def test_file_cli_copy_all_skip_existing_warns_and_continues(
             "copy-all",
             str(FIXTURE_EVENT),
             str(outdir),
-            "--skip-existing",
+            "-s",
             "--step-digits",
             "3",
         ],
@@ -286,12 +286,12 @@ def test_file_cli_copy_all_rejects_force_with_skip_existing(tmp_path: Path) -> N
             "copy-all",
             str(FIXTURE_EVENT),
             str(tmp_path / "out"),
-            "--force",
-            "--skip-existing",
+            "-f",
+            "-s",
         ],
     )
 
-    assert result.exit_code != 0
+    assert result.exit_code == 2
     assert "Use either --force or --skip-existing" in result.output
 
 

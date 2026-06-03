@@ -1,6 +1,6 @@
 from typing import Any, cast
 
-from tboardfs.proto_schema import event_message_from_bytes
+from tboardfs.proto_schema import protobuf_message_from_bytes
 
 
 def parse_event(data: bytes) -> dict[str, Any]:
@@ -14,7 +14,7 @@ class _SummaryParser:
     @staticmethod
     def parse_event(data: bytes) -> dict[str, Any]:
         """Parse one Event protobuf payload."""
-        event_message = cast(Any, event_message_from_bytes(data))
+        event_message = cast(Any, protobuf_message_from_bytes(data, "tensorflow.Event"))
         event: dict[str, Any] = {}
         if event_message.HasField("wall_time"):
             event["wall_time"] = event_message.wall_time

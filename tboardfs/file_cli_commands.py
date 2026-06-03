@@ -76,8 +76,8 @@ def register_file_cli_commands(group: click.Group) -> None:
     @group.command("copy-all")
     @click.argument("source", type=click.Path(exists=True, dir_okay=False))
     @click.argument("outdir", type=click.Path(file_okay=False))
-    @click.option("--force", is_flag=True)
-    @click.option("--skip-existing", is_flag=True)
+    @click.option("-f", "--force", is_flag=True)
+    @click.option("-s", "--skip-existing", is_flag=True)
     @click.option("--step-digits", type=int, default=6, show_default=True)
     @click.option("--scalar-format", default="json,tsv,npz", show_default=True)
     def copy_all(**params: object) -> None:
@@ -85,9 +85,7 @@ def register_file_cli_commands(group: click.Group) -> None:
         force = cast(bool, params["force"])
         skip_existing = cast(bool, params["skip_existing"])
         if force and skip_existing:
-            raise click.ClickException(
-                "Use either --force or --skip-existing, not both."
-            )
+            raise click.UsageError("Use either --force or --skip-existing, not both.")
         existing = "overwrite" if force else "skip" if skip_existing else "fail"
         tree = SingleEventTree(
             cast(str, params["source"]),

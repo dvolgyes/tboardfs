@@ -1,14 +1,14 @@
-from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
+from typing import cast
+
+from google.protobuf import descriptor_pb2, descriptor_pool, message_factory, struct_pb2
 
 
-def event_message_from_bytes(data: bytes) -> object:
-    """Parse TensorBoard Event bytes with a local protobuf schema."""
-    event_class = message_factory.GetMessageClass(
-        _SchemaBuilder.pool().FindMessageTypeByName("tensorflow.Event")
-    )
-    event = event_class()
-    event.ParseFromString(data)
-    return event
+def protobuf_message_from_bytes(data: bytes, full_name: str) -> object:
+    """Parse bytes into a protobuf message from the local TensorBoard schema."""
+    message_class = _SchemaBuilder.message_class(full_name)
+    message = message_class()
+    message.ParseFromString(data)
+    return message
 
 
 class _SchemaBuilder:
@@ -18,12 +18,35 @@ class _SchemaBuilder:
     def pool() -> descriptor_pool.DescriptorPool:
         """Build a descriptor pool for the local TensorBoard schema."""
         schema_pool = descriptor_pool.DescriptorPool()
-        schema_pool.Add(_SchemaBuilder.file_descriptor())
+        schema_pool.AddSerializedFile(struct_pb2.DESCRIPTOR.serialized_pb)
+        for descriptor in _SchemaBuilder.file_descriptors():
+            schema_pool.Add(descriptor)
         return schema_pool
 
     @staticmethod
-    def file_descriptor() -> descriptor_pb2.FileDescriptorProto:
-        """Return the local TensorBoard protobuf descriptor."""
+    def message_class(full_name: str) -> type:
+        """Return a dynamic protobuf message class by fully qualified name."""
+        return cast(
+            type,
+            message_factory.GetMessageClass(
+                _SchemaBuilder.pool().FindMessageTypeByName(full_name)
+            ),
+        )
+
+    @staticmethod
+    def file_descriptors() -> list[descriptor_pb2.FileDescriptorProto]:
+        """Return all local TensorBoard protobuf descriptors."""
+        return [
+            _SchemaBuilder.event_descriptor(),
+            _SchemaBuilder.custom_scalar_descriptor(),
+            _SchemaBuilder.mesh_plugin_descriptor(),
+            _SchemaBuilder.hparams_api_descriptor(),
+            _SchemaBuilder.hparams_plugin_descriptor(),
+        ]
+
+    @staticmethod
+    def event_descriptor() -> descriptor_pb2.FileDescriptorProto:
+        """Return the local TensorBoard event protobuf descriptor."""
         proto = descriptor_pb2.FileDescriptorProto()
         proto.name = "tboardfs_tensorboard_subset.proto"
         proto.package = "tensorflow"
@@ -199,6 +222,340 @@ class _SchemaBuilder:
         return proto
 
     @staticmethod
+    def custom_scalar_descriptor() -> descriptor_pb2.FileDescriptorProto:
+        """Return the TensorBoard custom scalar layout descriptor subset."""
+        proto = descriptor_pb2.FileDescriptorProto()
+        proto.name = "tensorboard/plugins/custom_scalar/layout.proto"
+        proto.package = "tensorboard"
+        proto.syntax = "proto3"
+        add = _SchemaBuilder.add_field
+
+        chart = proto.message_type.add(name="Chart")
+        chart.oneof_decl.add(name="content")
+        add(chart, "title", 1, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        field = add(
+            chart,
+            "multiline",
+            2,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            type_name=".tensorboard.MultilineChartContent",
+        )
+        field.oneof_index = 0
+        field = add(
+            chart,
+            "margin",
+            3,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            type_name=".tensorboard.MarginChartContent",
+        )
+        field.oneof_index = 0
+
+        multiline = proto.message_type.add(name="MultilineChartContent")
+        add(
+            multiline,
+            "tag",
+            1,
+            descriptor_pb2.FieldDescriptorProto.TYPE_STRING,
+            label=descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED,
+        )
+
+        margin = proto.message_type.add(name="MarginChartContent")
+        add(
+            margin,
+            "series",
+            1,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            label=descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED,
+            type_name=".tensorboard.MarginChartContent.Series",
+        )
+        series = margin.nested_type.add(name="Series")
+        add(series, "value", 1, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(series, "lower", 2, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(series, "upper", 3, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+
+        category = proto.message_type.add(name="Category")
+        add(category, "title", 1, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(
+            category,
+            "chart",
+            2,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            label=descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED,
+            type_name=".tensorboard.Chart",
+        )
+        add(category, "closed", 3, descriptor_pb2.FieldDescriptorProto.TYPE_BOOL)
+
+        layout = proto.message_type.add(name="Layout")
+        add(layout, "version", 1, descriptor_pb2.FieldDescriptorProto.TYPE_INT32)
+        add(
+            layout,
+            "category",
+            2,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            label=descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED,
+            type_name=".tensorboard.Category",
+        )
+        return proto
+
+    @staticmethod
+    def mesh_plugin_descriptor() -> descriptor_pb2.FileDescriptorProto:
+        """Return the TensorBoard mesh plugin data descriptor subset."""
+        proto = descriptor_pb2.FileDescriptorProto()
+        proto.name = "tensorboard/plugins/mesh/plugin_data.proto"
+        proto.package = "tensorboard.mesh"
+        proto.syntax = "proto3"
+        add = _SchemaBuilder.add_field
+
+        mesh = proto.message_type.add(name="MeshPluginData")
+        _SchemaBuilder.add_enum(
+            mesh.enum_type.add(name="ContentType"),
+            (
+                ("UNDEFINED", 0),
+                ("VERTEX", 1),
+                ("FACE", 2),
+                ("COLOR", 3),
+            ),
+        )
+        add(mesh, "version", 1, descriptor_pb2.FieldDescriptorProto.TYPE_INT32)
+        add(mesh, "name", 2, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(
+            mesh,
+            "content_type",
+            3,
+            descriptor_pb2.FieldDescriptorProto.TYPE_ENUM,
+            type_name=".tensorboard.mesh.MeshPluginData.ContentType",
+        )
+        add(mesh, "json_config", 5, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(
+            mesh,
+            "shape",
+            6,
+            descriptor_pb2.FieldDescriptorProto.TYPE_INT32,
+            label=descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED,
+        )
+        add(mesh, "components", 7, descriptor_pb2.FieldDescriptorProto.TYPE_UINT32)
+        return proto
+
+    @staticmethod
+    def hparams_api_descriptor() -> descriptor_pb2.FileDescriptorProto:
+        """Return the TensorBoard hparams API descriptor subset."""
+        proto = descriptor_pb2.FileDescriptorProto()
+        proto.name = "tensorboard/plugins/hparams/api.proto"
+        proto.package = "tensorboard.hparams"
+        proto.syntax = "proto3"
+        proto.dependency.append("google/protobuf/struct.proto")
+        add = _SchemaBuilder.add_field
+
+        _SchemaBuilder.add_enum(
+            proto.enum_type.add(name="DataType"),
+            (
+                ("DATA_TYPE_UNSET", 0),
+                ("DATA_TYPE_STRING", 1),
+                ("DATA_TYPE_BOOL", 2),
+                ("DATA_TYPE_FLOAT64", 3),
+            ),
+        )
+        _SchemaBuilder.add_enum(
+            proto.enum_type.add(name="DatasetType"),
+            (
+                ("DATASET_UNKNOWN", 0),
+                ("DATASET_TRAINING", 1),
+                ("DATASET_VALIDATION", 2),
+            ),
+        )
+        _SchemaBuilder.add_enum(
+            proto.enum_type.add(name="Status"),
+            (
+                ("STATUS_UNKNOWN", 0),
+                ("STATUS_SUCCESS", 1),
+                ("STATUS_FAILURE", 2),
+                ("STATUS_RUNNING", 3),
+            ),
+        )
+
+        experiment = proto.message_type.add(name="Experiment")
+        add(experiment, "name", 6, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(
+            experiment,
+            "description",
+            1,
+            descriptor_pb2.FieldDescriptorProto.TYPE_STRING,
+        )
+        add(experiment, "user", 2, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(
+            experiment,
+            "time_created_secs",
+            3,
+            descriptor_pb2.FieldDescriptorProto.TYPE_DOUBLE,
+        )
+        add(
+            experiment,
+            "hparam_infos",
+            4,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            label=descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED,
+            type_name=".tensorboard.hparams.HParamInfo",
+        )
+        add(
+            experiment,
+            "metric_infos",
+            5,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            label=descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED,
+            type_name=".tensorboard.hparams.MetricInfo",
+        )
+
+        hparam = proto.message_type.add(name="HParamInfo")
+        hparam.oneof_decl.add(name="domain")
+        add(hparam, "name", 1, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(hparam, "display_name", 2, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(hparam, "description", 3, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(
+            hparam,
+            "type",
+            4,
+            descriptor_pb2.FieldDescriptorProto.TYPE_ENUM,
+            type_name=".tensorboard.hparams.DataType",
+        )
+        field = add(
+            hparam,
+            "domain_discrete",
+            5,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            type_name=".google.protobuf.ListValue",
+        )
+        field.oneof_index = 0
+        field = add(
+            hparam,
+            "domain_interval",
+            6,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            type_name=".tensorboard.hparams.Interval",
+        )
+        field.oneof_index = 0
+        add(hparam, "differs", 7, descriptor_pb2.FieldDescriptorProto.TYPE_BOOL)
+
+        interval = proto.message_type.add(name="Interval")
+        add(interval, "min_value", 1, descriptor_pb2.FieldDescriptorProto.TYPE_DOUBLE)
+        add(interval, "max_value", 2, descriptor_pb2.FieldDescriptorProto.TYPE_DOUBLE)
+
+        metric_name = proto.message_type.add(name="MetricName")
+        add(metric_name, "group", 1, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(metric_name, "tag", 2, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+
+        metric_info = proto.message_type.add(name="MetricInfo")
+        add(
+            metric_info,
+            "name",
+            1,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            type_name=".tensorboard.hparams.MetricName",
+        )
+        add(
+            metric_info,
+            "display_name",
+            3,
+            descriptor_pb2.FieldDescriptorProto.TYPE_STRING,
+        )
+        add(
+            metric_info,
+            "description",
+            4,
+            descriptor_pb2.FieldDescriptorProto.TYPE_STRING,
+        )
+        add(
+            metric_info,
+            "dataset_type",
+            5,
+            descriptor_pb2.FieldDescriptorProto.TYPE_ENUM,
+            type_name=".tensorboard.hparams.DatasetType",
+        )
+        return proto
+
+    @staticmethod
+    def hparams_plugin_descriptor() -> descriptor_pb2.FileDescriptorProto:
+        """Return the TensorBoard hparams plugin data descriptor subset."""
+        proto = descriptor_pb2.FileDescriptorProto()
+        proto.name = "tensorboard/plugins/hparams/plugin_data.proto"
+        proto.package = "tensorboard.hparams"
+        proto.syntax = "proto3"
+        proto.dependency.extend(
+            [
+                "tensorboard/plugins/hparams/api.proto",
+                "google/protobuf/struct.proto",
+            ]
+        )
+        add = _SchemaBuilder.add_field
+
+        plugin = proto.message_type.add(name="HParamsPluginData")
+        plugin.oneof_decl.add(name="data")
+        add(plugin, "version", 1, descriptor_pb2.FieldDescriptorProto.TYPE_INT32)
+        field = add(
+            plugin,
+            "experiment",
+            2,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            type_name=".tensorboard.hparams.Experiment",
+        )
+        field.oneof_index = 0
+        field = add(
+            plugin,
+            "session_start_info",
+            3,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            type_name=".tensorboard.hparams.SessionStartInfo",
+        )
+        field.oneof_index = 0
+        field = add(
+            plugin,
+            "session_end_info",
+            4,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            type_name=".tensorboard.hparams.SessionEndInfo",
+        )
+        field.oneof_index = 0
+
+        start = proto.message_type.add(name="SessionStartInfo")
+        entry = start.nested_type.add(name="HparamsEntry")
+        entry.options.map_entry = True
+        add(entry, "key", 1, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(
+            entry,
+            "value",
+            2,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            type_name=".google.protobuf.Value",
+        )
+        add(
+            start,
+            "hparams",
+            1,
+            descriptor_pb2.FieldDescriptorProto.TYPE_MESSAGE,
+            label=descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED,
+            type_name=".tensorboard.hparams.SessionStartInfo.HparamsEntry",
+        )
+        add(start, "model_uri", 2, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(start, "monitor_url", 3, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(start, "group_name", 4, descriptor_pb2.FieldDescriptorProto.TYPE_STRING)
+        add(
+            start,
+            "start_time_secs",
+            5,
+            descriptor_pb2.FieldDescriptorProto.TYPE_DOUBLE,
+        )
+
+        end = proto.message_type.add(name="SessionEndInfo")
+        add(
+            end,
+            "status",
+            1,
+            descriptor_pb2.FieldDescriptorProto.TYPE_ENUM,
+            type_name=".tensorboard.hparams.Status",
+        )
+        add(end, "end_time_secs", 2, descriptor_pb2.FieldDescriptorProto.TYPE_DOUBLE)
+        return proto
+
+    @staticmethod
     def add_field(
         message: descriptor_pb2.DescriptorProto,
         name: str,
@@ -207,7 +564,7 @@ class _SchemaBuilder:
         *,
         label: int = descriptor_pb2.FieldDescriptorProto.LABEL_OPTIONAL,
         type_name: str = "",
-    ) -> None:
+    ) -> descriptor_pb2.FieldDescriptorProto:
         """Add one field descriptor to a protobuf message descriptor."""
         field = message.field.add()
         field.name = name
@@ -216,3 +573,15 @@ class _SchemaBuilder:
         field.type = field_type
         if type_name:
             field.type_name = type_name
+        return field
+
+    @staticmethod
+    def add_enum(
+        enum: descriptor_pb2.EnumDescriptorProto,
+        values: tuple[tuple[str, int], ...],
+    ) -> None:
+        """Add enum value descriptors."""
+        for name, number in values:
+            value = enum.value.add()
+            value.name = name
+            value.number = number

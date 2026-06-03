@@ -108,7 +108,7 @@ class _FsState:
     tree_generation: int = 0
 
 
-class TensorBoardFS:
+class TensorBoardFS:  # pcr: noqa: PCR010
     """Read-only virtual filesystem over TensorBoard event files.
 
     :ivar source: source log directory
