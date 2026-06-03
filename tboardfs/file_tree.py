@@ -52,7 +52,7 @@ class SingleEventTree:
             raise IsADirectoryError(path)
         return _materialize_node_bytes(node)
 
-    def copy_all(self, outdir: str | Path, *, force: bool = False) -> None:
+    def copy_all(self, outdir: str | Path, *, force: bool = False) -> int:
         """Copy every virtual file into a directory."""
         outdir_path = Path(outdir)
         paths = self._iter_file_parts(self.tree, ())
@@ -63,6 +63,7 @@ class SingleEventTree:
         for path, target in targets:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(_materialize_node_bytes(self._lookup_parts(path)))
+        return len(paths)
 
     def _lookup_path(self, path: str) -> dict[str, Any]:
         return self._lookup_parts(_Paths.path_parts(path))

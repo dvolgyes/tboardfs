@@ -71,13 +71,15 @@ control files, and does not include sibling sidecars.
 
 `get` refuses to overwrite existing files unless `--force` is provided.
 `copy-all` checks for existing target conflicts before writing, and also
-requires `--force` to overwrite.
+requires `--force` to overwrite. After a successful copy, `copy-all` reports the
+number of copied files.
 
 ## Output Rules
 
 `tboardfs-file list` prints virtual file paths to stdout, one per line.
 `tboardfs-file get -o -` writes raw bytes to stdout. Status, warnings, and
 errors go to stderr through Loguru/Click so stdout remains safe for pipelines.
+The `copy-all` file count is status output and is written to stderr.
 
 ## License
 

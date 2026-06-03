@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 
 import click
+from loguru import logger
 
 from tboardfs.file_tree import SingleEventTree
 
@@ -83,6 +84,7 @@ def register_file_cli_commands(group: click.Group) -> None:
             source, step_digits=step_digits, scalar_format=scalar_format
         )
         try:
-            tree.copy_all(outdir, force=force)
+            copied = tree.copy_all(outdir, force=force)
         except FileExistsError as error:
             raise click.ClickException(f"output already exists: {error}") from error
+        logger.info("copied {} files", copied)

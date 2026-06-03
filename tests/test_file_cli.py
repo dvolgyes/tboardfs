@@ -66,6 +66,30 @@ def test_file_cli_get_writes_shared_reader_bytes(tmp_path: Path) -> None:
     assert output.read_bytes() == expected
 
 
+def test_file_cli_get_accepts_path_without_leading_slash(tmp_path: Path) -> None:
+    """get accepts the same virtual path with or without a leading slash."""
+    runner = CliRunner()
+    output = tmp_path / "loss.json"
+
+    result = runner.invoke(
+        main,
+        [
+            "get",
+            str(FIXTURE_EVENT),
+            "scalars/loss.json",
+            "-o",
+            str(output),
+            "--step-digits",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output.read_bytes() == SingleEventTree(
+        FIXTURE_EVENT, step_digits=3
+    ).read_file("/scalars/loss.json")
+
+
 def test_file_cli_get_stdout_writes_raw_bytes_only() -> None:
     """get -o - writes raw file data without status text."""
     runner = CliRunner()
@@ -148,6 +172,8 @@ def test_file_cli_copy_all_creates_tree_and_preflights_conflicts(
 
     assert first.exit_code == 0
     assert len([path for path in outdir.rglob("*") if path.is_file()]) == expected_count
+    assert f"copied {expected_count} files" in first.stderr
+    assert first.stdout == ""
     assert second.exit_code != 0
     assert "output already exists" in second.output
     assert outdir.joinpath("scalars", "loss.json").read_bytes() == original
