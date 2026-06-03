@@ -64,6 +64,7 @@ def test_file_cli_get_writes_shared_reader_bytes(tmp_path: Path) -> None:
     expected = tree.read_file(vpath)
     assert result.exit_code == 0
     assert output.read_bytes() == expected
+    assert result.stdout == ""
 
 
 def test_file_cli_get_accepts_path_without_leading_slash(tmp_path: Path) -> None:
@@ -186,6 +187,7 @@ def test_file_cli_get_rejects_missing_directory_and_existing_output(
     assert "virtual path is a directory" in directory.output
     assert existing.exit_code != 0
     assert "output already exists" in existing.output
+    assert "Use --force for forced overwriting." in existing.output
     assert output.read_text() == "keep"
 
 
@@ -241,6 +243,58 @@ def test_file_cli_copy_all_creates_tree_and_reports_conflicts(
     assert "\nv " in outdir.joinpath("meshes", "box", "001.obj").read_text()
 
 
+def test_file_cli_copy_all_skip_existing_warns_and_continues(
+    tmp_path: Path,
+) -> None:
+    """copy-all --skip-existing warns for existing files and copies the rest."""
+    runner = CliRunner()
+    outdir = tmp_path / "skip"
+    virtual_paths = SingleEventTree(FIXTURE_EVENT, step_digits=3).list_file_paths()
+    existing_target = _target_for_virtual_path(outdir, virtual_paths[1])
+    existing_target.parent.mkdir(parents=True)
+    existing_target.write_text("keep")
+
+    result = runner.invoke(
+        main,
+        [
+            "copy-all",
+            str(FIXTURE_EVENT),
+            str(outdir),
+            "--skip-existing",
+            "--step-digits",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert "Skipped existing:" in result.stderr
+    assert virtual_paths[1] in result.stderr
+    assert f"copied {len(virtual_paths) - 1} files" in result.stderr
+    assert existing_target.read_text() == "keep"
+    assert _target_for_virtual_path(outdir, virtual_paths[0]).is_file()
+    assert _target_for_virtual_path(outdir, virtual_paths[2]).is_file()
+
+
+def test_file_cli_copy_all_rejects_force_with_skip_existing(tmp_path: Path) -> None:
+    """copy-all accepts one overwrite policy at a time."""
+    runner = CliRunner()
+
+    result = runner.invoke(
+        main,
+        [
+            "copy-all",
+            str(FIXTURE_EVENT),
+            str(tmp_path / "out"),
+            "--force",
+            "--skip-existing",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Use either --force or --skip-existing" in result.output
+
+
 def test_single_file_tree_matches_filesystem_for_one_event_file(tmp_path: Path) -> None:
     """Single-event mode and FUSE mode expose identical file bytes."""
     source = tmp_path / FIXTURE_EVENT.name
@@ -269,6 +323,7 @@ def test_metadata_and_readme_document_both_access_modes() -> None:
     assert "tboardfs-file list" in readme
     assert "tboardfs-file get" in readme
     assert "tboardfs-file copy-all" in readme
+    assert "--skip-existing" in readme
     assert "/pr_curves" in readme
     assert "/projector" in readme
     assert "/profile" in readme

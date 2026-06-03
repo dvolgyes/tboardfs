@@ -1,6 +1,7 @@
 from pathlib import Path
 from pathlib import PurePosixPath
 import sys
+from typing import cast
 
 import click
 from loguru import logger
@@ -76,24 +77,32 @@ def register_file_cli_commands(group: click.Group) -> None:
     @click.argument("source", type=click.Path(exists=True, dir_okay=False))
     @click.argument("outdir", type=click.Path(file_okay=False))
     @click.option("--force", is_flag=True)
+    @click.option("--skip-existing", is_flag=True)
     @click.option("--step-digits", type=int, default=6, show_default=True)
     @click.option("--scalar-format", default="json,tsv,npz", show_default=True)
-    def copy_all(
-        source: str,
-        outdir: str,
-        force: bool,
-        step_digits: int,
-        scalar_format: str,
-    ) -> None:
+    def copy_all(**params: object) -> None:
         """Copy every virtual file into OUTDIR."""
+        force = cast(bool, params["force"])
+        skip_existing = cast(bool, params["skip_existing"])
+        if force and skip_existing:
+            raise click.ClickException(
+                "Use either --force or --skip-existing, not both."
+            )
+        existing = "overwrite" if force else "skip" if skip_existing else "fail"
         tree = SingleEventTree(
-            source, step_digits=step_digits, scalar_format=scalar_format
+            cast(str, params["source"]),
+            step_digits=cast(int, params["step_digits"]),
+            scalar_format=cast(str, params["scalar_format"]),
         )
         try:
-            copied = tree.copy_all(outdir, force=force)
+            copied, skipped = tree.copy_all(
+                cast(str, params["outdir"]), existing=existing
+            )
         except _CopyConflictError as error:
             _report_copy_conflict(error)
             raise click.exceptions.Exit(1) from error
+        for path in skipped:
+            logger.warning("Skipped existing: {}", path)
         logger.info("copied {} files", copied)
 
 

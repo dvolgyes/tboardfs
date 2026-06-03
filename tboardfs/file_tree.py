@@ -68,20 +68,26 @@ class SingleEventTree:
             raise IsADirectoryError(path)
         return _materialize_node_bytes(node)
 
-    def copy_all(self, outdir: str | Path, *, force: bool = False) -> int:
+    def copy_all(
+        self, outdir: str | Path, *, existing: str = "fail"
+    ) -> tuple[int, list[str]]:
         """Copy every virtual file into a directory."""
         outdir_path = Path(outdir)
         paths = self._iter_file_parts(self.tree, ())
         targets = [(path, outdir_path.joinpath(*path)) for path in paths]
         copied_paths: list[str] = []
+        skipped_paths: list[str] = []
         for path, target in targets:
             virtual_path = _Paths.join_path(path)
-            if target.exists() and not force:
+            if target.exists() and existing != "overwrite":
+                if existing == "skip":
+                    skipped_paths.append(virtual_path)
+                    continue
                 raise _CopyConflictError(target, copied_paths)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(_materialize_node_bytes(self._lookup_parts(path)))
             copied_paths.append(virtual_path)
-        return len(paths)
+        return len(copied_paths), skipped_paths
 
     def _lookup_path(self, path: str) -> dict[str, Any]:
         return self._lookup_parts(_Paths.path_parts(path))

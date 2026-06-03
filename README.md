@@ -84,6 +84,16 @@ copied, lists those virtual paths, prints the conflicting output path, and
 suggests `--force`. After a successful copy, `copy-all` reports the number of
 copied files.
 
+Use `--skip-existing` to leave existing output files untouched and continue
+copying the rest of the tree:
+
+```bash
+tboardfs-file copy-all events.out.tfevents.123 exported-event --skip-existing
+```
+
+Each skipped virtual path is reported as a warning on stderr. `--force` and
+`--skip-existing` are mutually exclusive.
+
 ## Supported Objects
 
 The virtual tree covers these TensorBoard objects:
@@ -112,10 +122,10 @@ The virtual tree covers these TensorBoard objects:
 ## Output Rules
 
 `tboardfs-file list` prints virtual file paths to stdout, one per line.
-`tboardfs-file get -o -` writes raw bytes to stdout. Status, warnings, and
-errors go to stderr through Loguru/Click so stdout remains safe for pipelines.
-The `get` file-write summary, `copy-all` file count, copied-path conflict
-report, and overwrite hints are status output and are written to stderr.
+`tboardfs-file get -o -` writes raw bytes to stdout. Extraction status,
+warnings, errors, copied-file counts, skipped-path warnings, copied-path
+conflict reports, and overwrite hints are written to stderr through Loguru/Click
+so stdout remains safe for pipelines.
 
 ## License
 
