@@ -22,14 +22,14 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "click>=8.4.1",
-    "loguru>=0.7.3",
-    "mfusepy>=0.1.0",
-    "numpy>=2.0.0",
-    "pandas>=2.3.0",
-    "protobuf>=7.35.0",
-    "python-magic>=0.4.27",
-    "tqdm>=4.67.3",
+    "click>=8.4.1,<9.0",
+    "loguru>=0.7.3,<1.0",
+    "mfusepy>=3.1.1,<4.0",
+    "numpy>=2.4.6,<3.0",
+    "pandas>=3.0.3,<4.0",
+    "protobuf>=7.35.0,<8.0",
+    "python-magic>=0.4.27,<1.0",
+    "tqdm>=4.67.3,<5.0",
 ]
 
 [project.scripts]

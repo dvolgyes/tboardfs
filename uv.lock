@@ -1436,14 +1436,14 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "click", specifier = ">=8.4.1" },
-    { name = "loguru", specifier = ">=0.7.3" },
-    { name = "mfusepy", specifier = ">=0.1.0" },
-    { name = "numpy", specifier = ">=2.0.0" },
-    { name = "pandas", specifier = ">=2.3.0" },
-    { name = "protobuf", specifier = ">=7.35.0" },
-    { name = "python-magic", specifier = ">=0.4.27" },
-    { name = "tqdm", specifier = ">=4.67.3" },
+    { name = "click", specifier = ">=8.4.1,<9.0" },
+    { name = "loguru", specifier = ">=0.7.3,<1.0" },
+    { name = "mfusepy", specifier = ">=3.1.1,<4.0" },
+    { name = "numpy", specifier = ">=2.4.6,<3.0" },
+    { name = "pandas", specifier = ">=3.0.3,<4.0" },
+    { name = "protobuf", specifier = ">=7.35.0,<8.0" },
+    { name = "python-magic", specifier = ">=0.4.27,<1.0" },
+    { name = "tqdm", specifier = ">=4.67.3,<5.0" },
 ]
 
 [package.metadata.requires-dev]
