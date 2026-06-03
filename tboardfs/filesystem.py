@@ -39,6 +39,53 @@ from tboardfs.tables import (
 )
 
 
+def _materialize_node_bytes(node: dict[str, Any]) -> bytes:
+    """Return the byte representation for one virtual file node."""
+    node_type = node["type"]
+    if node_type == "bytes":
+        return bytes(node["data"])
+    if node_type == "obj":
+        return str(node["data"]).encode()
+    if node_type == "npy":
+        return array_to_npy(node["data"])
+    if node_type == "json":
+        return (
+            json.dumps(node["data"], default=_TableExport.json_default, indent=2) + "\n"
+        ).encode()
+    if node_type in {"scalar", "table"}:
+        return export_table(node["series"], node["format"])
+    if node_type == "binary":
+        return extract_binary_blob(node["entry"])
+    if node_type == "graph":
+        return _extract_graph_blob(node["entry"])
+    if node_type == "sidecar":
+        return bytes(node["entry"].source_path.read_bytes())
+    if node_type == "control":
+        return b""
+    raise fuse_error(EOPNOTSUPP)
+
+
+def _build_run_virtual_tree(
+    run: RunCache,
+    scalar_formats: tuple[str, ...],
+    step_digits: int,
+    *,
+    include_sidecars: bool = True,
+) -> dict[str, Any]:
+    """Return virtual tab directories and files for one TensorBoard run."""
+    run_node: dict[str, Any] = {"type": "dir", "children": {}}
+    for tab in FIXED_TABS:
+        run_node["children"].setdefault(tab, {"type": "dir", "children": {}})
+    _RunTree.add_run_files(
+        run_node,
+        run,
+        scalar_formats,
+        step_digits,
+        include_sidecars=include_sidecars,
+    )
+    return run_node
+
+
 @dataclass
 class _FsState:
     """Mutable TensorBoardFS cache state.
@@ -253,35 +300,14 @@ class TensorBoardFS:
             run_node = _Paths.mkdirs(root, run_parts)
             run_node["children"].setdefault(".cache", _FsNode.control_node())
             run_node["children"].setdefault(".in_memory", _FsNode.control_node())
-            for tab in FIXED_TABS:
-                run_node["children"].setdefault(tab, {"type": "dir", "children": {}})
-            _RunTree.add_run_files(run_node, run, self.scalar_formats, self.step_digits)
+            run_tree = _build_run_virtual_tree(
+                run, self.scalar_formats, self.step_digits
+            )
+            run_node["children"].update(run_tree["children"])
         return root
 
     def _node_bytes(self, node: dict[str, Any]) -> bytes:
-        node_type = node["type"]
-        if node_type == "bytes":
-            return bytes(node["data"])
-        if node_type == "obj":
-            return str(node["data"]).encode()
-        if node_type == "npy":
-            return array_to_npy(node["data"])
-        if node_type == "json":
-            return (
-                json.dumps(node["data"], default=_TableExport.json_default, indent=2)
-                + "\n"
-            ).encode()
-        if node_type in {"scalar", "table"}:
-            return export_table(node["series"], node["format"])
-        if node_type == "binary":
-            return extract_binary_blob(node["entry"])
-        if node_type == "graph":
-            return _extract_graph_blob(node["entry"])
-        if node_type == "sidecar":
-            return bytes(node["entry"].source_path.read_bytes())
-        if node_type == "control":
-            return b""
-        raise fuse_error(EOPNOTSUPP)
+        return _materialize_node_bytes(node)
 
     def _discover_runs(self, *, force: bool = False) -> None:
         now = time.time()
@@ -445,6 +471,8 @@ class _RunTree:
         run: RunCache,
         scalar_formats: tuple[str, ...],
         step_digits: int,
+        *,
+        include_sidecars: bool = True,
     ) -> None:
         """Populate one run directory with indexed virtual files."""
         _RunTree.add_scalar_files(run_node, run, scalar_formats)
@@ -458,7 +486,8 @@ class _RunTree:
         )
         _RunTree.add_json_files(run_node, run, step_digits, consumed)
         _RunTree.add_graph_files(run_node, run)
-        _RunTree.add_sidecar_files(run_node, run)
+        if include_sidecars:
+            _RunTree.add_sidecar_files(run_node, run)
 
     @staticmethod
     def add_scalar_files(

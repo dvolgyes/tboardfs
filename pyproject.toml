@@ -1,12 +1,26 @@
 [project]
 name = "tboardfs"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Read TensorBoard event logs as files through a FUSE filesystem."
 readme = "README.md"
 authors = [
     { name = "David Völgyes", email = "dvolgyes@deepconv.ai" }
 ]
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
+keywords = ["fuse", "tensorboard", "filesystem", "machine-learning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Filesystems",
+    "Typing :: Typed",
+]
 dependencies = [
     "click>=8.4.1",
     "loguru>=0.7.3",
@@ -20,6 +34,7 @@ dependencies = [
 
 [project.scripts]
 tboardfs = "tboardfs:main"
+tboardfs-file = "tboardfs.file_cli:main"
 
 [build-system]
 requires = ["uv_build>=0.11.18,<0.12.0"]
