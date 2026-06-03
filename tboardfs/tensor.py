@@ -1,4 +1,3 @@
-from io import BytesIO
 from typing import Any
 
 import numpy as np
@@ -44,22 +43,6 @@ def tensor_to_array(tensor: dict[str, Any]) -> np.ndarray:
     return _shape_array(np.asarray(values, dtype=np_dtype), tensor)
 
 
-def array_to_npy(data: np.ndarray) -> bytes:
-    """Serialize one array as a .npy payload."""
-    handle = BytesIO()
-    np.save(handle, data)
-    return handle.getvalue()
-
-
-def array_to_json(data: np.ndarray) -> dict[str, Any]:
-    """Return a JSON-safe array description."""
-    return {
-        "shape": list(data.shape),
-        "dtype": str(data.dtype),
-        "values": data.tolist(),
-    }
-
-
 def _shape_array(values: np.ndarray, tensor: dict[str, Any]) -> np.ndarray:
     shape = tensor.get("shape") or []
     if not shape:
@@ -82,6 +65,7 @@ class _TensorDType:
             1: np.dtype("<f4"),
             2: np.dtype("<f8"),
             3: np.dtype("<i4"),
+            4: np.dtype("u1"),
             9: np.dtype("<i8"),
             10: np.dtype("?"),
             22: np.dtype("<u4"),
@@ -98,6 +82,7 @@ class _TensorDType:
             1: "5",
             2: "6",
             3: "7",
+            4: "7",
             9: "10",
             10: "11",
             22: "16",

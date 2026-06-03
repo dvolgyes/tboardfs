@@ -26,6 +26,7 @@ from tboardfs.model import (
     RunCache,
     SidecarEntry,
 )
+from tboardfs.npy_export import array_to_npy
 from tboardfs.paths import (
     _Paths,
     find_tensorboard_files,
@@ -36,7 +37,6 @@ from tboardfs.tables import (
     _TableMerge,
     export_table,
 )
-from tboardfs.tensor import array_to_npy
 
 
 @dataclass

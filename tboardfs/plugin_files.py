@@ -1,14 +1,15 @@
-from io import BytesIO
 import time
 from typing import Any
 
 import numpy as np
 
-from tboardfs.mesh import box_mesh
+from tboardfs.array_json import array_to_json
+from tboardfs.custom_scalars import custom_scalar_layout_json
+from tboardfs.hparams import hparams_json
+from tboardfs.mesh import mesh_nodes
 from tboardfs.model import JsonEntry
 from tboardfs.paths import _Paths
-from tboardfs.tables import _TableExport
-from tboardfs.tensor import array_to_json, tensor_to_array
+from tboardfs.tensor import tensor_to_array
 
 
 def add_typed_plugin_files(
@@ -21,18 +22,18 @@ def add_typed_plugin_files(
     consumed: set[int] = set()
     _TypedPluginFiles.add_hparams(run_node, entries, scalars, consumed)
     _TypedPluginFiles.add_custom_scalars(run_node, entries, consumed)
+    _TypedPluginFiles.add_meshes(run_node, entries, step_digits, consumed)
     for entry in entries:
         marker = id(entry)
         if marker in consumed:
             continue
         if entry.tab == "pr_curves":
-            consumed.update(_TypedPluginFiles.add_tensor_table(run_node, entry, step_digits))
+            consumed.update(
+                _TypedPluginFiles.add_tensor_table(run_node, entry, step_digits)
+            )
         elif entry.tab == "tensors":
             consumed.update(_TypedPluginFiles.add_tensor(run_node, entry, step_digits))
-        elif entry.tab == "meshes":
-            consumed.update(_TypedPluginFiles.add_mesh(run_node, entry, step_digits))
-            consumed.add(marker)
-        elif entry.tab == "videos":
+        elif entry.tab == "meshes" or entry.tab == "videos":
             consumed.add(marker)
     return consumed
 
@@ -51,18 +52,14 @@ class _TypedPluginFiles:
         hparams = [entry for entry in entries if entry.tab == "hparams"]
         if not hparams:
             return
-        payload = {
-            "records": [_TypedPluginFiles.compact(entry.payload) for entry in hparams],
-            "metrics": {
-                tag: _TableExport.json_safe(series["value"][-1])
-                for tag, series in sorted(scalars.items())
-                if tag.startswith("hparam/")
-            },
-        }
         _TypedPluginFiles.add_file(
             run_node,
             ("hparams", "hparams.json"),
-            {"type": "json", "data": payload, "mtime": max(e.wall_time for e in hparams)},
+            {
+                "type": "json",
+                "data": hparams_json(hparams, scalars),
+                "mtime": max(e.wall_time for e in hparams),
+            },
         )
         consumed.update(id(entry) for entry in hparams)
 
@@ -74,11 +71,14 @@ class _TypedPluginFiles:
         layouts = [entry for entry in entries if entry.tab == "custom_scalars"]
         if not layouts:
             return
-        payload = {"layouts": [_TypedPluginFiles.compact(entry.payload) for entry in layouts]}
         _TypedPluginFiles.add_file(
             run_node,
             ("custom_scalars", "layout.json"),
-            {"type": "json", "data": payload, "mtime": max(e.wall_time for e in layouts)},
+            {
+                "type": "json",
+                "data": custom_scalar_layout_json(layouts),
+                "mtime": max(e.wall_time for e in layouts),
+            },
         )
         consumed.update(id(entry) for entry in layouts)
 
@@ -97,7 +97,12 @@ class _TypedPluginFiles:
             _TypedPluginFiles.add_file(
                 run_node,
                 (*rel, f"{step}.{fmt}"),
-                {"type": "table", "series": table, "format": fmt, "mtime": entry.wall_time},
+                {
+                    "type": "table",
+                    "series": table,
+                    "format": fmt,
+                    "mtime": entry.wall_time,
+                },
             )
         _TypedPluginFiles.add_file(
             run_node,
@@ -107,7 +112,9 @@ class _TypedPluginFiles:
         return {id(entry)}
 
     @staticmethod
-    def add_tensor(run_node: dict[str, Any], entry: JsonEntry, step_digits: int) -> set[int]:
+    def add_tensor(
+        run_node: dict[str, Any], entry: JsonEntry, step_digits: int
+    ) -> set[int]:
         """Add JSON and NPY views for one tensor record."""
         data = tensor_to_array(entry.payload.get("tensor") or {})
         if data.size == 0:
@@ -127,54 +134,17 @@ class _TypedPluginFiles:
         return {id(entry)}
 
     @staticmethod
-    def add_mesh(run_node: dict[str, Any], entry: JsonEntry, step_digits: int) -> set[int]:
-        """Add deterministic mesh fixture files."""
-        if not entry.payload.get("tensor"):
-            return set()
-        step = _Paths.step_name(entry.step, step_digits)
-        rel = ("meshes", "box")
-        mesh = box_mesh()
-        _TypedPluginFiles.add_file(
-            run_node,
-            (*rel, f"{step}.obj"),
-            {"type": "obj", "data": mesh["obj"], "mtime": entry.wall_time},
-        )
-        _TypedPluginFiles.add_file(
-            run_node,
-            (*rel, f"{step}.npz"),
-            {
-                "type": "bytes",
-                "data": _TypedPluginFiles.mesh_npz(mesh),
-                "mtime": entry.wall_time,
-            },
-        )
-        _TypedPluginFiles.add_file(
-            run_node,
-            (*rel, f"{step}.json"),
-            {"type": "json", "data": mesh["metadata"], "mtime": entry.wall_time},
-        )
-        return {id(entry)}
-
-    @staticmethod
-    def compact(payload: dict[str, Any]) -> dict[str, Any]:
-        """Return plugin metadata without nested tensor byte noise."""
-        compact = {key: value for key, value in payload.items() if key != "tensor"}
-        content = compact.get("plugin_content")
-        if isinstance(content, bytes):
-            compact["plugin_content"] = content.decode("utf-8", errors="replace")
-        return compact
-
-    @staticmethod
-    def mesh_npz(mesh: dict[str, Any]) -> bytes:
-        """Return one mesh component archive."""
-        handle = BytesIO()
-        np.savez(
-            handle,
-            vertices=mesh["vertices"],
-            faces=mesh["faces"],
-            colors=mesh["colors"],
-        )
-        return handle.getvalue()
+    def add_meshes(
+        run_node: dict[str, Any],
+        entries: list[JsonEntry],
+        step_digits: int,
+        consumed: set[int],
+    ) -> None:
+        """Add grouped mesh component archives."""
+        nodes, used = mesh_nodes(entries, step_digits)
+        for rel, node in nodes:
+            _TypedPluginFiles.add_file(run_node, rel, node)
+        consumed.update(used)
 
     @staticmethod
     def add_file(

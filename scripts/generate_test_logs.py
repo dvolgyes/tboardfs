@@ -2,6 +2,7 @@ from io import BytesIO
 import json
 from pathlib import Path
 import shutil
+from types import SimpleNamespace
 
 import imageio.v2 as imageio
 import matplotlib.pyplot as plt
@@ -17,6 +18,12 @@ from tensorboard.compat.proto import (
     tensor_shape_pb2,
     types_pb2,
 )
+from tensorboard.plugins.custom_scalar import layout_pb2
+from tensorboard.plugins.custom_scalar import metadata as custom_scalar_metadata
+from tensorboard.plugins.hparams import api_pb2 as hparams_api_pb2
+from tensorboard.plugins.hparams import summary_v2 as hparams_summary_v2
+from tensorboard.plugins.mesh import metadata as mesh_metadata
+from tensorboard.plugins.mesh import plugin_data_pb2 as mesh_plugin_data_pb2
 from tensorboard.summary.writer.event_file_writer import EventFileWriter
 from tensorboardX import SummaryWriter
 import torch
@@ -123,21 +130,7 @@ def main() -> None:
         )
         summary = summary_pb2.Summary(
             value=[
-                summary_pb2.Summary.Value(
-                    tag="box",
-                    tensor=tensor_pb2.TensorProto(
-                        dtype=types_pb2.DT_FLOAT,
-                        tensor_shape=tensor_shape_pb2.TensorShapeProto(
-                            dim=[tensor_shape_pb2.TensorShapeProto.Dim(size=1)]
-                        ),
-                        tensor_content=np.asarray([step], dtype="<f4").tobytes(),
-                    ),
-                    metadata=summary_pb2.SummaryMetadata(
-                        plugin_data=summary_pb2.SummaryMetadata.PluginData(
-                            plugin_name="mesh"
-                        )
-                    ),
-                ),
+                *_mesh_values("box"),
                 summary_pb2.Summary.Value(
                     tag="activations",
                     tensor=tensor_pb2.TensorProto(
@@ -173,17 +166,12 @@ def main() -> None:
             step=0,
             summary=summary_pb2.Summary(
                 value=[
-                    summary_pb2.Summary.Value(
-                        tag="session",
-                        metadata=summary_pb2.SummaryMetadata(
-                            plugin_data=summary_pb2.SummaryMetadata.PluginData(
-                                plugin_name="hparams",
-                                content=json.dumps(
-                                    {"optimizer": "sgd", "lr": 0.1}
-                                ).encode(),
-                            )
-                        ),
-                    )
+                    *_hparams_config_values(),
+                    *hparams_summary_v2.hparams_pb(
+                        {"optimizer": "sgd", "lr": 0.1},
+                        trial_id="tensorboardx-fixture",
+                        start_time_secs=WALL_TIME,
+                    ).value,
                 ]
             ),
         )
@@ -194,9 +182,12 @@ def main() -> None:
     tensorboard_dir = ROOT / "tensorboard"
     tensorboard_dir.mkdir(parents=True, exist_ok=True)
     raw = EventFileWriter(str(tensorboard_dir))
-    custom_scalars = json.dumps(
-        {"Metrics": {"loss_and_f1": ["Multiline", ["loss", "train/f1_score"]]}}
-    ).encode()
+    custom_scalars = layout_pb2.Layout()
+    category = custom_scalars.category.add()
+    category.title = "Metrics"
+    chart = category.chart.add()
+    chart.title = "loss_and_f1"
+    chart.multiline.tag.extend(["loss", "train/f1_score"])
     for index in range(3):
         step = index + 1
         wall_time = WALL_TIME + step
@@ -230,9 +221,6 @@ def main() -> None:
                 tensor_shape_pb2.TensorShapeProto.Dim(size=3),
                 tensor_shape_pb2.TensorShapeProto.Dim(size=4),
             ]
-        )
-        mesh_shape = tensor_shape_pb2.TensorShapeProto(
-            dim=[tensor_shape_pb2.TensorShapeProto.Dim(size=1)]
         )
         summary = summary_pb2.Summary(
             value=[
@@ -308,19 +296,7 @@ def main() -> None:
                         )
                     ),
                 ),
-                summary_pb2.Summary.Value(
-                    tag="box",
-                    tensor=tensor_pb2.TensorProto(
-                        dtype=types_pb2.DT_FLOAT,
-                        tensor_shape=mesh_shape,
-                        tensor_content=np.asarray([step], dtype="<f4").tobytes(),
-                    ),
-                    metadata=summary_pb2.SummaryMetadata(
-                        plugin_data=summary_pb2.SummaryMetadata.PluginData(
-                            plugin_name="mesh"
-                        )
-                    ),
-                ),
+                *_mesh_values("box"),
                 summary_pb2.Summary.Value(
                     tag="clip",
                     tensor=tensor_pb2.TensorProto(
@@ -356,24 +332,27 @@ def main() -> None:
             summary=summary_pb2.Summary(
                 value=[
                     summary_pb2.Summary.Value(
-                        tag="custom_scalars",
+                        tag=custom_scalar_metadata.CONFIG_SUMMARY_TAG,
+                        tensor=tensor_pb2.TensorProto(
+                            dtype=types_pb2.DT_STRING,
+                            string_val=[custom_scalars.SerializeToString()],
+                        ),
                         metadata=summary_pb2.SummaryMetadata(
                             plugin_data=summary_pb2.SummaryMetadata.PluginData(
-                                plugin_name="custom_scalars", content=custom_scalars
+                                plugin_name="custom_scalars"
                             )
                         ),
                     ),
+                    summary_pb2.Summary.Value(tag="hparam/loss", simple_value=0.2),
                     summary_pb2.Summary.Value(
-                        tag="session",
-                        metadata=summary_pb2.SummaryMetadata(
-                            plugin_data=summary_pb2.SummaryMetadata.PluginData(
-                                plugin_name="hparams",
-                                content=json.dumps(
-                                    {"optimizer": "adam", "lr": 0.01}
-                                ).encode(),
-                            )
-                        ),
+                        tag="hparam/f1_score", simple_value=0.875
                     ),
+                    *_hparams_config_values(),
+                    *hparams_summary_v2.hparams_pb(
+                        {"optimizer": "adam", "lr": 0.01},
+                        trial_id="tensorboard-fixture",
+                        start_time_secs=WALL_TIME,
+                    ).value,
                 ]
             ),
         )
@@ -414,7 +393,127 @@ def main() -> None:
                 {"traceEvents": [{"name": "step", "ph": "X", "ts": 1, "dur": 3}]},
                 indent=2,
             )
+            + "\n"
         )
+
+
+def _hparams_config_values() -> list[summary_pb2.Summary.Value]:
+    """Return TensorFlow-free hparams experiment config values."""
+    hparams = [
+        SimpleNamespace(
+            name="optimizer", description="", display_name="Optimizer", domain=None
+        ),
+        SimpleNamespace(
+            name="lr", description="", display_name="Learning rate", domain=None
+        ),
+    ]
+    metrics = [
+        SimpleNamespace(
+            as_proto=lambda: hparams_api_pb2.MetricInfo(
+                name=hparams_api_pb2.MetricName(tag="hparam/loss"),
+                display_name="Loss",
+            )
+        ),
+        SimpleNamespace(
+            as_proto=lambda: hparams_api_pb2.MetricInfo(
+                name=hparams_api_pb2.MetricName(tag="hparam/f1_score"),
+                display_name="F1 score",
+            )
+        ),
+    ]
+    return list(
+        hparams_summary_v2.hparams_config_pb(
+            hparams,
+            metrics,
+            time_created_secs=WALL_TIME,
+        ).value
+    )
+
+
+def _mesh_values(name: str) -> list[summary_pb2.Summary.Value]:
+    """Return TensorBoard-compatible mesh component summaries."""
+    vertices = np.asarray(
+        [
+            [-1.0, -1.0, -1.0],
+            [1.0, -1.0, -1.0],
+            [1.0, 1.0, -1.0],
+            [-1.0, 1.0, -1.0],
+            [-1.0, -1.0, 1.0],
+            [1.0, -1.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [-1.0, 1.0, 1.0],
+        ],
+        dtype="<f4",
+    )[None, :, :]
+    faces = np.asarray(
+        [
+            [0, 1, 2],
+            [0, 2, 3],
+            [4, 7, 6],
+            [4, 6, 5],
+            [0, 4, 5],
+            [0, 5, 1],
+            [1, 5, 6],
+            [1, 6, 2],
+            [2, 6, 7],
+            [2, 7, 3],
+            [3, 7, 4],
+            [3, 4, 0],
+        ],
+        dtype="<i4",
+    )[None, :, :]
+    colors = np.asarray(
+        [
+            [255, 0, 0],
+            [255, 128, 0],
+            [255, 255, 0],
+            [0, 255, 0],
+            [0, 255, 255],
+            [0, 0, 255],
+            [128, 0, 255],
+            [255, 0, 255],
+        ],
+        dtype=np.uint8,
+    )[None, :, :]
+    components = mesh_metadata.get_components_bitmask(
+        [
+            mesh_plugin_data_pb2.MeshPluginData.VERTEX,
+            mesh_plugin_data_pb2.MeshPluginData.FACE,
+            mesh_plugin_data_pb2.MeshPluginData.COLOR,
+        ]
+    )
+    values: list[summary_pb2.Summary.Value] = []
+    for data, dtype, content_type in (
+        (vertices, types_pb2.DT_FLOAT, mesh_plugin_data_pb2.MeshPluginData.VERTEX),
+        (faces, types_pb2.DT_INT32, mesh_plugin_data_pb2.MeshPluginData.FACE),
+        (colors, types_pb2.DT_UINT8, mesh_plugin_data_pb2.MeshPluginData.COLOR),
+    ):
+        shape = [int(dim) for dim in data.shape]
+        values.append(
+            summary_pb2.Summary.Value(
+                tag=mesh_metadata.get_instance_name(name, content_type),
+                tensor=tensor_pb2.TensorProto(
+                    dtype=dtype,
+                    tensor_shape=tensor_shape_pb2.TensorShapeProto(
+                        dim=[
+                            tensor_shape_pb2.TensorShapeProto.Dim(size=dim)
+                            for dim in shape
+                        ]
+                    ),
+                    tensor_content=data.tobytes(),
+                ),
+                metadata=mesh_metadata.create_summary_metadata(
+                    name,
+                    name,
+                    content_type,
+                    components,
+                    shape,
+                    description="Box mesh fixture",
+                    json_config="{}",
+                ),
+            ),
+        )
+    return values
 
 
 if __name__ == "__main__":

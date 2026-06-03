@@ -1,5 +1,8 @@
 import json
 from pathlib import Path
+from io import BytesIO
+
+import numpy as np
 
 from tboardfs import TensorBoardFS, find_tensorboard_files
 
@@ -54,10 +57,15 @@ def test_tensorboardx_fixture_exposes_clean_representations() -> None:
     assert "001.npy" in fs.readdir("/tensorboardx/pr_curves/quality/pr")
     assert "001.npy" in fs.readdir("/tensorboardx/tensors/activations")
     assert "layout.json" in fs.readdir("/tensorboardx/custom_scalars")
+    assert fs.readdir("/tensorboardx/custom_scalars") == [".", "..", "layout.json"]
     assert "metadata.tsv" in fs.readdir("/tensorboardx/projector")
     assert "trace.json" in fs.readdir("/tensorboardx/profile")
     assert "hparams.json" in fs.readdir("/tensorboardx/hparams")
+    hparams = json.loads(fs.read("/tensorboardx/hparams/hparams.json", 10000, 0))
+    assert hparams["session_start"]["hparams"]["optimizer"] == "sgd"
+    assert hparams["metrics"]["hparam/loss"] == 0.25
     assert not any(name[:1].isdigit() for name in fs.readdir("/tensorboardx"))
+    assert fs.readdir("/tensorboardx/plugins") == [".", ".."]
 
 
 def test_tensorboard_fixture_exposes_clean_representations() -> None:
@@ -93,11 +101,44 @@ def test_tensorboard_fixture_exposes_clean_representations() -> None:
     assert "graph.pb" in fs.readdir("/tensorboard/graphs")
     assert "metadata.tsv" in fs.readdir("/tensorboard/projector")
     assert "hparams.json" in fs.readdir("/tensorboard/hparams")
-    assert "001.npz" in fs.readdir("/tensorboard/meshes/box")
-    assert "001.obj" in fs.readdir("/tensorboard/meshes/box")
+    hparams = json.loads(fs.read("/tensorboard/hparams/hparams.json", 10000, 0))
+    assert [item["name"] for item in hparams["experiment"]["hparam_infos"]] == [
+        "optimizer",
+        "lr",
+    ]
+    assert hparams["session_start"]["hparams"] == {"lr": 0.01, "optimizer": "adam"}
+    assert hparams["metrics"]["hparam/f1_score"] == 0.875
+    mesh_files = fs.readdir("/tensorboard/meshes/box")
+    assert mesh_files == [
+        ".",
+        "..",
+        "001.json",
+        "001.npz",
+        "001.obj",
+        "002.json",
+        "002.npz",
+        "002.obj",
+        "003.json",
+        "003.npz",
+        "003.obj",
+    ]
+    mesh_archive = np.load(
+        BytesIO(fs.read("/tensorboard/meshes/box/001.npz", 10000, 0))
+    )
+    assert set(mesh_archive.files) == {"colors", "faces", "vertices"}
+    assert mesh_archive["vertices"].shape == (1, 8, 3)
+    assert mesh_archive["faces"].shape == (1, 12, 3)
+    assert mesh_archive["colors"].shape == (1, 8, 3)
     assert "001.npz" not in fs.readdir("/tensorboard/pr_curves/quality/pr")
     assert "001.npy" in fs.readdir("/tensorboard/pr_curves/quality/pr")
     assert "001.npy" in fs.readdir("/tensorboard/tensors/activations")
     assert "layout.json" in fs.readdir("/tensorboard/custom_scalars")
+    assert fs.readdir("/tensorboard/custom_scalars") == [".", "..", "layout.json"]
+    layout = json.loads(fs.read("/tensorboard/custom_scalars/layout.json", 10000, 0))
+    assert layout["category"][0]["chart"][0]["multiline"]["tag"] == [
+        "loss",
+        "train/f1_score",
+    ]
+    assert "loss.json" in fs.readdir("/tensorboard/scalars")
     assert "trace.json" in fs.readdir("/tensorboard/profile")
     assert fs.readdir("/tensorboard/plugins") == [".", ".."]
