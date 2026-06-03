@@ -8,7 +8,7 @@ Mount and inspect TensorBoard event logs as ordinary files.
 - Command mode inspects or copies the virtual content of one event file.
 
 Both modes use the same virtual paths for TensorBoard tabs such as `scalars`,
-`images`, `tensors`, `meshes`, `hparams`, and `custom_scalars`.
+`images`, `tensors`, `meshes`, `pr_curves`, `hparams`, and `custom_scalars`.
 
 ## Filesystem Mode
 
@@ -59,6 +59,14 @@ Extract one virtual file to disk:
 tboardfs-file get events.out.tfevents.123 /images/sample/000001.png -o sample.png
 ```
 
+The virtual path may be written with or without the leading `/`. If `-o` points
+to an existing directory, or to a missing path ending in `/`, `get` writes the
+virtual file basename inside that directory.
+
+```bash
+tboardfs-file get events.out.tfevents.123 scalars/loss.json -o exported/
+```
+
 Copy the full virtual tree:
 
 ```bash
@@ -70,16 +78,44 @@ Command mode exposes tab directories directly at the root, for example
 control files, and does not include sibling sidecars.
 
 `get` refuses to overwrite existing files unless `--force` is provided.
-`copy-all` checks for existing target conflicts before writing, and also
-requires `--force` to overwrite. After a successful copy, `copy-all` reports the
-number of copied files.
+`copy-all` copies files in deterministic virtual-path order. If it reaches an
+existing target without `--force`, it stops, reports how many files were already
+copied, lists those virtual paths, prints the conflicting output path, and
+suggests `--force`. After a successful copy, `copy-all` reports the number of
+copied files.
+
+## Supported Objects
+
+The virtual tree covers these TensorBoard objects:
+
+- Scalars: full-series `json`, `tsv`, and `npz` exports under `/scalars`.
+- Custom scalars: layout JSON under `/custom_scalars`.
+- Images: encoded image files under `/images`.
+- Audio: encoded audio files under `/audio`.
+- Videos: encoded video/GIF outputs under `/videos`, including raw subpaths
+  when present.
+- Histograms: per-step `json`, `tsv`, and `npz` exports under `/histograms`.
+- Distributions: per-step distribution tables under `/distributions`.
+- Text summaries: UTF-8 text files under `/text`.
+- Meshes: per-step `json`, `npz`, and Wavefront `obj` exports under `/meshes`.
+- PR curves: per-step `json`, `tsv`, and `npy` exports under `/pr_curves`.
+- HParams: merged experiment/session/metric JSON under `/hparams`.
+- Tensors: tensor arrays as `npy` plus compact JSON or native blob files under
+  `/tensors`.
+- Graphs: graph protobuf files under `/graphs`.
+- Projector and profile sidecars: available in filesystem mode under
+  `/projector` and `/profile`; command mode intentionally omits sibling
+  sidecar files because it operates on one event file.
+- Other plugin JSON payloads: exposed under `/plugins` when no typed tab handles
+  them.
 
 ## Output Rules
 
 `tboardfs-file list` prints virtual file paths to stdout, one per line.
 `tboardfs-file get -o -` writes raw bytes to stdout. Status, warnings, and
 errors go to stderr through Loguru/Click so stdout remains safe for pipelines.
-The `copy-all` file count is status output and is written to stderr.
+The `get` file-write summary, `copy-all` file count, copied-path conflict
+report, and overwrite hints are status output and are written to stderr.
 
 ## License
 

@@ -90,6 +90,55 @@ def test_file_cli_get_accepts_path_without_leading_slash(tmp_path: Path) -> None
     ).read_file("/scalars/loss.json")
 
 
+def test_file_cli_get_accepts_existing_output_directory(tmp_path: Path) -> None:
+    """get writes the virtual basename into an output directory."""
+    runner = CliRunner()
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    result = runner.invoke(
+        main,
+        [
+            "get",
+            str(FIXTURE_EVENT),
+            "/scalars/loss.json",
+            "-o",
+            str(outdir),
+            "--step-digits",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert outdir.joinpath("loss.json").read_bytes() == SingleEventTree(
+        FIXTURE_EVENT, step_digits=3
+    ).read_file("/scalars/loss.json")
+
+
+def test_file_cli_get_treats_trailing_slash_output_as_directory(
+    tmp_path: Path,
+) -> None:
+    """get creates a missing output directory when -o ends with a slash."""
+    runner = CliRunner()
+    outdir = tmp_path / "missing-dir"
+
+    result = runner.invoke(
+        main,
+        [
+            "get",
+            str(FIXTURE_EVENT),
+            "scalars/loss.json",
+            "-o",
+            str(outdir) + "/",
+            "--step-digits",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert outdir.joinpath("loss.json").is_file()
+
+
 def test_file_cli_get_stdout_writes_raw_bytes_only() -> None:
     """get -o - writes raw file data without status text."""
     runner = CliRunner()
@@ -140,23 +189,31 @@ def test_file_cli_get_rejects_missing_directory_and_existing_output(
     assert output.read_text() == "keep"
 
 
-def test_file_cli_copy_all_creates_tree_and_preflights_conflicts(
+def test_file_cli_copy_all_creates_tree_and_reports_conflicts(
     tmp_path: Path,
 ) -> None:
-    """copy-all preserves structure and avoids partial conflict writes."""
+    """copy-all preserves structure and reports partial conflict writes."""
     runner = CliRunner()
     outdir = tmp_path / "out"
+    virtual_paths = SingleEventTree(FIXTURE_EVENT, step_digits=3).list_file_paths()
 
     first = runner.invoke(
         main, ["copy-all", str(FIXTURE_EVENT), str(outdir), "--step-digits", "3"]
     )
-    expected_count = len(
-        SingleEventTree(FIXTURE_EVENT, step_digits=3).list_file_paths()
-    )
+    expected_count = len(virtual_paths)
     original = outdir.joinpath("scalars", "loss.json").read_bytes()
-    outdir.joinpath("meshes", "box", "001.obj").write_text("conflict")
+    conflict_target = _target_for_virtual_path(tmp_path / "conflict", virtual_paths[1])
+    conflict_target.parent.mkdir(parents=True)
+    conflict_target.write_text("conflict")
     second = runner.invoke(
-        main, ["copy-all", str(FIXTURE_EVENT), str(outdir), "--step-digits", "3"]
+        main,
+        [
+            "copy-all",
+            str(FIXTURE_EVENT),
+            str(tmp_path / "conflict"),
+            "--step-digits",
+            "3",
+        ],
     )
     forced = runner.invoke(
         main,
@@ -175,7 +232,10 @@ def test_file_cli_copy_all_creates_tree_and_preflights_conflicts(
     assert f"copied {expected_count} files" in first.stderr
     assert first.stdout == ""
     assert second.exit_code != 0
+    assert "Copied successfully: 1 files" in second.stderr
+    assert virtual_paths[0] in second.stderr
     assert "output already exists" in second.output
+    assert "Use --force for forced overwriting." in second.stderr
     assert outdir.joinpath("scalars", "loss.json").read_bytes() == original
     assert forced.exit_code == 0
     assert "\nv " in outdir.joinpath("meshes", "box", "001.obj").read_text()
@@ -209,6 +269,9 @@ def test_metadata_and_readme_document_both_access_modes() -> None:
     assert "tboardfs-file list" in readme
     assert "tboardfs-file get" in readme
     assert "tboardfs-file copy-all" in readme
+    assert "/pr_curves" in readme
+    assert "/projector" in readme
+    assert "/profile" in readme
 
 
 def _filesystem_file_paths(fs: TensorBoardFS, path: str) -> list[str]:
@@ -224,3 +287,7 @@ def _filesystem_file_paths(fs: TensorBoardFS, path: str) -> list[str]:
         else:
             paths.extend(_filesystem_file_paths(fs, child))
     return sorted(paths)
+
+
+def _target_for_virtual_path(outdir: Path, virtual_path: str) -> Path:
+    return outdir.joinpath(*virtual_path.lstrip("/").split("/"))

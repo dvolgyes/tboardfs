@@ -8,6 +8,22 @@ from tboardfs.model import RunCache
 from tboardfs.paths import _Paths
 
 
+class _CopyConflictError(FileExistsError):
+    """File copy conflict with the successful virtual paths so far.
+
+    :ivar copied_paths: virtual paths copied before the conflict
+    :ivar target: filesystem path that already exists
+    """
+
+    copied_paths: list[str]
+    target: Path
+
+    def __init__(self, target: Path, copied_paths: list[str]) -> None:
+        super().__init__(str(target))
+        self.target = target
+        self.copied_paths = copied_paths
+
+
 class SingleEventTree:
     """Expose one event file through the shared virtual tree implementation.
 
@@ -57,12 +73,14 @@ class SingleEventTree:
         outdir_path = Path(outdir)
         paths = self._iter_file_parts(self.tree, ())
         targets = [(path, outdir_path.joinpath(*path)) for path in paths]
-        conflicts = [target for _, target in targets if target.exists() and not force]
-        if conflicts:
-            raise FileExistsError(str(conflicts[0]))
+        copied_paths: list[str] = []
         for path, target in targets:
+            virtual_path = _Paths.join_path(path)
+            if target.exists() and not force:
+                raise _CopyConflictError(target, copied_paths)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(_materialize_node_bytes(self._lookup_parts(path)))
+            copied_paths.append(virtual_path)
         return len(paths)
 
     def _lookup_path(self, path: str) -> dict[str, Any]:
