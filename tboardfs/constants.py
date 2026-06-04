@@ -6,6 +6,10 @@ LARGE_TENSOR_THRESHOLD = 1024
 SCALAR_COLUMNS = ("epoch", "step", "wall_time", "relative_time", "value")
 DEFAULT_SCALAR_FORMATS = ("json", "tsv", "npz")
 CONTROL_FILES = (".cache", ".in_memory")
+LOG_FORMAT = (
+    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+    "<level>{level}</level> | <level>{message}</level>"
+)
 
 FIXED_TABS = (
     "scalars",

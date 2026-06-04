@@ -315,7 +315,7 @@ def test_metadata_and_readme_document_both_access_modes() -> None:
     project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
     readme = Path("README.md").read_text()
 
-    assert project["version"] == "0.2.2"
+    assert project["version"] == "0.2.3"
     assert project["license"] == "MIT"
     assert project["scripts"]["tboardfs"] == "tboardfs:main"
     assert project["scripts"]["tboardfs-file"] == "tboardfs.file_cli:main"

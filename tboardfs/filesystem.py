@@ -408,8 +408,11 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             logger.info(message, *args)
 
     def _refresh_runs(self, *, force: bool = False) -> None:
+        refreshed = False
         for run in list(self._state.runs.values()):
-            self._refresh_run(run, force=force)
+            refreshed = self._refresh_run(run, force=force) or refreshed
+        if refreshed:
+            self._log("finished parsing TensorBoard files")
 
     def _cached_tree(self) -> dict[str, Any]:
         if (

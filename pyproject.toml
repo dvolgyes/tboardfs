@@ -1,6 +1,6 @@
 [project]
 name = "tboardfs"
-version = "0.2.2"
+version = "0.2.3"
 description = "Read TensorBoard event logs as files through a FUSE filesystem."
 readme = "README.md"
 authors = [

@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python: >=3.12](https://img.shields.io/badge/python-%3E=3.12-blue.svg)](https://www.python.org/)
-[![Version: 0.2.2](https://img.shields.io/badge/version-0.2.2-orange.svg)](https://pypi.org/project/tboardfs/)
+[![Version: 0.2.3](https://img.shields.io/badge/version-0.2.3-orange.svg)](https://pypi.org/project/tboardfs/)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-yellow.svg)](https://pypi.org/project/tboardfs/)
 
 Mount and inspect TensorBoard event logs as ordinary files.

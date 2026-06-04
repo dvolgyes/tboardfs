@@ -6,6 +6,7 @@ import click
 from loguru import logger
 from mfusepy import FUSE, Operations
 
+from tboardfs.constants import LOG_FORMAT
 from tboardfs.filesystem import TensorBoardFS
 
 
@@ -22,10 +23,10 @@ def main(
     **params: object,
 ) -> None:
     """Mount TensorBoard logs as a read-only virtual filesystem."""
-    source_path = Path(cast(str, params["source"]))
-    mountpoint_path = Path(cast(str, params["mountpoint"]))
+    source_path = Path(cast(str, params["source"])).resolve()
+    mountpoint_path = Path(cast(str, params["mountpoint"])).resolve()
     logfile = cast(str | None, params["logfile"])
-    logfile_path = Path(logfile) if logfile is not None else None
+    logfile_path = Path(logfile).resolve() if logfile is not None else None
     loglevel = cast(str, params["loglevel"])
     foreground = cast(bool, params["foreground"])
     _configure_logging(logfile_path, loglevel, foreground)
@@ -53,8 +54,6 @@ def _configure_logging(logfile: Path | None, loglevel: str, foreground: bool) ->
     """Configure loguru output for the CLI."""
     logger.remove()
     if foreground:
-        logger.add(
-            sys.stderr, level=loglevel.upper(), format="<level>{message}</level>"
-        )
+        logger.add(sys.stderr, level=loglevel.upper(), format=LOG_FORMAT)
     if logfile is not None:
-        logger.add(logfile, level=loglevel.upper())
+        logger.add(logfile, level=loglevel.upper(), format=LOG_FORMAT)
