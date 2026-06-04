@@ -4,10 +4,11 @@
   <a href="https://github.com/dvolgyes/tboardfs/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/dvolgyes/tboardfs/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="https://coveralls.io/github/dvolgyes/tboardfs?branch=main"><img alt="Coverage Status" src="https://coveralls.io/repos/github/dvolgyes/tboardfs/badge.svg?branch=main" /></a>
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green.svg" /></a>
-  <a href="https://www.python.org/"><img alt="Python: >=3.12" src="https://img.shields.io/badge/python-%3E=3.12-blue.svg" /></a>
   <a href="https://pypi.org/project/tboardfs/"><img alt="Version: 0.2.3" src="https://img.shields.io/badge/version-0.2.3-orange.svg" /></a>
   <a href="https://pypi.org/project/tboardfs/"><img alt="Status: Alpha" src="https://img.shields.io/badge/status-alpha-yellow.svg" /></a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green.svg" /></a>
+  <a href="https://www.python.org/"><img alt="Python: >=3.12" src="https://img.shields.io/badge/python-%3E=3.12-blue.svg" /></a>
 </p>
 
 Mount and inspect TensorBoard event logs as ordinary files.
