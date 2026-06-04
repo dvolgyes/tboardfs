@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,4 +37,9 @@ jobs:
         run: uv sync --locked --dev
 
       - name: Run tests
-        run: uv run pytest -n 8 --cov
+        run: uv run pytest -n 8 --cov --cov-report=term --cov-report=xml:coverage.xml
+
+      - name: Upload coverage to Coveralls
+        run: uv run coveralls
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
