@@ -1,3 +1,13 @@
+# Script Dependencies:
+#   imageio>=2.37.3,<3.0
+#   matplotlib>=3.10.9,<4.0
+#   moviepy>=2.2.1,<3.0
+#   numpy>=2.4.6,<3.0
+#   pillow>=11.3.0,<12.0
+#   soundfile>=0.13.1,<1.0
+#   tensorboard>=2.20.0,<3.0
+#   tensorboardx>=2.6.5,<3.0
+#   torch>=2.12.0,<3.0
 from io import BytesIO
 import json
 from pathlib import Path

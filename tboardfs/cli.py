@@ -15,7 +15,7 @@ from tboardfs.filesystem import TensorBoardFS
 @click.option("--step-digits", type=int, default=6, show_default=True)
 @click.option("--refresh-age-seconds", type=float, default=60.0, show_default=True)
 @click.option("--scalar-format", default="json,tsv,npz", show_default=True)
-@click.option("--foreground/--background", default=True, show_default=True)
+@click.option("--foreground/--background", default=False, show_default=True)
 @click.option("--logfile", type=click.Path(dir_okay=False))
 @click.option("--loglevel", default="INFO", show_default=True)
 def main(
@@ -29,6 +29,11 @@ def main(
     loglevel = cast(str, params["loglevel"])
     foreground = cast(bool, params["foreground"])
     _configure_logging(logfile_path, loglevel, foreground)
+    if foreground:
+        logger.info(
+            "background mode is usually preferred; foreground mode is recommended "
+            "only for testing"
+        )
     logger.info("mounting {} at {}", source_path, mountpoint_path)
 
     class MountedTensorBoardFS(TensorBoardFS, Operations):  # type: ignore[misc]
