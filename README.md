@@ -4,6 +4,8 @@
 [![Python: >=3.12](https://img.shields.io/badge/python-%3E=3.12-blue.svg)](https://www.python.org/)
 [![Version: 0.2.3](https://img.shields.io/badge/version-0.2.3-orange.svg)](https://pypi.org/project/tboardfs/)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-yellow.svg)](https://pypi.org/project/tboardfs/)
+[![CI](https://github.com/dvolgyes/tboardfs/actions/workflows/ci.yml/badge.svg)](https://github.com/dvolgyes/tboardfs/actions/workflows/ci.yml)
+[![Coverage Status](https://coveralls.io/repos/github/dvolgyes/tboardfs/badge.svg?branch=main)](https://coveralls.io/github/dvolgyes/tboardfs?branch=main)
 
 Mount and inspect TensorBoard event logs as ordinary files.
 
@@ -142,3 +144,20 @@ so stdout remains safe for pipelines.
 ## License
 
 MIT
+
+## Star History
+
+<picture>
+  <source
+    media="(prefers-color-scheme: dark)"
+    srcset="https://api.star-history.com/svg?repos=dvolgyes/tboardfs&type=Date&theme=dark"
+  />
+  <source
+    media="(prefers-color-scheme: light)"
+    srcset="https://api.star-history.com/svg?repos=dvolgyes/tboardfs&type=Date"
+  />
+  <img
+    alt="Star History Chart"
+    src="https://api.star-history.com/svg?repos=dvolgyes/tboardfs&type=Date"
+  />
+</picture>
