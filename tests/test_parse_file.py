@@ -8,6 +8,8 @@ import pytest
 
 from tboardfs import FIXED_TABS, TensorBoardFS, find_tensorboard_files, parse_file
 from tboardfs.classify import detect_extension
+from tboardfs.proto import event_pb2
+from tboardfs.summary import parse_event
 from tboardfs.tables import export_table
 
 
@@ -89,6 +91,30 @@ def _event(wall_time: float, step: int, values: list[bytes]) -> bytes:
 
 def _record(payload: bytes) -> bytes:
     return struct.pack("<Q", len(payload)) + b"\0\0\0\0" + payload + b"\0\0\0\0"
+
+
+def _event_record(
+    wall_time: float,
+    step: int,
+    values: list[object],
+) -> bytes:
+    Event = getattr(event_pb2, "Event")
+    Summary = getattr(event_pb2, "Summary")
+    return _record(
+        Event(
+            wall_time=wall_time,
+            step=step,
+            summary=Summary(value=values),
+        ).SerializeToString()
+    )
+
+
+def _tensor_value(tag: str, dtype: int, field_name: str, value: int) -> object:
+    SummaryValue = getattr(event_pb2, "SummaryValue")
+    TensorProto = getattr(event_pb2, "TensorProto")
+    tensor = TensorProto(dtype=dtype)
+    getattr(tensor, field_name).append(value)
+    return SummaryValue(tag=tag, tensor=tensor)
 
 
 def test_find_tensorboard_files_recurses_and_returns_paths(tmp_path: Path) -> None:
@@ -237,6 +263,59 @@ def test_parse_file_reads_integer_tensor_scalars(tmp_path: Path) -> None:
 
     np.testing.assert_array_equal(count["step"], np.array([9]))
     np.testing.assert_array_equal(count["value"], np.array([42], dtype=np.int32))
+
+
+def test_parse_event_reads_negative_integer_tensors_as_signed_values() -> None:
+    """Vendored protobuf parsing returns signed Python integers."""
+    Event = getattr(event_pb2, "Event")
+    Summary = getattr(event_pb2, "Summary")
+    event = Event(
+        wall_time=5.0,
+        step=9,
+        summary=Summary(
+            value=[
+                _tensor_value("neg_int32", 3, "int_val", -42),
+                _tensor_value("neg_int64", 9, "int64_val", -(2**40)),
+            ]
+        ),
+    )
+
+    parsed = parse_event(event.SerializeToString())
+    int32_values = parsed["values"][0]["tensor"]["values"]
+    int64_values = parsed["values"][1]["tensor"]["values"]
+
+    assert int32_values[7] == [-42]
+    assert int64_values[10] == [-(2**40)]
+
+
+@pytest.mark.parametrize(
+    ("tag", "dtype", "field_name", "expected", "expected_dtype"),
+    [
+        ("neg_int32", 3, "int_val", -42, np.dtype("int32")),
+        ("neg_int64", 9, "int64_val", -(2**40), np.dtype("int64")),
+    ],
+)
+def test_parse_file_reads_negative_integer_tensor_scalars(
+    tmp_path: Path,
+    tag: str,
+    dtype: int,
+    field_name: str,
+    expected: int,
+    expected_dtype: np.dtype,
+) -> None:
+    """Negative integer tensor values parse as signed scalar series."""
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(
+        _event_record(5.0, 9, [_tensor_value(tag, dtype, field_name, expected)])
+    )
+
+    result = parse_file(path)
+    scalar = result["scalars"][tag]
+
+    assert scalar["value"].dtype == expected_dtype
+    np.testing.assert_array_equal(
+        scalar["value"], np.array([expected], dtype=expected_dtype)
+    )
 
 
 def test_parse_file_reads_tensor_content_scalar(tmp_path: Path) -> None:

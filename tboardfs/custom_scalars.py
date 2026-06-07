@@ -4,7 +4,7 @@ from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import DecodeError
 
 from tboardfs.model import JsonEntry
-from tboardfs.proto_schema import protobuf_message_from_bytes
+from tboardfs.proto_schema import _ProtoParser
 
 
 def custom_scalar_layout_json(entries: list[JsonEntry]) -> dict[str, Any]:
@@ -16,7 +16,7 @@ def custom_scalar_layout_json(entries: list[JsonEntry]) -> dict[str, Any]:
             if not isinstance(blob, bytes):
                 continue
             try:
-                layout = protobuf_message_from_bytes(blob, "tensorboard.Layout")
+                layout = _ProtoParser.custom_scalar_layout(blob)
             except DecodeError:
                 continue
             return cast(

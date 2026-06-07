@@ -21,15 +21,17 @@ def test_generated_logs_include_both_producers() -> None:
 
 
 def test_runtime_filesystem_does_not_import_tensorboard() -> None:
-    """Production import and filesystem parsing do not require TensorBoard."""
+    """Production import and filesystem parsing do not require forbidden stacks."""
     script = """
 import builtins
 from pathlib import Path
+import sys
 
 real_import = builtins.__import__
+FORBIDDEN = {"tensorboard", "tensorboardX", "tensorboardx", "tensorflow"}
 
 def blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
-    if name == "tensorboard" or name.startswith("tensorboard."):
+    if name.split(".", maxsplit=1)[0] in FORBIDDEN:
         raise ModuleNotFoundError(name)
     return real_import(name, globals, locals, fromlist, level)
 
@@ -41,6 +43,14 @@ fs = TensorBoardFS(Path("test-logs"), step_digits=3)
 assert "layout.json" in fs.readdir("/tensorboard/custom_scalars")
 assert "hparams.json" in fs.readdir("/tensorboard/hparams")
 assert "001.npz" in fs.readdir("/tensorboard/meshes/box")
+assert "layout.json" in fs.readdir("/tensorboardx/custom_scalars")
+assert "hparams.json" in fs.readdir("/tensorboardx/hparams")
+assert "001.npz" in fs.readdir("/tensorboardx/meshes/box")
+assert not any(
+    module == root or module.startswith(root + ".")
+    for module in sys.modules
+    for root in FORBIDDEN
+)
 """
 
     subprocess.run(

@@ -30,17 +30,7 @@ def tensor_to_array(tensor: dict[str, Any]) -> np.ndarray:
     raw_values = all_values.get(field, all_values.get(int(field), []))
     if not isinstance(raw_values, list):
         return np.asarray([], dtype=np_dtype)
-    values: list[Any]
-    if dtype == 3:
-        int_values: list[int] = []
-        for value in raw_values:
-            if not isinstance(value, int):
-                return np.asarray([], dtype=np_dtype)
-            int_values.append(_Decode.signed_int32(value))
-        values = int_values
-    else:
-        values = raw_values
-    return _shape_array(np.asarray(values, dtype=np_dtype), tensor)
+    return _shape_array(np.asarray(raw_values, dtype=np_dtype), tensor)
 
 
 def _shape_array(values: np.ndarray, tensor: dict[str, Any]) -> np.ndarray:

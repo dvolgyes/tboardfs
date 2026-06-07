@@ -5,7 +5,7 @@ from google.protobuf.struct_pb2 import Value
 import numpy as np
 
 from tboardfs.model import JsonEntry
-from tboardfs.proto_schema import protobuf_message_from_bytes
+from tboardfs.proto_schema import _ProtoParser
 from tboardfs.tables import _TableExport
 
 
@@ -41,10 +41,7 @@ def _parse_hparams(entry: JsonEntry) -> dict[str, Any]:
     content = entry.payload.get("plugin_content")
     if not isinstance(content, bytes):
         return {}
-    data = cast(
-        Any,
-        protobuf_message_from_bytes(content, "tensorboard.hparams.HParamsPluginData"),
-    )
+    data = cast(Any, _ProtoParser.hparams_plugin_data(content))
     out: dict[str, Any] = {}
     if data.HasField("experiment"):
         out["experiment"] = cast(

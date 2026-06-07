@@ -42,3 +42,16 @@ def test_dev_dependencies_do_not_include_fixture_generation_stack() -> None:
     }
 
     assert fixture_dependency_names.isdisjoint(dev_dependencies)
+
+
+def test_runtime_dependencies_do_not_include_forbidden_protobuf_stacks() -> None:
+    """Runtime dependencies avoid TensorBoard and TensorFlow packages."""
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+    runtime_dependencies = {
+        dependency.split(">=", maxsplit=1)[0].lower()
+        for dependency in pyproject["project"]["dependencies"]
+    }
+
+    assert {"tensorboard", "tensorboardx", "tensorflow"}.isdisjoint(
+        runtime_dependencies
+    )

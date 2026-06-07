@@ -49,9 +49,9 @@ class _Classifier:
         if dtype == 2 and values.get(6):
             return Scalar(values[6][0], np.dtype("float64"))
         if dtype == 3 and values.get(7):
-            return Scalar(_Decode.signed_int32(values[7][0]), np.dtype("int32"))
+            return Scalar(values[7][0], np.dtype("int32"))
         if dtype == 9 and values.get(10):
-            return Scalar(_Decode.signed_int64(values[10][0]), np.dtype("int64"))
+            return Scalar(values[10][0], np.dtype("int64"))
         if dtype == 10 and values.get(11):
             return Scalar(values[11][0], np.dtype("bool"))
         if dtype == 22 and values.get(16):

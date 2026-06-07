@@ -5,7 +5,7 @@ import numpy as np
 
 from tboardfs.model import JsonEntry
 from tboardfs.paths import _Paths
-from tboardfs.proto_schema import protobuf_message_from_bytes
+from tboardfs.proto_schema import _ProtoParser
 from tboardfs.tensor import tensor_to_array
 
 _MESH_COLOR = 3
@@ -28,10 +28,7 @@ def mesh_nodes(
         data = tensor_to_array(entry.payload.get("tensor") or {})
         if not isinstance(content, bytes) or data.size == 0:
             continue
-        metadata = cast(
-            Any,
-            protobuf_message_from_bytes(content, "tensorboard.mesh.MeshPluginData"),
-        )
+        metadata = cast(Any, _ProtoParser.mesh_plugin_data(content))
         if getattr(metadata, "content_type") == _MESH_UNDEFINED:
             continue
         group_key = (metadata.name or entry.tag.rsplit("_", 1)[0], int(entry.step))

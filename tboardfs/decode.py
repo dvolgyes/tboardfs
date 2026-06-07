@@ -10,22 +10,6 @@ class _Decode:
         return data.decode("utf-8", errors="replace")
 
     @staticmethod
-    def signed_int32(value: int) -> int:
-        """Decode a protobuf int32 stored in unsigned two's-complement form."""
-        value &= 0xFFFFFFFF
-        if value >= 0x80000000:
-            return value - 0x100000000
-        return value
-
-    @staticmethod
-    def signed_int64(value: int) -> int:
-        """Decode a protobuf int64 stored in unsigned two's-complement form."""
-        value &= 0xFFFFFFFFFFFFFFFF
-        if value >= 0x8000000000000000:
-            return value - 0x10000000000000000
-        return value
-
-    @staticmethod
     def all_ints(values: list[object]) -> bool:
         """Return true when all values are plain Python integers."""
         return all(

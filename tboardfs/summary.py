@@ -1,10 +1,10 @@
 from typing import Any, cast
 
-from tboardfs.proto_schema import protobuf_message_from_bytes
+from tboardfs.proto_schema import _ProtoParser
 
 
 def parse_event(data: bytes) -> dict[str, Any]:
-    """Parse a TensorBoard Event protobuf with the local raw protobuf schema."""
+    """Parse a TensorBoard Event protobuf with vendored protobuf classes."""
     return _SummaryParser.parse_event(data)
 
 
@@ -14,7 +14,7 @@ class _SummaryParser:
     @staticmethod
     def parse_event(data: bytes) -> dict[str, Any]:
         """Parse one Event protobuf payload."""
-        event_message = cast(Any, protobuf_message_from_bytes(data, "tensorflow.Event"))
+        event_message = cast(Any, _ProtoParser.event(data))
         event: dict[str, Any] = {}
         if event_message.HasField("wall_time"):
             event["wall_time"] = event_message.wall_time
