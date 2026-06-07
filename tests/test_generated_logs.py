@@ -62,8 +62,8 @@ assert not any(
     )
 
 
-def test_tensorboardx_fixture_exposes_clean_representations() -> None:
-    """TensorBoardX fixtures expose typed virtual files."""
+def test_tensorboardx_scalars_and_tables_expose_clean_representations() -> None:
+    """TensorBoardX scalar and table fixtures expose typed virtual files."""
     fs = TensorBoardFS(FIXTURE_ROOT, step_digits=3)
 
     assert fs.readdir("/tensorboardx/scalars/train")[-3:] == [
@@ -76,6 +76,15 @@ def test_tensorboardx_fixture_exposes_clean_representations() -> None:
     loss_rows = json.loads(fs.read("/tensorboardx/scalars/loss.json", 10000, 0))
     assert [row["step"] for row in loss_rows] == [1, 2, 3]
     assert [row["epoch"] for row in loss_rows] == [0.0, 1.0, 2.0]
+    assert "001.npz" not in fs.readdir("/tensorboardx/pr_curves/quality/pr")
+    assert "001.npy" in fs.readdir("/tensorboardx/pr_curves/quality/pr")
+    assert "001.npy" in fs.readdir("/tensorboardx/tensors/activations")
+
+
+def test_tensorboardx_media_exposes_clean_representations() -> None:
+    """TensorBoardX media fixtures expose typed virtual files."""
+    fs = TensorBoardFS(FIXTURE_ROOT, step_digits=3)
+
     assert fs.readdir("/tensorboardx/histograms/weights")[-3:] == [
         "003.json",
         "003.npz",
@@ -97,9 +106,12 @@ def test_tensorboardx_fixture_exposes_clean_representations() -> None:
         "003.npz",
         "003.obj",
     ]
-    assert "001.npz" not in fs.readdir("/tensorboardx/pr_curves/quality/pr")
-    assert "001.npy" in fs.readdir("/tensorboardx/pr_curves/quality/pr")
-    assert "001.npy" in fs.readdir("/tensorboardx/tensors/activations")
+
+
+def test_tensorboardx_metadata_plugins_expose_clean_representations() -> None:
+    """TensorBoardX metadata plugins expose typed virtual files."""
+    fs = TensorBoardFS(FIXTURE_ROOT, step_digits=3)
+
     assert "layout.json" in fs.readdir("/tensorboardx/custom_scalars")
     assert fs.readdir("/tensorboardx/custom_scalars") == [".", "..", "layout.json"]
     assert "metadata.tsv" in fs.readdir("/tensorboardx/projector")
@@ -112,8 +124,8 @@ def test_tensorboardx_fixture_exposes_clean_representations() -> None:
     assert fs.readdir("/tensorboardx/plugins") == [".", ".."]
 
 
-def test_tensorboard_fixture_exposes_clean_representations() -> None:
-    """Raw TensorBoard fixtures expose typed virtual files."""
+def test_tensorboard_scalars_and_media_expose_clean_representations() -> None:
+    """Raw TensorBoard scalar and media fixtures expose typed files."""
     fs = TensorBoardFS(FIXTURE_ROOT, step_digits=3)
 
     f1_rows = json.loads(fs.read("/tensorboard/scalars/train/f1_score.json", 10000, 0))
@@ -143,6 +155,14 @@ def test_tensorboard_fixture_exposes_clean_representations() -> None:
     assert "001.tsv" in fs.readdir("/tensorboard/histograms/weights")
     assert "001.tsv" in fs.readdir("/tensorboard/distributions/weights")
     assert "graph.pb" in fs.readdir("/tensorboard/graphs")
+    assert "loss.json" in fs.readdir("/tensorboard/scalars")
+    assert "trace.json" in fs.readdir("/tensorboard/profile")
+
+
+def test_tensorboard_hparams_expose_clean_representations() -> None:
+    """Raw TensorBoard hparams fixtures expose typed virtual files."""
+    fs = TensorBoardFS(FIXTURE_ROOT, step_digits=3)
+
     assert "metadata.tsv" in fs.readdir("/tensorboard/projector")
     assert "hparams.json" in fs.readdir("/tensorboard/hparams")
     hparams = json.loads(fs.read("/tensorboard/hparams/hparams.json", 10000, 0))
@@ -152,6 +172,26 @@ def test_tensorboard_fixture_exposes_clean_representations() -> None:
     ]
     assert hparams["session_start"]["hparams"] == {"lr": 0.01, "optimizer": "adam"}
     assert hparams["metrics"]["hparam/f1_score"] == 0.875
+
+
+def test_tensorboard_custom_scalars_expose_clean_representations() -> None:
+    """Raw TensorBoard custom scalars expose typed virtual files."""
+    fs = TensorBoardFS(FIXTURE_ROOT, step_digits=3)
+
+    assert "layout.json" in fs.readdir("/tensorboard/custom_scalars")
+    assert fs.readdir("/tensorboard/custom_scalars") == [".", "..", "layout.json"]
+    layout = json.loads(fs.read("/tensorboard/custom_scalars/layout.json", 10000, 0))
+    assert layout["category"][0]["chart"][0]["multiline"]["tag"] == [
+        "loss",
+        "train/f1_score",
+    ]
+    assert fs.readdir("/tensorboard/plugins") == [".", ".."]
+
+
+def test_tensorboard_meshes_expose_clean_representations() -> None:
+    """Raw TensorBoard mesh fixtures expose typed virtual files."""
+    fs = TensorBoardFS(FIXTURE_ROOT, step_digits=3)
+
     mesh_files = fs.readdir("/tensorboard/meshes/box")
     assert mesh_files == [
         ".",
@@ -176,13 +216,3 @@ def test_tensorboard_fixture_exposes_clean_representations() -> None:
     assert "001.npz" not in fs.readdir("/tensorboard/pr_curves/quality/pr")
     assert "001.npy" in fs.readdir("/tensorboard/pr_curves/quality/pr")
     assert "001.npy" in fs.readdir("/tensorboard/tensors/activations")
-    assert "layout.json" in fs.readdir("/tensorboard/custom_scalars")
-    assert fs.readdir("/tensorboard/custom_scalars") == [".", "..", "layout.json"]
-    layout = json.loads(fs.read("/tensorboard/custom_scalars/layout.json", 10000, 0))
-    assert layout["category"][0]["chart"][0]["multiline"]["tag"] == [
-        "loss",
-        "train/f1_score",
-    ]
-    assert "loss.json" in fs.readdir("/tensorboard/scalars")
-    assert "trace.json" in fs.readdir("/tensorboard/profile")
-    assert fs.readdir("/tensorboard/plugins") == [".", ".."]

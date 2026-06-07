@@ -8,7 +8,7 @@ from tboardfs.file_cli import main
 from tboardfs.file_tree import SingleEventTree
 
 
-FIXTURE_EVENT = sorted(find_tensorboard_files(Path("test-logs") / "tensorboard"))[0]
+FIXTURE_EVENT = min(find_tensorboard_files(Path("test-logs") / "tensorboard"))
 
 
 def test_file_cli_list_prints_representative_virtual_files() -> None:
