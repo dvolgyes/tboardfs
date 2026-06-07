@@ -221,7 +221,7 @@ class _Classifier:
             return "png"
         if blob.startswith(b"\xff\xd8\xff"):
             return "jpg"
-        if blob.startswith(b"GIF87a") or blob.startswith(b"GIF89a"):
+        if blob.startswith((b"GIF87a", b"GIF89a")):
             return "gif"
         if blob.startswith(b"RIFF") and blob[8:12] == b"WAVE":
             return "wav"

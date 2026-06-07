@@ -29,7 +29,7 @@ def mesh_nodes(
         if not isinstance(content, bytes) or data.size == 0:
             continue
         metadata = cast(Any, _ProtoParser.mesh_plugin_data(content))
-        if getattr(metadata, "content_type") == _MESH_UNDEFINED:
+        if metadata.content_type == _MESH_UNDEFINED:
             continue
         group_key = (metadata.name or entry.tag.rsplit("_", 1)[0], int(entry.step))
         group = groups.setdefault(
