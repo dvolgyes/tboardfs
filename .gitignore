@@ -233,3 +233,4 @@ __marimo__/
 *.sog
 test-logs/
 mnt/
+.pre-commit-local-config.d/

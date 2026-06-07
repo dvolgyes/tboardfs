@@ -29,7 +29,6 @@ dependencies = [
     "pandas>=3.0.3,<4.0",
     "protobuf>=7.35.0,<8.0",
     "python-magic>=0.4.27,<1.0",
-    "tqdm>=4.67.3,<5.0",
 ]
 
 [project.scripts]
