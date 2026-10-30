@@ -163,3 +163,17 @@ def test_malformed_tensors_are_left_out(
     fs = _log(tmp_path, dtype, [], wire)
 
     assert not [path for path in _files(fs) if path.endswith(".npy")]
+
+
+def test_string_tensors_load_without_pickle(tmp_path: Path) -> None:
+    """String tensors are fixed-width text arrays, not pickled objects."""
+    string_val = 8
+    wire = b"".join(
+        _varint(string_val << 3 | 2) + _varint(len(item)) + item
+        for item in ["a", "bé", "c\n", "d"]
+        for item in [item.encode()]
+    )
+    data = _npy(_log(tmp_path, 7, [2, 2], wire))
+
+    assert data.dtype.kind == "U"
+    assert data.tolist() == [["a", "bé"], ["c\n", "d"]]
