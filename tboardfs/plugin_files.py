@@ -34,7 +34,7 @@ def add_typed_plugin_files(
     consumed: set[int] = set()
     _TypedPluginFiles.add_hparams(run_node, entries, scalars, consumed)
     _TypedPluginFiles.add_custom_scalars(run_node, entries, consumed)
-    _TypedPluginFiles.add_meshes(run_node, entries, step_digits, consumed)
+    _TypedPluginFiles.add_meshes(run_node, entries, step_digits, tags, consumed)
     for entry in entries:
         marker = id(entry)
         if marker in consumed:
@@ -152,10 +152,11 @@ class _TypedPluginFiles:
         run_node: dict[str, Any],
         entries: list[JsonEntry],
         step_digits: int,
+        tags: TagPaths,
         consumed: set[int],
     ) -> None:
         """Add grouped mesh component archives."""
-        nodes, used = mesh_nodes(entries, step_digits)
+        nodes, used = mesh_nodes(entries, step_digits, tags.dir_parts)
         for rel, node in nodes:
             _TypedPluginFiles.add_file(run_node, rel, node)
         consumed.update(used)

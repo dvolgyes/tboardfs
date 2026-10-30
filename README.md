@@ -162,7 +162,10 @@ The virtual tree covers these TensorBoard objects:
   first 2-D slice after a warning. A `.json` file next to the table keeps the shape and the exact strings.
 - Meshes: per-step `json`, `npz`, and Wavefront `obj` exports under `/meshes`. The OBJ file has one object
   (`o mesh_<i>`) per batch element when the batch has more than one mesh. Vertex colors follow the coordinates as
-  `r g b` values in [0, 1], which MeshLab and Blender read. A mesh without faces is an OBJ point cloud.
+  `r g b` values in [0, 1], which MeshLab and Blender read. A mesh without faces is an OBJ point cloud. The path of a
+  mesh is its tag without the `_VERTEX`, `_FACE` or `_COLOR` suffix, so `train/cloud_VERTEX` is under
+  `/meshes/train/cloud`. A tag without that suffix uses the mesh name, which the `json` file keeps. This is different
+  from TensorBoard, which groups meshes by the mesh name only and thus mixes `train/cloud` and `val/cloud`.
 - PR curves: per-step `json`, `tsv`, and `npy` exports under `/pr_curves`. The tables have one row per threshold, with
   the columns `threshold`, `true_positives`, `false_positives`, `true_negatives`, `false_negatives`, `precision`, and
   `recall`. The thresholds are evenly spaced in [0, 1], as in TensorBoard. The `.npy` file keeps the raw `[6, N]`

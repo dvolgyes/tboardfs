@@ -5,7 +5,8 @@ from typing import Self
 
 from loguru import logger
 
-from tboardfs.model import RunCache
+from tboardfs.mesh import _MeshFiles
+from tboardfs.model import JsonEntry, RunCache
 from tboardfs.paths import _Paths
 
 
@@ -49,7 +50,12 @@ class TagPaths:
                 *scalar_tags,
                 *(tag for cache in caches for tag in cache.histograms),
                 *(entry.tag for cache in caches for entry in cache.binaries),
-                *(entry.tag for cache in caches for entry in cache.json_entries),
+                *(
+                    tag
+                    for cache in caches
+                    for entry in cache.json_entries
+                    if (tag := cls.entry_tag(entry)) is not None
+                ),
             ]
         )
         for tag, (path, holder) in tags.renamed.items():
@@ -65,6 +71,17 @@ class TagPaths:
                 )
         run.renamed_tags = {tag: path for tag, (path, _) in tags.renamed.items()}
         return tags
+
+    @staticmethod
+    def entry_tag(entry: JsonEntry) -> str | None:
+        """Return the tag whose path holds the files of a plugin record.
+
+        A mesh component has the path of its mesh tag, and another record of
+        the meshes tab has no path.
+        """
+        if entry.tab == "meshes":
+            return _MeshFiles.tag(entry)
+        return entry.tag
 
     @staticmethod
     def spelled(tag: str) -> bool:

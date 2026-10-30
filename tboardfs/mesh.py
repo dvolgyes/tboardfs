@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any, cast
@@ -18,6 +19,12 @@ _MESH_COMPONENTS = (
     (_MESH_FACE, "faces"),
     (_MESH_COLOR, "colors"),
 )
+# The tag suffixes of TensorBoard's mesh summary_v2 and of PyTorch.
+_MESH_TAG_SUFFIXES = (
+    (_MESH_VERTEX, "_VERTEX"),
+    (_MESH_FACE, "_FACE"),
+    (_MESH_COLOR, "_COLOR"),
+)
 
 
 @dataclass
@@ -33,15 +40,19 @@ class _MeshGroup:
 def mesh_nodes(
     entries: list[JsonEntry],
     step_digits: int,
+    dir_parts: Callable[[str], tuple[str, ...]],
 ) -> tuple[list[tuple[tuple[str, ...], dict[str, Any]]], set[int]]:
-    """Return virtual files for grouped TensorBoard mesh components."""
+    """Return virtual files for grouped TensorBoard mesh components.
+
+    ``dir_parts`` gives the virtual directory of a mesh tag.
+    """
     nodes: list[tuple[tuple[str, ...], dict[str, Any]]] = []
     consumed: set[int] = set()
     for (name, step_number), group in sorted(_MeshFiles.groups(entries).items()):
         if _MESH_VERTEX not in group.components:
             continue
         step = _Paths.step_name(step_number, step_digits)
-        rel = ("meshes", *_Paths.tag_dir_parts(name))
+        rel = ("meshes", *dir_parts(name))
         nodes.extend(_MeshFiles.files(rel, step, group))
         consumed.update(id(entry) for entry in group.entries)
     return nodes, consumed
@@ -56,20 +67,38 @@ class _MeshFiles:
     """
 
     @staticmethod
+    def tag(entry: JsonEntry) -> str | None:
+        """Return the mesh tag of a component, or None when it is not one.
+
+        The mesh tag is the tag without the suffix of its content type, so it
+        keeps the name scope that the mesh name does not have. A tag without
+        that suffix falls back to the mesh name, then to the tag.
+        """
+        content = entry.payload.get("plugin_content")
+        if entry.tab != "meshes" or not isinstance(content, bytes):
+            return None
+        metadata = cast(Any, _ProtoParser.mesh_plugin_data(content))
+        if metadata.content_type == _MESH_UNDEFINED:
+            return None
+        suffix = dict(_MESH_TAG_SUFFIXES).get(metadata.content_type)
+        if suffix is not None and entry.tag.endswith(suffix):
+            return entry.tag.removesuffix(suffix)
+        return cast(str, metadata.name) or entry.tag
+
+    @staticmethod
     def groups(entries: list[JsonEntry]) -> dict[tuple[str, int], _MeshGroup]:
-        """Group mesh component tensors by TensorBoard mesh name and step."""
+        """Group mesh component tensors by mesh tag and step."""
         groups: dict[tuple[str, int], _MeshGroup] = {}
         for entry in entries:
-            if entry.tab != "meshes":
+            tag = _MeshFiles.tag(entry)
+            if tag is None:
                 continue
-            content = entry.payload.get("plugin_content")
             data = tensor_to_array(entry.payload.get("tensor") or {})
-            if not isinstance(content, bytes) or data is None or data.size == 0:
+            if data is None or data.size == 0:
                 continue
+            content = cast(bytes, entry.payload["plugin_content"])
             metadata = cast(Any, _ProtoParser.mesh_plugin_data(content))
-            if metadata.content_type == _MESH_UNDEFINED:
-                continue
-            group_key = (metadata.name or entry.tag.rsplit("_", 1)[0], int(entry.step))
+            group_key = (tag, int(entry.step))
             group = groups.get(group_key)
             if group is None:
                 group = _MeshGroup({}, [], metadata, entry.wall_time)
