@@ -216,10 +216,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         if opened is not None:
             data, mtime = opened
         else:
-            try:
-                node, key = self._locate(path)
-            except FileNotFoundError:
-                raise fuse_error(ENOENT)
+            node, key = self._locate(path)
             mtime = _FsNode.mtime(node, now)
             if node["type"] == "dir":
                 mode, nlink, data = stat.S_IFDIR | 0o555, 2, b""
@@ -248,10 +245,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     def open(self, path: str, flags: int) -> int:
         """Open a virtual file and keep its current bytes for the handle."""
         del flags
-        try:
-            node, key = self._locate(path)
-        except FileNotFoundError:
-            raise fuse_error(ENOENT)
+        node, key = self._locate(path)
         if node["type"] == "dir":
             raise fuse_error(EISDIR)
         opened = (self._node_bytes(node, key), _FsNode.mtime(node, time.time()))
@@ -350,7 +344,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             node = self._cached_tree()
             for part in parts:
                 if node["type"] != "dir" or part not in node["children"]:
-                    raise FileNotFoundError(path)
+                    raise FileNotFoundError(ENOENT, os.strerror(ENOENT), path)
                 node = node["children"][part]
             runs = self._state.runs
             # A renamed run folder has other parts on disk than in the tree.
