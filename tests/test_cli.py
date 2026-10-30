@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 import re
@@ -230,3 +231,26 @@ def test_mount_cli_reports_a_failed_mount_without_a_traceback(
     assert "could not mount" in result.stderr
     assert "Traceback" not in result.stderr
     assert isinstance(result.exception, SystemExit)
+
+
+def test_mount_cli_writes_fuse_library_errors_to_the_logfile(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """mfusepy logs a failed operation with the logging module, with a traceback."""
+    (tmp_path / "runs").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    def fail_an_operation(*args: object, **kwargs: object) -> None:
+        try:
+            raise ValueError("bad operation")
+        except ValueError:
+            logging.getLogger("fuse").exception("Uncaught exception from %s", "read")
+
+    monkeypatch.setattr(cli, "FUSE", fail_an_operation)
+
+    result = CliRunner().invoke(cli.main, ["runs", "mnt", "--logfile", "log.txt"])
+
+    assert result.exit_code == 0
+    log = (tmp_path / "log.txt").read_text()
+    assert "| ERROR | Uncaught exception from read" in log
+    assert "ValueError: bad operation" in log

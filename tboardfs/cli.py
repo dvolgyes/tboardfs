@@ -11,6 +11,7 @@ from mfusepy import FUSE
 from tboardfs.cli_options import LOGLEVEL, SCALAR_FORMAT, STEP_DIGITS
 from tboardfs.constants import DEFAULT_CACHE_SIZE_MB, LOG_FORMAT
 from tboardfs.mounted import MountedTensorBoardFS
+from tboardfs.stdlib_logging import StdlibToLoguru
 
 
 @click.command()
@@ -113,3 +114,4 @@ def _configure_logging(logfile: Path | None, loglevel: str, foreground: bool) ->
         logger.add(sys.stderr, level=loglevel.upper(), format=LOG_FORMAT)
     if logfile is not None:
         logger.add(logfile, level=loglevel.upper(), format=LOG_FORMAT)
+    StdlibToLoguru.install()
