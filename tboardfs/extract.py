@@ -5,6 +5,7 @@ from tboardfs.classify import _Classifier
 from tboardfs.errors import fuse_error
 from tboardfs.model import BinaryEntry, GraphEntry
 from tboardfs.summary import parse_event
+from tboardfs.tensor_summary import _TensorSummary
 
 
 def extract_binary_blob(entry: BinaryEntry) -> bytes:
@@ -14,6 +15,10 @@ def extract_binary_blob(entry: BinaryEntry) -> bytes:
         payload = handle.read(entry.payload_size)
     event = parse_event(payload)
     for value in event.get("values", []):
+        if entry.part is not None:
+            if value.get("tag") == entry.tag and _TensorSummary.media_parts(value):
+                return bytes(value["tensor"]["string_val"][entry.part])
+            continue
         if (
             value.get("tag") == entry.tag
             and _Classifier.binary_kind(value) == entry.kind

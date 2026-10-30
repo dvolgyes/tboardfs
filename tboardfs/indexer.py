@@ -23,6 +23,7 @@ from tboardfs.model import (
 )
 from tboardfs.restarts import _RestartPurge
 from tboardfs.summary import parse_event
+from tboardfs.tensor_summary import _TensorSummary
 from tboardfs.tables import (
     _TableMerge,
     _TableRows,
@@ -329,25 +330,20 @@ class _EventIndexer:
         timing: tuple[Any, Any, float, float],
     ) -> None:
         """Append histogram bucket rows when present."""
-        histogram = value.get("histo")
-        if histogram is None:
+        buckets = _TensorSummary.histogram_buckets(value)
+        if buckets is None:
             return
         tag = value["tag"]
         epoch, step, wall_time, relative_time = timing
         rows = histogram_rows[tag]
-        limits = histogram.get("bucket_limit", [])
-        counts = histogram.get("bucket", [])
-        left = float(histogram.get("min", float("-inf")))
-        for limit, count in zip(limits, counts, strict=False):
-            right = float(limit)
+        for left, right, count in buckets:
             rows["step"].append(step)
             rows["epoch"].append(epoch)
             rows["wall_time"].append(wall_time)
             rows["relative_time"].append(relative_time)
             rows["bucket_left"].append(left)
             rows["bucket_right"].append(right)
-            rows["count"].append(float(count))
-            left = right
+            rows["count"].append(count)
         cache.histogram_mtimes[tag] = wall_time
 
     @staticmethod
@@ -359,10 +355,29 @@ class _EventIndexer:
         identity: tuple[str, Any, float],
     ) -> None:
         """Index a binary summary value lazily by source record position."""
+        tag, step, wall_time = identity
+        parts = _TensorSummary.media_parts(value)
+        if parts is not None:
+            strings = value["tensor"]["string_val"]
+            cache.binaries.extend(
+                BinaryEntry(
+                    source_path=path,
+                    tag=tag,
+                    kind=kind,
+                    step=step,
+                    wall_time=wall_time,
+                    payload_offset=record.payload_offset,
+                    payload_size=record.payload_size,
+                    extension=detect_extension(bytes(strings[part]), kind),
+                    part=part,
+                    suffix=suffix,
+                )
+                for kind, part, suffix in parts
+            )
+            return
         kind = _Classifier.binary_kind(value)
         if kind is None:
             return
-        tag, step, wall_time = identity
         blob = _Classifier.binary_blob(value)
         if blob is None:
             return
@@ -375,9 +390,7 @@ class _EventIndexer:
                 wall_time=wall_time,
                 payload_offset=record.payload_offset,
                 payload_size=record.payload_size,
-                record_size=record.total_size,
                 extension=detect_extension(blob, kind),
-                blob_size=len(blob),
             )
         )
 
@@ -389,7 +402,7 @@ class _EventIndexer:
     ) -> None:
         """Index plugin metadata as JSON records."""
         payload = _Classifier.plugin_json_payload(value)
-        if payload is None:
+        if payload is None or _TensorSummary.unpacked(value):
             return
         tag, step, wall_time = identity
         plugin_name = str(payload.get("plugin_name") or "unknown").lower()

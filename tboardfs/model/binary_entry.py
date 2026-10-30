@@ -13,9 +13,9 @@ class BinaryEntry:
     :ivar wall_time: event wall time
     :ivar payload_offset: event payload byte offset
     :ivar payload_size: event payload byte length
-    :ivar record_size: full TFRecord byte length
     :ivar extension: detected file extension
-    :ivar blob_size: extracted blob byte length when known
+    :ivar part: string_val index of a TF2 media item, or None for the value blob
+    :ivar suffix: file-name suffix after the step, for one of several items
     """
 
     source_path: Path
@@ -25,6 +25,6 @@ class BinaryEntry:
     wall_time: float
     payload_offset: int
     payload_size: int
-    record_size: int
     extension: str
-    blob_size: int | None = None
+    part: int | None = None
+    suffix: str = ""

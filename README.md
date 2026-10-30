@@ -135,10 +135,12 @@ The virtual tree covers these TensorBoard objects:
 
 - Scalars: full-series `json`, `tsv`, and `npz` exports under `/scalars`.
 - Custom scalars: layout JSON under `/custom_scalars`.
-- Images: encoded image files under `/images`.
-- Audio: encoded audio files under `/audio`.
+- Images: encoded image files under `/images`. A TensorFlow 2 image summary with more than one image gives one file per
+  image, `<step>_<i>`, such as `000001_0.png`.
+- Audio: encoded audio files under `/audio`, with the same `<step>_<i>` names for more than one clip.
 - Videos: encoded video/GIF outputs under `/videos`, including raw subpaths when present.
-- Histograms: per-step `json`, `tsv`, and `npz` exports under `/histograms`.
+- Histograms: per-step `json`, `tsv`, and `npz` exports under `/histograms`. TensorFlow 1 and TensorFlow 2 histogram
+  summaries give the same tables.
 - Distributions: per-step distribution tables under `/distributions`.
 - Text summaries: UTF-8 text files under `/text`. A summary with one string is that text. A summary with many strings is
   a Markdown table, as TensorBoard shows it: a vector is one column, and a tensor with more than 2 dimensions shows its

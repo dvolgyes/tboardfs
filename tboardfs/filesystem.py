@@ -543,7 +543,8 @@ class _RunTree:
         for entry in _RunData.run_binaries(run):
             rel = (
                 *_Paths.tag_dir_parts(entry.tag),
-                f"{_Paths.step_name(entry.step, step_digits)}.{entry.extension}",
+                f"{_Paths.step_name(entry.step, step_digits)}{entry.suffix}"
+                f".{entry.extension}",
             )
             _FsNode.add_file(
                 run_node,
