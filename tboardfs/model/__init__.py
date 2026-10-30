@@ -1,6 +1,5 @@
 from tboardfs.model.binary_entry import BinaryEntry
 from tboardfs.model.event_file_cache import EventFileCache
-from tboardfs.model.field import Field
 from tboardfs.model.graph_entry import GraphEntry
 from tboardfs.model.graph_summary_entry import GraphSummaryEntry
 from tboardfs.model.json_entry import JsonEntry
@@ -16,7 +15,6 @@ from tboardfs.model.tfrecord_error import TFRecordError
 __all__ = (
     "BinaryEntry",
     "EventFileCache",
-    "Field",
     "GraphEntry",
     "GraphSummaryEntry",
     "JsonEntry",

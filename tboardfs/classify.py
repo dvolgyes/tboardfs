@@ -6,12 +6,11 @@ import magic
 import numpy as np
 
 from tboardfs.constants import LARGE_TENSOR_THRESHOLD
-from tboardfs.decode import _Decode
 from tboardfs.model import Scalar
 from tboardfs.tensor import tensor_to_array
 
 
-def detect_extension(blob: bytes | None, kind: str) -> str:
+def detect_extension(blob: bytes | None) -> str:
     """Infer a stable file extension from encoded summary bytes."""
     if not blob:
         return "bin"
@@ -21,7 +20,6 @@ def detect_extension(blob: bytes | None, kind: str) -> str:
     extension = _Classifier.extension_from_signature(blob)
     if extension is not None:
         return extension
-    del kind
     return "bin"
 
 
@@ -175,18 +173,6 @@ class _Classifier:
         if _Classifier.scalar_value(value) is not None:
             return None
         return "tensors"
-
-    @staticmethod
-    def json_tensor(tensor: dict[str, Any]) -> dict[str, Any]:
-        """Return a JSON-friendly view of TensorProto fields."""
-        out = dict(tensor)
-        if "values" in out:
-            out["values"] = {str(key): value for key, value in out["values"].items()}
-        if "tensor_content" in out:
-            out["tensor_content"] = {"bytes": len(out["tensor_content"])}
-        if "string_val" in out:
-            out["string_val"] = [_Decode.text(value) for value in out["string_val"]]
-        return out
 
     @staticmethod
     def extension_from_magic(blob: bytes) -> str | None:

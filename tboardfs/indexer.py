@@ -278,7 +278,6 @@ class _EventIndexer:
             cache.graphs.append(
                 GraphEntry(
                     source_path=path,
-                    name="graph.pb",
                     wall_time=wall_time,
                     payload_offset=record.payload_offset,
                     payload_size=record.payload_size,
@@ -289,7 +288,6 @@ class _EventIndexer:
             return
         entry = MetaGraphEntry(
             source_path=path,
-            name="meta_graph.pb",
             wall_time=wall_time,
             payload_offset=record.payload_offset,
             payload_size=record.payload_size,
@@ -436,7 +434,7 @@ class _EventIndexer:
                 wall_time=wall_time,
                 payload_offset=record.payload_offset,
                 payload_size=record.payload_size,
-                extension=detect_extension(blob, kind),
+                extension=detect_extension(blob),
             )
         )
 

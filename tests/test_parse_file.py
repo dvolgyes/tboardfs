@@ -199,9 +199,9 @@ def test_detect_extension_uses_magic_for_native_formats() -> None:
     json_blob = b'{"plugin": "hparams", "value": 3}\n'
     unknown = b"\x01\x02not-a-native-format\x00\xff"
 
-    assert detect_extension(png, "images") == "png"
-    assert detect_extension(json_blob, "tensors") == "json"
-    assert detect_extension(unknown, "tensors") == "bin"
+    assert detect_extension(png) == "png"
+    assert detect_extension(json_blob) == "json"
+    assert detect_extension(unknown) == "bin"
 
 
 def test_export_table_json_spells_infinities_and_nulls_nan() -> None:

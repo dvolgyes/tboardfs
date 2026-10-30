@@ -75,7 +75,7 @@ class _TensorSummary:
         """Return the file extension of one item from media_parts."""
         if kind == "graphs":
             return GRAPH_PLUGINS[(value.get("plugin_name") or "").lower()][1]
-        return detect_extension(blob, kind)
+        return detect_extension(blob)
 
     @staticmethod
     def graph_views(value: dict[str, Any]) -> tuple[bool, bool]:

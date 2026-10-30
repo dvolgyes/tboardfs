@@ -1,4 +1,3 @@
-from pathlib import Path
 from types import MappingProxyType
 
 TENSORBOARD_EVENT_GLOB = "events.out.tfevents*"
@@ -55,5 +54,3 @@ PLUGIN_TAB = MappingProxyType(
         "videos": "videos",
     }
 )
-
-SOURCE_PATH_TYPE = str | Path
