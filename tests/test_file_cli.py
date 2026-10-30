@@ -1,9 +1,11 @@
+from errno import ENOENT
 import subprocess
 import sys
 import tomllib
 from pathlib import Path
 
 from click.testing import CliRunner
+import pytest
 
 from tboardfs import TensorBoardFS, find_tensorboard_files
 from tboardfs.file_cli import main
@@ -412,3 +414,27 @@ def test_file_cli_and_library_work_without_libfuse() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "/scalars/loss.json\n" in result.stdout
+
+
+@pytest.mark.parametrize("command", [["list"], ["get", "/x", "-o", "-"]])
+@pytest.mark.parametrize("content", [b"", b"hello, not an event file\n"])
+def test_file_cli_rejects_a_file_without_events(
+    tmp_path: Path, command: list[str], content: bytes
+) -> None:
+    source = tmp_path / "notes.txt"
+    source.write_bytes(content)
+
+    result = CliRunner().invoke(main, [command[0], str(source), *command[1:]])
+
+    assert result.exit_code == 1
+    assert f"no TensorBoard event in {source}" in result.output
+
+
+def test_single_event_tree_names_a_missing_path() -> None:
+    tree = SingleEventTree(FIXTURE_EVENT)
+
+    with pytest.raises(FileNotFoundError) as caught:
+        tree.read_file("/scalars/missing.json")
+
+    assert caught.value.errno == ENOENT
+    assert caught.value.filename == "/scalars/missing.json"

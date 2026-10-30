@@ -7,7 +7,7 @@ import click
 from loguru import logger
 
 from tboardfs.cli_options import SCALAR_FORMAT, STEP_DIGITS
-from tboardfs.file_tree import SingleEventTree, _CopyConflictError
+from tboardfs.file_tree import SingleEventTree, _CopyConflictError, _NoEventError
 from tboardfs.paths import _Paths
 
 
@@ -23,9 +23,7 @@ def register_file_cli_commands(group: click.Group) -> None:
         source: str, prefix: str, step_digits: int, scalar_format: str
     ) -> None:
         """Print virtual file paths below PREFIX."""
-        tree = SingleEventTree(
-            source, step_digits=step_digits, scalar_format=scalar_format
-        )
+        tree = _FileCli.open_tree(source, step_digits, scalar_format)
         try:
             paths = tree.list_file_paths(prefix=prefix)
         except FileNotFoundError as error:
@@ -54,9 +52,7 @@ def register_file_cli_commands(group: click.Group) -> None:
         scalar_format: str,
     ) -> None:
         """Write one virtual file to OUTPUT."""
-        tree = SingleEventTree(
-            source, step_digits=step_digits, scalar_format=scalar_format
-        )
+        tree = _FileCli.open_tree(source, step_digits, scalar_format)
         try:
             data = tree.read_file(vpath)
         except FileNotFoundError as error:
@@ -68,7 +64,7 @@ def register_file_cli_commands(group: click.Group) -> None:
         if output == "-":
             sys.stdout.buffer.write(data)
             return
-        output_path = _resolve_output_path(vpath, output)
+        output_path = _FileCli.output_path(vpath, output)
         if output_path.exists() and not force:
             raise click.ClickException(
                 f"output already exists: {output_path}\n"
@@ -97,17 +93,17 @@ def register_file_cli_commands(group: click.Group) -> None:
         if force and skip_existing:
             raise click.UsageError("Use either --force or --skip-existing, not both.")
         existing = "overwrite" if force else "skip" if skip_existing else "fail"
-        tree = SingleEventTree(
+        tree = _FileCli.open_tree(
             cast(str, params["source"]),
-            step_digits=cast(int, params["step_digits"]),
-            scalar_format=cast(str, params["scalar_format"]),
+            cast(int, params["step_digits"]),
+            cast(str, params["scalar_format"]),
         )
         try:
             copied, skipped = tree.copy_all(
                 cast(str, params["outdir"]), existing=existing
             )
         except _CopyConflictError as error:
-            _report_copy_conflict(error)
+            _FileCli.report_copy_conflict(error)
             raise click.exceptions.Exit(1) from error
         except OSError as error:
             raise click.ClickException(str(error)) from error
@@ -116,19 +112,35 @@ def register_file_cli_commands(group: click.Group) -> None:
         logger.info("copied {} files", copied)
 
 
-def _resolve_output_path(vpath: str, output: str) -> Path:
-    output_path = Path(output)
-    if output_path.exists() and output_path.is_dir():
-        return output_path / PurePosixPath(_Paths.norm_virtual_path(vpath)).name
-    if output.endswith("/"):
-        return output_path / PurePosixPath(_Paths.norm_virtual_path(vpath)).name
-    return output_path
+class _FileCli:
+    """Open sources and report results for the single-file commands."""
 
+    @staticmethod
+    def open_tree(source: str, step_digits: int, scalar_format: str) -> SingleEventTree:
+        """Return the tree of a source; a source without events is a CLI error."""
+        try:
+            return SingleEventTree(
+                source, step_digits=step_digits, scalar_format=scalar_format
+            )
+        except _NoEventError as error:
+            raise click.ClickException(str(error)) from error
 
-def _report_copy_conflict(error: _CopyConflictError) -> None:
-    copied_count = len(error.copied_paths)
-    logger.info("Copied successfully: {} files", copied_count)
-    for path in error.copied_paths:
-        logger.info(path)
-    logger.error("Error: output already exists: {}", error.target)
-    logger.error("Use --force for forced overwriting.")
+    @staticmethod
+    def output_path(vpath: str, output: str) -> Path:
+        """Return the file path that ``get`` writes a virtual file to."""
+        output_path = Path(output)
+        if output_path.exists() and output_path.is_dir():
+            return output_path / PurePosixPath(_Paths.norm_virtual_path(vpath)).name
+        if output.endswith("/"):
+            return output_path / PurePosixPath(_Paths.norm_virtual_path(vpath)).name
+        return output_path
+
+    @staticmethod
+    def report_copy_conflict(error: _CopyConflictError) -> None:
+        """Log the copied files and the target that stopped ``copy-all``."""
+        copied_count = len(error.copied_paths)
+        logger.info("Copied successfully: {} files", copied_count)
+        for path in error.copied_paths:
+            logger.info(path)
+        logger.error("Error: output already exists: {}", error.target)
+        logger.error("Use --force for forced overwriting.")

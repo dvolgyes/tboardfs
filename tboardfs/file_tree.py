@@ -1,3 +1,5 @@
+from errno import ENOENT
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -26,6 +28,13 @@ class _CopyConflictError(FileExistsError):
         super().__init__(str(target))
         self.target = target
         self.copied_paths = copied_paths
+
+
+class _NoEventError(ValueError):
+    """A source file in which not one TensorBoard record can be read."""
+
+    def __init__(self, source: Path) -> None:
+        super().__init__(f"no TensorBoard event in {source}")
 
 
 class SingleEventTree:
@@ -60,9 +69,10 @@ class SingleEventTree:
             self.tree = filesystem.virtual_tree()
             return
         run = RunCache(())
-        run.files[source_path] = _EventIndexer.parse_event_file(
-            source_path, ignore_truncated=True
-        )
+        cache = _EventIndexer.parse_event_file(source_path, ignore_truncated=True)
+        if cache.progress.processed_pos == 0:
+            raise _NoEventError(source_path)
+        run.files[source_path] = cache
         self.tree = _build_run_virtual_tree(run, scalar_formats, step_digits)
 
     def list_file_paths(self, *, prefix: str = "/") -> list[str]:
@@ -114,7 +124,9 @@ class SingleEventTree:
         node = self.tree
         for part in parts:
             if node["type"] != "dir" or part not in node["children"]:
-                raise FileNotFoundError(_Paths.join_path(parts))
+                raise FileNotFoundError(
+                    ENOENT, os.strerror(ENOENT), _Paths.join_path(parts)
+                )
             node = cast(dict[str, Any], node["children"][part])
         return node
 
