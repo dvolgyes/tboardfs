@@ -9,6 +9,7 @@ import pytest
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
+from tboardfs.tensor import tensor_to_array
 
 from test_incremental_parse import _files, _frame
 
@@ -258,3 +259,11 @@ def test_string_tensors_load_without_pickle(tmp_path: Path) -> None:
 
     assert data.dtype.kind == "U"
     assert data.tolist() == [["a", "bé"], ["c\n", "d"]]
+
+
+@pytest.mark.parametrize("dtype", [0, 20, 21, *range(24, 34), 101])
+def test_a_dtype_that_numpy_cannot_hold_does_not_decode(dtype: int) -> None:
+    """Float8, 4-bit, 2-bit, resource, variant and reference bytes are not guessed."""
+    tensor = {"dtype": dtype, "shape": [4], "tensor_content": b"\x01\x02\x03\x04"}
+
+    assert tensor_to_array(tensor) is None

@@ -3,6 +3,7 @@ from collections.abc import Iterator
 import errno
 import json
 import os
+import stat
 from pathlib import Path
 import struct
 from typing import BinaryIO
@@ -419,12 +420,21 @@ def test_filesystem_exposes_nested_scalar_formats(tmp_path: Path) -> None:
         ("unlink", ("/.cache",)),
         ("unlink", ("/.in_memory",)),
         ("unlink", ("/scalars/loss.json",)),
+        ("mkdir", ("/scalars/new", 0o755)),
+        ("mknod", ("/scalars/new", 0o644, 0)),
+        ("create", ("/scalars/new.json", 0o644)),
+        ("write", ("/scalars/loss.json", b"x", 0)),
+        ("rename", ("/scalars/loss.json", "/scalars/new.json")),
+        ("rmdir", ("/scalars",)),
+        ("truncate", ("/scalars/loss.json", 0)),
+        ("chmod", ("/scalars/loss.json", 0o777)),
+        ("chown", ("/scalars/loss.json", 0, 0)),
     ],
 )
-def test_filesystem_rejects_links_and_unlinks_as_read_only(
+def test_filesystem_rejects_each_write_operation_as_read_only(
     tmp_path: Path, operation: str, args: tuple[str, ...]
 ) -> None:
-    """symlink and unlink fail with EROFS and leave the tree unchanged."""
+    """Each write operation fails with EROFS and leaves the tree unchanged."""
     path = tmp_path / "events.out.tfevents"
     path.write_bytes(_record(_event(100.0, 1, [_simple_value("loss", 2.0)])))
     fs = TensorBoardFS(tmp_path)
@@ -435,6 +445,15 @@ def test_filesystem_rejects_links_and_unlinks_as_read_only(
 
     assert error.value.errno == errno.EROFS
     assert sorted(fs.readdir("/scalars")) == before
+
+
+def test_files_are_read_only_and_directories_can_be_listed(tmp_path: Path) -> None:
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(_record(_event(100.0, 1, [_simple_value("loss", 2.0)])))
+    fs = TensorBoardFS(tmp_path)
+
+    assert fs.getattr("/scalars/loss.json")["st_mode"] == stat.S_IFREG | 0o444
+    assert fs.getattr("/scalars")["st_mode"] == stat.S_IFDIR | 0o555
 
 
 def test_filesystem_ignores_truncated_trailing_record_during_refresh(
@@ -619,7 +638,15 @@ def test_filesystem_gives_every_stat_the_owner(
 
 @pytest.mark.parametrize(
     "tag",
-    ["../../ESCAPED", "a/../b", "./x", "back\\slash", "nul\0byte", "ctl\x1fchar"],
+    [
+        "../../ESCAPED",
+        "a/../b",
+        "./x",
+        "back\\slash",
+        "nul\0byte",
+        "ctl\x1fchar",
+        "del\x7fchar",
+    ],
 )
 def test_virtual_paths_never_contain_traversal_components(
     tmp_path: Path, tag: str
@@ -644,7 +671,7 @@ def test_virtual_paths_never_contain_traversal_components(
         parts = virtual_path.lstrip("/").split("/")
         assert all(part not in {"", ".", ".."} for part in parts), virtual_path
         assert all("\\" not in part for part in parts), virtual_path
-        assert all(ch >= " " for part in parts for ch in part), virtual_path
+        assert all(" " <= ch != "\x7f" for part in parts for ch in part), virtual_path
 
 
 def test_copy_all_writes_hostile_tags_inside_outdir(tmp_path: Path) -> None:

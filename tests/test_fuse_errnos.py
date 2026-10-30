@@ -50,8 +50,9 @@ def test_a_missing_path_is_enoent(
     [
         lambda data: data.replace(b"picture", b"another"),
         lambda data: data.replace(bytes([len(PNG)]) + PNG, bytes([99]) + PNG),
+        lambda data: data[:-20],
     ],
-    ids=["other tag", "not a message"],
+    ids=["other tag", "not a message", "shorter"],
 )
 def test_an_image_of_a_changed_event_file_is_eio(
     tmp_path: Path, change: Callable[[bytes], bytes]
@@ -61,7 +62,7 @@ def test_an_image_of_a_changed_event_file_is_eio(
     assert fs.readdir("/images/picture")[2:] == ["000001.png"]
     status = path.stat()
     path.write_bytes(change(path.read_bytes()))
-    # The same size, mtime and first bytes: the mount does not index it again.
+    # The same mtime, before the refresh age: the mount does not index it again.
     os.utime(path, ns=(status.st_atime_ns, status.st_mtime_ns))
 
     with pytest.raises(OSError) as raised:

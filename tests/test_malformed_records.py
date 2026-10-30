@@ -3,13 +3,14 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 import itertools
+import json
 from pathlib import Path
 
 from loguru import logger
 import pytest
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import compat_pb2
+from tboardfs.proto import compat_pb2, custom_scalar_layout_pb2
 
 from test_incremental_parse import _frame
 
@@ -157,3 +158,16 @@ def test_malformed_summaries_give_only_readable_files(
     # _files lists every directory and asserts that each file reads whole.
     for path in _files(fs):
         assert fs.getattr(path)["st_mode"] & 0o100000
+
+
+def test_a_layout_after_a_string_that_does_not_decode_is_used(tmp_path: Path) -> None:
+    layout = custom_scalar_layout_pb2.Layout()
+    layout.category.add(title="losses")
+    event = compat_pb2.Event(step=6, wall_time=11.0)
+    value = _plugin_value(event, "custom_scalars", b"")
+    value.tensor.dtype = 7
+    value.tensor.string_val.extend([GARBAGE, layout.SerializeToString()])
+    fs = _log(tmp_path, event)
+
+    text = fs.read("/custom_scalars/layout.json", 1 << 20, 0)
+    assert json.loads(text) == {"category": [{"title": "losses"}]}

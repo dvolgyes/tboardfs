@@ -172,3 +172,20 @@ def test_growing_resumed_run_equals_a_fresh_parse(tmp_path: Path, seed: int) -> 
         _contents(growing)
 
     assert _contents(growing) == _contents(TensorBoardFS(tmp_path))
+
+
+def test_a_start_keeps_the_rows_of_a_later_file(tmp_path: Path) -> None:
+    """A START drops the earlier rows it replaces, never rows written after it."""
+    fs = _write(
+        tmp_path,
+        _run(_version(), *(_values(step, 10.0 + step) for step in range(6))),
+        _run(
+            _version(),
+            *(_values(step, 20.0 + step) for step in range(4)),
+            _start(2),
+            *(_values(step, 30.0 + step) for step in range(2, 4)),
+        ),
+        _run(_version(), *(_values(step, 40.0 + step) for step in range(4, 8))),
+    )
+
+    assert [step for step, _ in _loss(fs)] == [0, 1, 0, 1, 2, 3, 4, 5, 6, 7]

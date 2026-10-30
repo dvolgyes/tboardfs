@@ -2,8 +2,10 @@
 
 from pathlib import Path
 
+import pytest
+
 from tboardfs import TensorBoardFS
-from tboardfs.projector import CONFIG_NAME, MAX_CONFIG_BYTES, _ProjectorConfig
+from tboardfs.projector import CONFIG_NAME, _ProjectorConfig
 
 from test_incremental_parse import _files
 from test_open_handles import _append
@@ -118,10 +120,18 @@ def test_a_named_file_must_be_a_candidate(tmp_path: Path) -> None:
     assert _ProjectorConfig.references([config]) == {}
 
 
-def test_only_the_first_mebibyte_of_the_config_is_read(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("padding", "listed"),
+    [
+        ((1 << 20) - 100, ["/run/projector/a/b.tsv"]),
+        (1 << 20, []),
+    ],
+)
+def test_only_the_first_mebibyte_of_the_config_is_read(
+    tmp_path: Path, padding: int, listed: list[str]
+) -> None:
     """A huge config does not make each refresh read all of it."""
-    padding = "#" * MAX_CONFIG_BYTES + "\n"
-    config = f'{padding}embeddings {{ tensor_path: "a/b.tsv" }}\n'
+    config = "#" * (padding - 1) + '\nembeddings { tensor_path: "a/b.tsv" }\n'
     fs = _run(tmp_path, config, "a/b.tsv")
 
-    assert _projector(fs) == ["/run/projector/projector_config.pbtxt"]
+    assert _projector(fs) == [*listed, "/run/projector/projector_config.pbtxt"]
