@@ -52,8 +52,6 @@ class _HistogramFiles:
         tag, series, mtime = item["tag"], item["series"], item["mtime"]
         steps = _TableMerge.unique_steps(series)
         for fmt in scalar_formats:
-            if fmt not in {"json", "tsv", "npz"}:
-                continue
             for step in steps:
                 step_series = _TableMerge.series_for_step(series, step)
                 _HistogramFiles.add_step_table(

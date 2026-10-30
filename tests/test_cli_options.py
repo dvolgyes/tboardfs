@@ -80,6 +80,16 @@ def test_csv_tables_are_comma_separated(tmp_path: Path) -> None:
     assert tree.read_file("/scalars/loss.csv").startswith(b"epoch,step,wall_time,")
 
 
+@pytest.mark.parametrize("tab", ["histograms", "distributions"])
+def test_csv_applies_to_histogram_tables(tab: str) -> None:
+    """Each step table has the csv format too, with the columns of tsv."""
+    csv = SingleEventTree(FIXTURE_EVENT, scalar_format="csv")
+    tsv = SingleEventTree(FIXTURE_EVENT, scalar_format="tsv")
+
+    text = csv.read_file(f"/{tab}/weights/000001.csv")
+    assert text == tsv.read_file(f"/{tab}/weights/000001.tsv").replace(b"\t", b",")
+
+
 @pytest.mark.parametrize("formats", ["json,parquet", ("tsv", "html")])
 def test_library_refuses_unsupported_formats(tmp_path: Path, formats: Any) -> None:
     """The library checks formats when it is built, not when a file is read."""
