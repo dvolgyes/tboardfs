@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import event_pb2
+from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _files, _frame
 
@@ -38,12 +38,12 @@ def _varints(values: list[int]) -> bytes:
 
 
 def _log(tmp_path: Path, dtype: int, shape: list[int], wire: bytes) -> TensorBoardFS:
-    event = event_pb2.Event(wall_time=1.0, step=3)
+    event = compat_pb2.Event(wall_time=1.0, step=3)
     value = event.summary.value.add(tag="t")
     value.metadata.plugin_data.plugin_name = "tensors"
     value.tensor.dtype = dtype
     value.tensor.tensor_shape.dim.extend(
-        event_pb2.TensorShapeDim(size=s) for s in shape
+        compat_pb2.TensorShapeProto.Dim(size=s) for s in shape
     )
     value.tensor.MergeFromString(wire)
     (tmp_path / "events.out.tfevents.host").write_bytes(_frame(event))

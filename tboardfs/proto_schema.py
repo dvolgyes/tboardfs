@@ -3,8 +3,8 @@ from typing import cast
 from google.protobuf.message import Message
 
 from tboardfs.proto import (
+    compat_pb2,
     custom_scalar_layout_pb2,
-    event_pb2,
     hparams_plugin_data_pb2,
     mesh_plugin_data_pb2,
 )
@@ -16,7 +16,7 @@ class _ProtoParser:
     @staticmethod
     def event(data: bytes) -> Message:
         """Parse a TensorFlow Event message."""
-        message = cast(Message, getattr(event_pb2, "Event")())
+        message = cast(Message, getattr(compat_pb2, "Event")())
         message.ParseFromString(data)
         return message
 

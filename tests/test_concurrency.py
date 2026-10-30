@@ -14,14 +14,14 @@ import pytest
 
 from tboardfs import TensorBoardFS
 from tboardfs.crc32c import masked_crc32c
-from tboardfs.proto import event_pb2
+from tboardfs.proto import compat_pb2
 import tboardfs.filesystem
 
 DEADLOCK_TIMEOUT_SECONDS = 30.0
 
 
 def _loss_record(step: int) -> bytes:
-    event = event_pb2.Event(wall_time=100.0 + step, step=step)
+    event = compat_pb2.Event(wall_time=100.0 + step, step=step)
     event.summary.value.add(tag="loss", simple_value=1.0 / (step + 1))
     payload = event.SerializeToString()
     length = struct.pack("<Q", len(payload))

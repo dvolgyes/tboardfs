@@ -196,17 +196,12 @@ class _EventIndexer:
         first_time, epoch = clock
         path = cache.source_path
         event = parse_event(record.payload)
-        wall_time = float(event["wall_time"]) if "wall_time" in event else np.nan
+        wall_time = float(event["wall_time"])
         values = event.get("values", [])
-        if first_time is None and values and not np.isnan(wall_time):
+        if first_time is None and values:
             first_time = wall_time
-        relative_time = (
-            np.nan
-            if first_time is None or np.isnan(wall_time)
-            else wall_time - first_time
-        )
-        # Proto3 writers leave out step 0, as TensorBoard reads it.
-        timing = (event.get("step", 0), wall_time, relative_time)
+        relative_time = np.nan if first_time is None else wall_time - first_time
+        timing = (event["step"], wall_time, relative_time)
         _EventIndexer.add_restart(cache, event, rows)
         _EventIndexer.add_graph(cache, path, event, record, wall_time)
         for value in values:
@@ -246,7 +241,7 @@ class _EventIndexer:
         }
         counts[("binaries", "")] = len(cache.binaries)
         counts[("json_entries", "")] = len(cache.json_entries)
-        cache.restarts.append(RestartMark("start", event.get("step", 0), counts))
+        cache.restarts.append(RestartMark("start", event["step"], counts))
 
     @staticmethod
     def add_graph(

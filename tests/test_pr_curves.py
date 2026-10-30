@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import event_pb2
+from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _frame
 
@@ -28,12 +28,12 @@ PR = np.array(
 
 
 def _pr_log(tmp_path: Path, data: np.ndarray) -> TensorBoardFS:
-    event = event_pb2.Event(wall_time=1.0, step=2)
+    event = compat_pb2.Event(wall_time=1.0, step=2)
     value = event.summary.value.add(tag="pr")
     value.metadata.plugin_data.plugin_name = "pr_curves"
     value.tensor.dtype = DT_FLOAT
     value.tensor.tensor_shape.dim.extend(
-        event_pb2.TensorShapeDim(size=s) for s in data.shape
+        compat_pb2.TensorShapeProto.Dim(size=s) for s in data.shape
     )
     value.tensor.tensor_content = data.tobytes()
     (tmp_path / "events.out.tfevents.host").write_bytes(_frame(event))

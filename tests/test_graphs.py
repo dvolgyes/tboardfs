@@ -3,14 +3,14 @@
 from pathlib import Path
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import event_pb2
+from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _files, _frame
 
 
 def _graphs(tmp_path: Path, *graphs: bytes) -> TensorBoardFS:
     records = b"".join(
-        _frame(event_pb2.Event(wall_time=1.0 + i, graph_def=graph))
+        _frame(compat_pb2.Event(wall_time=1.0 + i, graph_def=graph))
         for i, graph in enumerate(graphs)
     )
     (tmp_path / "events.out.tfevents.host").write_bytes(records)

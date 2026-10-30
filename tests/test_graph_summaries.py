@@ -18,7 +18,7 @@ import pytest
 
 from tboardfs import TensorBoardFS
 from tboardfs.file_cli import main
-from tboardfs.proto import event_pb2, graph_pb2
+from tboardfs.proto import compat_pb2, graph_pb2
 
 from test_incremental_parse import _files, _frame
 from test_restart_purge import _start, _version
@@ -167,7 +167,7 @@ def _graph_event(
     content: bytes = b"1",
     step: int = 0,
 ) -> bytes:
-    event = event_pb2.Event(wall_time=1.0, step=step)
+    event = compat_pb2.Event(wall_time=1.0, step=step)
     value = event.summary.value.add(tag="g")
     value.metadata.plugin_data.plugin_name = plugin
     value.metadata.plugin_data.content = content
@@ -266,7 +266,7 @@ def test_copy_all_copies_a_run_with_an_unconvertible_graph(tmp_path: Path) -> No
     """copy-all copies each listed file; the unconvertible GraphDef is not listed."""
     run = tmp_path / "run"
     run.mkdir()
-    scalar = event_pb2.Event(wall_time=1.0, step=0)
+    scalar = compat_pb2.Event(wall_time=1.0, step=0)
     scalar.summary.value.add(tag="loss", simple_value=1.0)
     _log(run, _frame(scalar), _graph_event(b"{not json", plugin="graph_keras_model"))
     result = CliRunner().invoke(main, ["copy-all", str(run), str(tmp_path / "out")])

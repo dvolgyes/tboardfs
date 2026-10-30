@@ -19,11 +19,10 @@ class _SummaryParser:
     def parse_event(data: bytes) -> dict[str, Any]:
         """Parse one Event protobuf payload."""
         event_message = cast(Any, _ProtoParser.event(data))
-        event: dict[str, Any] = {}
-        if event_message.HasField("wall_time"):
-            event["wall_time"] = event_message.wall_time
-        if event_message.HasField("step"):
-            event["step"] = event_message.step
+        event: dict[str, Any] = {
+            "wall_time": event_message.wall_time,
+            "step": event_message.step,
+        }
         if event_message.HasField("file_version"):
             event["file_version"] = event_message.file_version
         if event_message.session_log.status == START:
@@ -67,9 +66,7 @@ class _SummaryParser:
     def parse_summary_value(value_message: object) -> dict[str, Any]:
         """Convert a SummaryValue protobuf message to the internal shape."""
         message = cast(Any, value_message)
-        value: dict[str, Any] = {}
-        if message.HasField("tag"):
-            value["tag"] = message.tag
+        value: dict[str, Any] = {"tag": message.tag}
         if message.HasField("simple_value"):
             value["simple_value"] = message.simple_value
         if message.HasField("image"):
@@ -88,59 +85,46 @@ class _SummaryParser:
     def parse_image(image_message: object) -> dict[str, bytes]:
         """Convert an Image protobuf message to the internal shape."""
         message = cast(Any, image_message)
-        image: dict[str, bytes] = {}
-        if message.HasField("encoded_image_string"):
-            image["encoded_image_string"] = message.encoded_image_string
-        return image
+        return {"encoded_image_string": message.encoded_image_string}
 
     @staticmethod
     def parse_audio(audio_message: object) -> dict[str, bytes]:
         """Convert an Audio protobuf message to the internal shape."""
         message = cast(Any, audio_message)
-        audio: dict[str, bytes] = {}
-        if message.HasField("encoded_audio_string"):
-            audio["encoded_audio_string"] = message.encoded_audio_string
-        return audio
+        return {"encoded_audio_string": message.encoded_audio_string}
 
     @staticmethod
     def parse_histogram(histo_message: object) -> dict[str, Any]:
         """Convert a HistogramProto protobuf message to the internal shape."""
         message = cast(Any, histo_message)
-        histo = {
+        histo: dict[str, Any] = {
             "bucket_limit": list(message.bucket_limit),
             "bucket": list(message.bucket),
         }
         for name in ("min", "max", "num", "sum", "sum_squares"):
-            if message.HasField(name):
-                histo[name] = getattr(message, name)
+            histo[name] = getattr(message, name)
         return histo
 
     @staticmethod
     def parse_summary_metadata(metadata_message: object) -> dict[str, Any]:
         """Convert SummaryMetadata protobuf plugin fields to internal metadata."""
         message = cast(Any, metadata_message)
-        metadata: dict[str, Any] = {}
         if not message.HasField("plugin_data"):
-            return metadata
+            return {}
         plugin_data = message.plugin_data
-        if plugin_data.HasField("plugin_name"):
-            metadata["plugin_name"] = plugin_data.plugin_name
-        if plugin_data.HasField("content"):
-            metadata["plugin_content"] = plugin_data.content
-        return metadata
+        return {
+            "plugin_name": plugin_data.plugin_name,
+            "plugin_content": plugin_data.content,
+        }
 
     @staticmethod
     def parse_tensor(tensor_message: object) -> dict[str, Any]:
         """Convert TensorProto protobuf scalar/blob fields to internal shape."""
         message = cast(Any, tensor_message)
-        tensor: dict[str, Any] = {}
-        if message.HasField("dtype"):
-            tensor["dtype"] = message.dtype
+        tensor: dict[str, Any] = {"dtype": message.dtype}
         if message.HasField("tensor_shape"):
-            tensor["shape"] = [
-                dim.size for dim in message.tensor_shape.dim if dim.HasField("size")
-            ]
-        if message.HasField("tensor_content"):
+            tensor["shape"] = [dim.size for dim in message.tensor_shape.dim]
+        if message.tensor_content:
             tensor["tensor_content"] = message.tensor_content
         values = _SummaryParser.parse_tensor_values(message)
         if values:

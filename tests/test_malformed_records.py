@@ -9,7 +9,7 @@ from loguru import logger
 import pytest
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import event_pb2
+from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _frame
 
@@ -36,17 +36,17 @@ TENSORS = (
 
 
 def _plugin_value(
-    event: event_pb2.Event, plugin: str, content: bytes, tag: str = "t"
-) -> event_pb2.SummaryValue:
+    event: compat_pb2.Event, plugin: str, content: bytes, tag: str = "t"
+) -> compat_pb2.Summary.Value:
     value = event.summary.value.add(tag=tag)
     value.metadata.plugin_data.plugin_name = plugin
     value.metadata.plugin_data.content = content
     return value
 
 
-def _event(plugin: str, content: bytes) -> event_pb2.Event:
+def _event(plugin: str, content: bytes) -> compat_pb2.Event:
     """Return a record with one plugin value and one valid scalar."""
-    event = event_pb2.Event(step=5, wall_time=10.0)
+    event = compat_pb2.Event(step=5, wall_time=10.0)
     value = _plugin_value(event, plugin, content)
     value.tensor.dtype = 7
     value.tensor.string_val.append(GARBAGE)
@@ -54,8 +54,8 @@ def _event(plugin: str, content: bytes) -> event_pb2.Event:
     return event
 
 
-def _log(tmp_path: Path, *events: event_pb2.Event) -> TensorBoardFS:
-    header = event_pb2.Event(wall_time=1.0, file_version="brain.Event:2")
+def _log(tmp_path: Path, *events: compat_pb2.Event) -> TensorBoardFS:
+    header = compat_pb2.Event(wall_time=1.0, file_version="brain.Event:2")
     frames = b"".join(_frame(event) for event in (header, *events))
     (tmp_path / "events.out.tfevents.1.host").write_bytes(frames)
     return TensorBoardFS(tmp_path)
@@ -109,7 +109,7 @@ def test_record_that_does_not_decode_leaves_the_valid_record(
     tmp_path: Path, plugin: str
 ) -> None:
     """A valid record of the same plugin still gives its file."""
-    valid = event_pb2.Event(step=6, wall_time=11.0)
+    valid = compat_pb2.Event(step=6, wall_time=11.0)
     value = _plugin_value(valid, plugin, b"")
     value.tensor.dtype = 7
     value.tensor.string_val.append(b"")
@@ -138,7 +138,7 @@ def test_malformed_summaries_give_only_readable_files(
     Every plugin, plugin content and tensor appear together once; dtypes and
     shapes cycle through the combinations.
     """
-    event = event_pb2.Event(step=5, wall_time=10.0)
+    event = compat_pb2.Event(step=5, wall_time=10.0)
     value = _plugin_value(event, plugin, content) if plugin else None
     tensor = (value or event.summary.value.add(tag="t")).tensor
     dtype = DTYPES[index % len(DTYPES)]

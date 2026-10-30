@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import event_pb2, mesh_plugin_data_pb2
+from tboardfs.proto import compat_pb2, mesh_plugin_data_pb2
 
 from test_incremental_parse import _files, _frame
 
@@ -33,7 +33,7 @@ DTYPES = {VERTEX: DT_FLOAT, FACE: DT_INT32, COLOR: DT_UINT8}
 
 
 def _mesh(tmp_path: Path, components: dict[int, np.ndarray]) -> TensorBoardFS:
-    event = event_pb2.Event(wall_time=1.0, step=5)
+    event = compat_pb2.Event(wall_time=1.0, step=5)
     for content_type, data in components.items():
         value = event.summary.value.add(tag=f"shape_{content_type}")
         value.metadata.plugin_data.plugin_name = "mesh"
@@ -42,7 +42,7 @@ def _mesh(tmp_path: Path, components: dict[int, np.ndarray]) -> TensorBoardFS:
         ).SerializeToString()
         value.tensor.dtype = DTYPES[content_type]
         value.tensor.tensor_shape.dim.extend(
-            event_pb2.TensorShapeDim(size=s) for s in data.shape
+            compat_pb2.TensorShapeProto.Dim(size=s) for s in data.shape
         )
         value.tensor.tensor_content = data.tobytes()
     (tmp_path / "events.out.tfevents.host").write_bytes(_frame(event))

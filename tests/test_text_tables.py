@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import event_pb2
+from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _files, _frame
 
@@ -14,12 +14,12 @@ DT_STRING = 7
 
 
 def _text(tmp_path: Path, shape: list[int], *cells: str) -> TensorBoardFS:
-    event = event_pb2.Event(wall_time=1.0, step=4)
+    event = compat_pb2.Event(wall_time=1.0, step=4)
     value = event.summary.value.add(tag="notes")
     value.metadata.plugin_data.plugin_name = "text"
     value.tensor.dtype = DT_STRING
     value.tensor.tensor_shape.dim.extend(
-        event_pb2.TensorShapeDim(size=s) for s in shape
+        compat_pb2.TensorShapeProto.Dim(size=s) for s in shape
     )
     value.tensor.string_val.extend(cell.encode() for cell in cells)
     (tmp_path / "events.out.tfevents.host").write_bytes(_frame(event))

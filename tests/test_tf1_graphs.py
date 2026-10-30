@@ -17,7 +17,7 @@ from loguru import logger
 import pytest
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import compat_pb2, event_pb2
+from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _files, _frame
 
@@ -80,7 +80,7 @@ def test_tf1_graph_trees(run: str, files: list[str]) -> None:
     assert sorted(_files(fs, "/graphs")) == [f"/graphs/{name}" for name in files]
 
 
-def _log(tmp_path: Path, *events: event_pb2.Event) -> TensorBoardFS:
+def _log(tmp_path: Path, *events: compat_pb2.Event) -> TensorBoardFS:
     frames = b"".join(_frame(event) for event in events)
     (tmp_path / "events.out.tfevents.host").write_bytes(frames)
     return TensorBoardFS(tmp_path)
@@ -107,8 +107,8 @@ def test_graph_of_the_newest_meta_graph(tmp_path: Path) -> None:
     """Without a graph_def, graph.pb is the graph of the newest meta graph."""
     fs = _log(
         tmp_path,
-        event_pb2.Event(step=1, meta_graph_def=_meta_graph("old")),
-        event_pb2.Event(step=2, meta_graph_def=_meta_graph("new")),
+        compat_pb2.Event(step=1, meta_graph_def=_meta_graph("old")),
+        compat_pb2.Event(step=2, meta_graph_def=_meta_graph("new")),
     )
 
     graph = compat_pb2.GraphDef.FromString(fs.read("/graphs/graph.pb", 1 << 20, 0))
@@ -119,8 +119,8 @@ def test_graph_of_the_newest_meta_graph(tmp_path: Path) -> None:
 def test_malformed_meta_graph_has_no_graph_file(tmp_path: Path) -> None:
     """A newest meta graph that does not parse keeps its native file but has no graph.pb."""
     events = (
-        event_pb2.Event(step=1, meta_graph_def=_meta_graph("old")),
-        event_pb2.Event(step=2, meta_graph_def=b"\xff\xff"),
+        compat_pb2.Event(step=1, meta_graph_def=_meta_graph("old")),
+        compat_pb2.Event(step=2, meta_graph_def=b"\xff\xff"),
     )
     with _warnings() as warnings:
         fs = _log(tmp_path, *events)
@@ -137,7 +137,7 @@ def test_tagged_run_metadata_is_a_profile(tmp_path: Path) -> None:
     """A tagged RunMetadata gives its native file and profile text, but no graph."""
     run_metadata = compat_pb2.RunMetadata()
     run_metadata.step_stats.dev_stats.add(device="/device:CPU:0")
-    event = event_pb2.Event(step=3)
+    event = compat_pb2.Event(step=3)
     event.tagged_run_metadata.tag = "train/step"
     event.tagged_run_metadata.run_metadata = run_metadata.SerializeToString()
     fs = _log(tmp_path, event)
@@ -152,7 +152,7 @@ def test_tagged_run_metadata_is_a_profile(tmp_path: Path) -> None:
 
 def test_malformed_tagged_run_metadata_has_no_profile_file(tmp_path: Path) -> None:
     """A tagged RunMetadata that does not parse keeps only its native file."""
-    event = event_pb2.Event(step=3)
+    event = compat_pb2.Event(step=3)
     event.tagged_run_metadata.tag = "t"
     event.tagged_run_metadata.run_metadata = b"\xff\xff"
     with _warnings() as warnings:
@@ -166,8 +166,8 @@ def test_malformed_tagged_run_metadata_has_no_profile_file(tmp_path: Path) -> No
     assert warnings[0].startswith("run metadata t at step 3 in ")
 
 
-def _tagged(run_metadata: bytes) -> event_pb2.Event:
-    event = event_pb2.Event(step=3)
+def _tagged(run_metadata: bytes) -> compat_pb2.Event:
+    event = compat_pb2.Event(step=3)
     event.tagged_run_metadata.tag = "t"
     event.tagged_run_metadata.run_metadata = run_metadata
     return event
@@ -177,8 +177,8 @@ def _tagged(run_metadata: bytes) -> event_pb2.Event:
     ("good", "bad", "path"),
     [
         (
-            event_pb2.Event(step=1, meta_graph_def=b"\x08\x01"),
-            event_pb2.Event(step=1, meta_graph_def=b"\xff\xff"),
+            compat_pb2.Event(step=1, meta_graph_def=b"\x08\x01"),
+            compat_pb2.Event(step=1, meta_graph_def=b"\xff\xff"),
             "/graphs/graph.pb",
         ),
         (
@@ -189,7 +189,7 @@ def _tagged(run_metadata: bytes) -> event_pb2.Event:
     ],
 )
 def test_converted_file_of_a_changed_event_file_is_eio(
-    tmp_path: Path, good: event_pb2.Event, bad: event_pb2.Event, path: str
+    tmp_path: Path, good: compat_pb2.Event, bad: compat_pb2.Event, path: str
 ) -> None:
     """A payload that no longer parses after indexing gives EIO on read."""
     fs = _log(tmp_path, good)

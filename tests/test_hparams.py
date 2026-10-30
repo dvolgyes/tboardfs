@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import event_pb2, hparams_plugin_data_pb2
+from tboardfs.proto import compat_pb2, hparams_plugin_data_pb2
 
 from test_incremental_parse import _frame
 
@@ -15,7 +15,7 @@ SESSION_END = "_hparams_/session_end_info"
 
 
 def _plugin(tag: str, data: Any) -> bytes:
-    event = event_pb2.Event(wall_time=1.0)
+    event = compat_pb2.Event(wall_time=1.0)
     value = event.summary.value.add(tag=tag)
     value.metadata.plugin_data.plugin_name = "hparams"
     value.metadata.plugin_data.content = data.SerializeToString()
@@ -48,7 +48,7 @@ def _end(status: int, time: float) -> bytes:
 
 
 def _scalar(tag: str, step: int, value: float) -> bytes:
-    event = event_pb2.Event(wall_time=2.0 + step, step=step)
+    event = compat_pb2.Event(wall_time=2.0 + step, step=step)
     event.summary.value.add(tag=tag, simple_value=value)
     return _frame(event)
 

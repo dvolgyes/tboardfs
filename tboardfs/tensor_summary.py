@@ -108,8 +108,7 @@ class _TensorSummary:
 
         The buckets are read as TensorBoard's data_compat migrates them: the
         empty buckets at the two ends are dropped, and the buckets run from
-        the minimum to the maximum. Proto3 writers leave out a 0 minimum or
-        maximum.
+        the minimum to the maximum.
         """
         counts = [float(count) for count in histogram.get("bucket", [])]
         filled = [index for index, count in enumerate(counts) if count > 0]
@@ -118,8 +117,8 @@ class _TensorSummary:
         start, end = filled[0], filled[-1]
         limits = histogram.get("bucket_limit", [])
         inner = [float(limit) for limit in limits[start:end]]
-        lefts = [float(histogram.get("min", 0.0)), *inner]
-        rights = [*inner, float(histogram.get("max", 0.0))]
+        lefts = [float(histogram["min"]), *inner]
+        rights = [*inner, float(histogram["max"])]
         # A malformed histogram with too few limits keeps the buckets it has.
         return list(zip(lefts, rights, counts[start : end + 1], strict=False))
 

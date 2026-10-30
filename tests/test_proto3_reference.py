@@ -5,6 +5,7 @@ every field with its default value is absent; tests/golden/proto3 holds what
 TensorBoard 2.21 reads from them (scripts/generate_proto3_logs.py).
 """
 
+import errno
 import io
 import json
 from pathlib import Path
@@ -20,13 +21,11 @@ from tboardfs.tfrecord import iter_tfrecords
 ROOT = Path(__file__).resolve().parent.parent
 LOGS = ROOT / "test-logs" / "proto3"
 GOLDEN = ROOT / "tests" / "golden" / "proto3"
-PROTO2_PRESENCE = "proto2 field presence: an absent field is not its default"
+NO_ELEMENTS = "a tensor without elements has no .npy file"
 # (run, kind, tag) that tboardfs does not read as TensorBoard yet.
 KNOWN = {
-    ("wall_time_zero", "scalars", "loss"): PROTO2_PRESENCE,
-    ("histogram_zero_edges", "histograms", "tf2_empty"): PROTO2_PRESENCE,
-    ("tensor_zero_dims", "tensors", "empty"): PROTO2_PRESENCE,
-    ("tensor_zero_dims", "tensors", "empty_rows"): PROTO2_PRESENCE,
+    ("tensor_zero_dims", "tensors", "empty"): NO_ELEMENTS,
+    ("tensor_zero_dims", "tensors", "empty_rows"): NO_ELEMENTS,
 }
 
 
@@ -122,7 +121,9 @@ def test_proto3_defaults_read_as_tensorboard(
         name = f"{int(step):06d}"
         if kind == "histograms" and not golden:
             # A histogram of no values has no step file.
-            assert f"{name}.json" not in fs.readdir(f"/histograms/{tag}", 0)
+            with pytest.raises(OSError) as raised:
+                fs.getattr(f"/histograms/{tag}/{name}.json")
+            assert raised.value.errno == errno.ENOENT
         elif kind == "histograms":
             rows = _json(fs, f"/histograms/{tag}/{name}.json")
             got = [[r["bucket_left"], r["bucket_right"], r["count"]] for r in rows]

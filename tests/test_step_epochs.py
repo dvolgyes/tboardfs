@@ -9,19 +9,19 @@ from pathlib import Path
 from typing import Any
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import event_pb2
+from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _frame
 
 
 def _scalar(step: int, tag: str, value: float) -> bytes:
-    event = event_pb2.Event(wall_time=100.0 + step, step=step)
+    event = compat_pb2.Event(wall_time=100.0 + step, step=step)
     event.summary.value.add(tag=tag, simple_value=value)
     return _frame(event)
 
 
 def _histogram(step: int) -> bytes:
-    event = event_pb2.Event(wall_time=100.0 + step, step=step)
+    event = compat_pb2.Event(wall_time=100.0 + step, step=step)
     histogram = event.summary.value.add(tag="weights").histo
     histogram.max = 1.0
     histogram.bucket_limit.append(1.0)

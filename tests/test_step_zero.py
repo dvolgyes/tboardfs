@@ -4,14 +4,14 @@ import json
 from pathlib import Path
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import event_pb2
+from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _files, _frame
 
 
 def test_an_event_at_step_zero_is_step_zero(tmp_path: Path) -> None:
     """Proto3 writers leave out step 0, so its absence is step 0, not NaN."""
-    event = event_pb2.Event(wall_time=1.0)
+    event = compat_pb2.Event(wall_time=1.0)
     event.summary.value.add(tag="loss", simple_value=0.5)
     tensor = event.summary.value.add(tag="w").tensor
     tensor.dtype = 1

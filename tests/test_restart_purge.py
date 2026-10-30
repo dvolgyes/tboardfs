@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import event_pb2
+from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import PNG, _contents, _frame
 
@@ -25,19 +25,21 @@ SESSION_START = b"\x3a\x02\x08\x01"
 
 def _version(text: str = VERSION_2) -> bytes:
     raw = FILE_VERSION_KEY + bytes([len(text)]) + text.encode()
-    return _frame(event_pb2.Event.FromString(raw))
+    return _frame(compat_pb2.Event.FromString(raw))
 
 
 def _start(step: int | None) -> bytes:
-    event = event_pb2.Event(wall_time=2.0)
+    event = compat_pb2.Event(wall_time=2.0)
     if step is not None:
         event.step = step
-    return _frame(event_pb2.Event.FromString(event.SerializeToString() + SESSION_START))
+    return _frame(
+        compat_pb2.Event.FromString(event.SerializeToString() + SESSION_START)
+    )
 
 
 def _values(step: int, value: float) -> bytes:
     """Return one event with a scalar, an image and a histogram."""
-    event = event_pb2.Event(wall_time=100.0 + step, step=step)
+    event = compat_pb2.Event(wall_time=100.0 + step, step=step)
     event.summary.value.add(tag="loss", simple_value=value)
     image = event.summary.value.add(tag="img").image
     image.height = image.width = 1
@@ -111,7 +113,7 @@ def test_rows_without_a_step_count_as_step_zero(
     tmp_path: Path, start: int, kept: bool
 ) -> None:
     """A row whose writer left out step 0 is dropped by a START at step 0."""
-    event = event_pb2.Event(wall_time=100.0)
+    event = compat_pb2.Event(wall_time=100.0)
     event.summary.value.add(tag="loss", simple_value=5.0)
     fs = _write(
         tmp_path, _run(_version(), _frame(event)), _run(_version(), _start(start))
@@ -139,7 +141,7 @@ def test_start_in_old_files_is_ignored(tmp_path: Path, version: str | None) -> N
 
 def test_graphs_are_not_dropped(tmp_path: Path) -> None:
     """TensorBoard keeps the graph of a run after a restart."""
-    graph = _frame(event_pb2.Event(wall_time=1.5, step=4, graph_def=b"graph"))
+    graph = _frame(compat_pb2.Event(wall_time=1.5, step=4, graph_def=b"graph"))
     fs = _write(tmp_path, _run(FIRST_RUN, graph), _run(_version(), _start(0)))
 
     assert fs.read("/graphs/graph.pb", 100, 0) == b"graph"

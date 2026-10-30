@@ -11,14 +11,14 @@ import pytest
 
 from tboardfs import TensorBoardFS
 from tboardfs.crc32c import masked_crc32c
-from tboardfs.proto import event_pb2
+from tboardfs.proto import compat_pb2
 
 DT_DOUBLE = 2
 DT_INT64 = 9
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 16
 
 
-def _frame(event: event_pb2.Event) -> bytes:
+def _frame(event: compat_pb2.Event) -> bytes:
     payload = event.SerializeToString()
     length = struct.pack("<Q", len(payload))
     return (
@@ -31,7 +31,7 @@ def _frame(event: event_pb2.Event) -> bytes:
 
 def _random_record(rng: np.random.Generator, step: int, wall_time: float) -> bytes:
     """Return one event with a random mix of scalar and non-scalar values."""
-    event = event_pb2.Event(wall_time=wall_time, step=step)
+    event = compat_pb2.Event(wall_time=wall_time, step=step)
     kinds = rng.choice(
         ["loss", "lr", "count", "epoch", "weights", "img"],
         size=int(rng.integers(1, 4)),
@@ -111,6 +111,6 @@ def test_replaced_event_file_is_parsed_again(tmp_path: Path, new_steps: int) -> 
 
 
 def _loss(step: int, value: float) -> bytes:
-    event = event_pb2.Event(wall_time=100.0 + step, step=step)
+    event = compat_pb2.Event(wall_time=100.0 + step, step=step)
     event.summary.value.add(tag="loss", simple_value=value)
     return _frame(event)

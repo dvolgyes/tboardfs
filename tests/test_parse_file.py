@@ -13,7 +13,7 @@ import pytest
 from tboardfs import FIXED_TABS, TensorBoardFS, find_tensorboard_files, parse_file
 from tboardfs.classify import detect_extension
 from tboardfs.file_tree import SingleEventTree
-from tboardfs.proto import event_pb2
+from tboardfs.proto import compat_pb2
 from tboardfs.summary import parse_event
 from tboardfs.tables import export_table
 from tboardfs.crc32c import masked_crc32c
@@ -111,8 +111,8 @@ def _event_record(
     step: int,
     values: list[object],
 ) -> bytes:
-    Event = getattr(event_pb2, "Event")
-    Summary = getattr(event_pb2, "Summary")
+    Event = getattr(compat_pb2, "Event")
+    Summary = getattr(compat_pb2, "Summary")
     return _record(
         Event(
             wall_time=wall_time,
@@ -123,8 +123,8 @@ def _event_record(
 
 
 def _tensor_value(tag: str, dtype: int, field_name: str, value: int) -> object:
-    SummaryValue = getattr(event_pb2, "SummaryValue")
-    TensorProto = getattr(event_pb2, "TensorProto")
+    SummaryValue = getattr(compat_pb2, "Summary").Value
+    TensorProto = getattr(compat_pb2, "TensorProto")
     tensor = TensorProto(dtype=dtype)
     getattr(tensor, field_name).append(value)
     return SummaryValue(tag=tag, tensor=tensor)
@@ -280,8 +280,8 @@ def test_parse_file_reads_integer_tensor_scalars(tmp_path: Path) -> None:
 
 def test_parse_event_reads_negative_integer_tensors_as_signed_values() -> None:
     """Vendored protobuf parsing returns signed Python integers."""
-    Event = getattr(event_pb2, "Event")
-    Summary = getattr(event_pb2, "Summary")
+    Event = getattr(compat_pb2, "Event")
+    Summary = getattr(compat_pb2, "Summary")
     event = Event(
         wall_time=5.0,
         step=9,
@@ -679,8 +679,8 @@ def test_copy_all_refuses_symlink_escape(tmp_path: Path) -> None:
 
 
 def _histogram_value(tag: str, limits: list[float], counts: list[float]) -> object:
-    SummaryValue = getattr(event_pb2, "SummaryValue")
-    HistogramProto = getattr(event_pb2, "HistogramProto")
+    SummaryValue = getattr(compat_pb2, "Summary").Value
+    HistogramProto = getattr(compat_pb2, "HistogramProto")
     histo = HistogramProto(min=0.0, max=limits[-1], bucket_limit=limits, bucket=counts)
     return SummaryValue(tag=tag, histo=histo)
 
@@ -751,8 +751,8 @@ def test_distribution_keeps_repeated_step_events_apart(tmp_path: Path) -> None:
 
 def test_histogram_with_missing_step_field_is_exported_once(tmp_path: Path) -> None:
     """A step omitted on the wire still yields one non-empty step file."""
-    Event = getattr(event_pb2, "Event")
-    Summary = getattr(event_pb2, "Summary")
+    Event = getattr(compat_pb2, "Event")
+    Summary = getattr(compat_pb2, "Summary")
     value = _histogram_value("w", [1.0, 2.0], [1.0, 1.0])
     payloads = [
         Event(wall_time=wall, summary=Summary(value=[value])).SerializeToString()

@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import event_pb2
+from tboardfs.proto import compat_pb2
 from tboardfs.tables import _TableExport
 
 from test_incremental_parse import _files, _frame
@@ -32,10 +32,10 @@ def fs(tmp_path: Path) -> TensorBoardFS:
     """Return a log with non-finite scalars and tensors and binary plugin data."""
     records = []
     for step, loss in enumerate([1.0, math.inf, -math.inf, math.nan]):
-        event = event_pb2.Event(wall_time=100.0 + step, step=step)
+        event = compat_pb2.Event(wall_time=100.0 + step, step=step)
         event.summary.value.add(tag="loss", simple_value=loss)
         records.append(_frame(event))
-    event = event_pb2.Event(wall_time=200.0, step=7)
+    event = compat_pb2.Event(wall_time=200.0, step=7)
     value = event.summary.value.add(tag="act")
     value.metadata.plugin_data.plugin_name = "tensors"
     value.tensor.dtype = DT_FLOAT

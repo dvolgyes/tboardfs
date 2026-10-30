@@ -8,7 +8,6 @@ from google.protobuf import descriptor_pb2, descriptor_pool
 
 import tboardfs.proto.compat_pb2
 import tboardfs.proto.custom_scalar_layout_pb2
-import tboardfs.proto.event_pb2
 import tboardfs.proto.graph_pb2
 import tboardfs.proto.hparams_api_pb2
 import tboardfs.proto.hparams_plugin_data_pb2
@@ -32,6 +31,8 @@ UPSTREAM = [
     ),
     ("tensorboard/plugins/mesh/plugin_data.proto", "tensorboard.mesh", "MeshPluginData"),
     ("tensorboard/plugins/custom_scalar/layout.proto", "tensorboard", "Layout"),
+    ("tensorboard/compat/proto/event.proto", "tensorboard", "Event"),
+    ("tensorboard/compat/proto/summary.proto", "tensorboard", "Summary"),
     ("tensorboard/compat/proto/config.proto", "tensorboard", "RunMetadata"),
     ("tensorboard/compat/proto/meta_graph.proto", "tensorboard", "MetaGraphDef"),
     ("tensorboard/compat/proto/graph.proto", "tensorboard", "GraphDef"),

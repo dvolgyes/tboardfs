@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from tboardfs import TensorBoardFS
-from tboardfs.proto import event_pb2
+from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _files, _frame
 
@@ -14,22 +14,22 @@ DT_FLOAT, DT_DOUBLE, DT_STRING = 1, 2, 7
 PNG = b"\x89PNG\r\n\x1a\n"
 
 
-def _value(event: event_pb2.Event, tag: str, plugin: str, shape: list[int]) -> object:
+def _value(event: compat_pb2.Event, tag: str, plugin: str, shape: list[int]) -> object:
     value = event.summary.value.add(tag=tag)
     value.metadata.plugin_data.plugin_name = plugin
     value.tensor.tensor_shape.dim.extend(
-        event_pb2.TensorShapeDim(size=s) for s in shape
+        compat_pb2.TensorShapeProto.Dim(size=s) for s in shape
     )
     return value.tensor
 
 
-def _log(tmp_path: Path, *events: event_pb2.Event) -> TensorBoardFS:
+def _log(tmp_path: Path, *events: compat_pb2.Event) -> TensorBoardFS:
     (tmp_path / "events.out.tfevents.host").write_bytes(b"".join(map(_frame, events)))
     return TensorBoardFS(tmp_path)
 
 
-def _images(step: int, *blobs: bytes) -> event_pb2.Event:
-    event = event_pb2.Event(wall_time=1.0, step=step)
+def _images(step: int, *blobs: bytes) -> compat_pb2.Event:
+    event = compat_pb2.Event(wall_time=1.0, step=step)
     tensor = _value(event, "img", "images", [len(blobs) + 2])
     tensor.dtype = DT_STRING
     tensor.string_val.extend([b"4", b"2", *blobs])
@@ -57,7 +57,7 @@ def test_each_image_sample_is_a_file(tmp_path: Path) -> None:
 
 def test_an_audio_summary_is_an_audio_file_per_sample(tmp_path: Path) -> None:
     """Rows of a [k, 2] audio tensor are encoded audio and a label."""
-    event = event_pb2.Event(wall_time=1.0, step=2)
+    event = compat_pb2.Event(wall_time=1.0, step=2)
     tensor = _value(event, "aud", "audio", [2, 2])
     tensor.dtype = DT_STRING
     wave = b"RIFF\x00\x00\x00\x00WAVEfmt "
@@ -70,7 +70,7 @@ def test_an_audio_summary_is_an_audio_file_per_sample(tmp_path: Path) -> None:
 
 def test_a_histogram_summary_is_a_histogram_table(tmp_path: Path) -> None:
     """Rows of a [k, 3] tensor are bucket left, right and count."""
-    event = event_pb2.Event(wall_time=1.0, step=1)
+    event = compat_pb2.Event(wall_time=1.0, step=1)
     tensor = _value(event, "h", "histograms", [2, 3])
     tensor.dtype = DT_DOUBLE
     tensor.tensor_content = np.asarray([0, 1, 3, 1, 2, 5], dtype="<f8").tobytes()
@@ -88,7 +88,7 @@ def test_a_histogram_summary_is_a_histogram_table(tmp_path: Path) -> None:
 
 def test_a_scalar_summary_has_only_the_scalar_table(tmp_path: Path) -> None:
     """A TF2 scalar adds a table row, and no file per step, as in TF1."""
-    event = event_pb2.Event(wall_time=1.0, step=1)
+    event = compat_pb2.Event(wall_time=1.0, step=1)
     tensor = _value(event, "loss", "scalars", [])
     tensor.dtype = DT_FLOAT
     tensor.float_val.append(0.5)
@@ -103,7 +103,7 @@ def test_a_scalar_summary_has_only_the_scalar_table(tmp_path: Path) -> None:
 
 def test_a_non_scalar_scalars_record_keeps_its_json(tmp_path: Path) -> None:
     """A scalars record that holds no scalar is not lost."""
-    event = event_pb2.Event(wall_time=1.0, step=1)
+    event = compat_pb2.Event(wall_time=1.0, step=1)
     tensor = _value(event, "loss", "scalars", [2])
     tensor.dtype = DT_FLOAT
     tensor.float_val.extend([0.5, 0.25])
@@ -128,8 +128,8 @@ def test_tensorflow_2_summaries_are_unpacked() -> None:
 
 def _tf1_histogram(
     limits: list[float], counts: list[float], *, low: float | None, high: float
-) -> event_pb2.Event:
-    event = event_pb2.Event(wall_time=1.0, step=1)
+) -> compat_pb2.Event:
+    event = compat_pb2.Event(wall_time=1.0, step=1)
     value = event.summary.value.add(tag="h")
     if low is not None:
         value.histo.min = low
@@ -187,7 +187,7 @@ def test_a_large_image_is_only_an_image(tmp_path: Path) -> None:
 
 def test_a_malformed_audio_tensor_is_left_packed(tmp_path: Path) -> None:
     """A 1-D audio tensor has no [audio, label] rows, so it stays one record."""
-    event = event_pb2.Event(wall_time=1.0, step=1)
+    event = compat_pb2.Event(wall_time=1.0, step=1)
     tensor = _value(event, "aud", "audio", [3])
     tensor.dtype = DT_STRING
     tensor.string_val.extend([b"RIFF0", b"RIFF1", b"RIFF2"])
@@ -198,7 +198,7 @@ def test_a_malformed_audio_tensor_is_left_packed(tmp_path: Path) -> None:
 
 def test_a_malformed_histogram_tensor_is_left_packed(tmp_path: Path) -> None:
     """A tensor with rows of two values is not a histogram."""
-    event = event_pb2.Event(wall_time=1.0, step=1)
+    event = compat_pb2.Event(wall_time=1.0, step=1)
     tensor = _value(event, "h", "histograms", [2, 2])
     tensor.dtype = DT_DOUBLE
     tensor.tensor_content = np.asarray([0, 1, 1, 2], dtype="<f8").tobytes()
