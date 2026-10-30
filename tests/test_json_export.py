@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import orjson
 import pytest
 
 from tboardfs import TensorBoardFS
@@ -109,3 +110,35 @@ def test_table_json_numbers_read_back_exactly() -> None:
 
     assert [row["step"] for row in rows] == series["step"].tolist()
     assert [row["value"] for row in rows] == values.tolist()
+
+
+def _finite(dtype: str, shape: tuple[int, ...]) -> np.ndarray:
+    rng = np.random.default_rng(len(shape))
+    values = rng.normal(size=shape) * 10.0 ** rng.integers(-30, 30, size=shape)
+    if dtype == "bool":
+        return values > 0
+    if dtype[0] in "iu>":
+        return np.clip(values, -100, 100).astype(dtype)
+    with np.errstate(over="ignore"):
+        cast = values.astype(dtype)
+    return np.where(np.isfinite(cast), cast, 1).astype(dtype)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    ["float64", "float32", "float16", "int64", "int8", "uint64", "bool", ">f8", ">i4"],
+)
+@pytest.mark.parametrize("shape", [(), (0,), (7,), (3, 4), (3, 0), (2, 3, 2)])
+def test_document_arrays_are_written_as_their_lists(
+    dtype: str, shape: tuple[int, ...]
+) -> None:
+    """A finite array is written as the list of its values, in any layout."""
+    values = _finite(dtype, shape)
+    expected = orjson.dumps(
+        {"values": values.tolist(), "column": values.T.tolist()},
+        option=orjson.OPT_INDENT_2 | orjson.OPT_APPEND_NEWLINE,
+    )
+
+    assert _TableExport.json_document({"values": values, "column": values.T}) == (
+        expected
+    )

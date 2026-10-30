@@ -13,9 +13,13 @@ from tboardfs.constants import SCALAR_COLUMNS
 from tboardfs.decode import _Decode
 from tboardfs.histogram_compress import NORMAL_HISTOGRAM_BPS, compress_histogram
 
-# Two-space indents, keys such as numbers as text, and a final newline.
+# Two-space indents, keys such as numbers as text, a final newline, and
+# NumPy arrays that json_value lets through.
 _JSON_OPTIONS = (
-    orjson.OPT_INDENT_2 | orjson.OPT_NON_STR_KEYS | orjson.OPT_APPEND_NEWLINE
+    orjson.OPT_INDENT_2
+    | orjson.OPT_NON_STR_KEYS
+    | orjson.OPT_APPEND_NEWLINE
+    | orjson.OPT_SERIALIZE_NUMPY
 )
 # Native number types that orjson writes as the same value, much faster than
 # NumPy text. orjson writes float16 with float32 digits, and booleans as JSON.
@@ -34,6 +38,8 @@ _ORJSON_NUMBERS = frozenset(
         "uint8",
     )
 )
+# The native types that orjson writes as JSON lists of their values.
+_JSON_NUMBERS = _ORJSON_NUMBERS | {np.dtype("float16"), np.dtype("bool")}
 
 
 def export_table(series: dict[str, np.ndarray], fmt: str) -> bytes:
@@ -142,6 +148,22 @@ class _TableExport:
         return orjson.dumps(value, option=_JSON_OPTIONS)
 
     @staticmethod
+    def json_array(values: np.ndarray) -> np.ndarray | None:
+        """Return an array that orjson writes as values.tolist(), or None.
+
+        orjson writes an array much faster than the list of its values. A
+        float is widened to float64, so its digits are those of the list. An
+        array with NaN or an infinity gives None, as it needs their spelling.
+        """
+        if values.ndim == 0 or values.dtype not in _JSON_NUMBERS:
+            return None
+        if values.dtype.kind == "f":
+            if not np.isfinite(values).all():
+                return None
+            values = values.astype(np.float64, copy=False)
+        return np.ascontiguousarray(values)
+
+    @staticmethod
     def json_value(value: object, nan: str | None) -> object:
         """Convert a value and its items to strict JSON types.
 
@@ -152,6 +174,9 @@ class _TableExport:
         A complex number becomes its [real, imag] pair.
         """
         if isinstance(value, np.ndarray):
+            array = _TableExport.json_array(value)
+            if array is not None:
+                return array
             value = value.tolist()
         elif isinstance(value, np.generic):
             value = value.item()
