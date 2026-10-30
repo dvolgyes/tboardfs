@@ -133,7 +133,9 @@ Each skipped virtual path is reported as a warning on stderr. `--force` and `--s
 
 The virtual tree covers these TensorBoard objects:
 
-- Scalars: full-series `json`, `tsv`, and `npz` exports under `/scalars`.
+- Scalars: full-series `json`, `tsv`, and `npz` exports under `/scalars`. The `epoch` column of scalar and histogram
+  tables is the `epoch` scalar written at the same step, as PyTorch Lightning writes it. A step without an `epoch`
+  scalar has the last epoch written before it.
 - Custom scalars: layout JSON under `/custom_scalars`.
 - Images: encoded image files under `/images`. A TensorFlow 2 image summary with more than one image gives one file per
   image, `<step>_<i>`, such as `000001_0.png`.

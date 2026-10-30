@@ -259,6 +259,35 @@ class _TableMerge:
         return merged
 
     @staticmethod
+    def step_epochs(
+        tables: Mapping[str, Mapping[str, np.ndarray]],
+        epochs: Mapping[str, np.ndarray] | None,
+    ) -> dict[str, dict[str, np.ndarray]]:
+        """Give each row the epoch scalar written at its step, when there is one.
+
+        Loggers such as PyTorch Lightning write a metric and then the epoch
+        scalar at the same step, so the epoch carried from the events before
+        the metric is one epoch late. Rows at a step without an epoch scalar
+        keep the carried epoch. The last epoch written at a step wins.
+        """
+        if not epochs or not len(epochs["step"]):
+            return {tag: dict(series) for tag, series in tables.items()}
+        backward = np.asarray(epochs["step"], dtype=np.float64)[::-1]
+        known, last = np.unique(backward, return_index=True)
+        values = np.asarray(epochs["value"], dtype=np.float64)[::-1][last]
+        aligned = {}
+        for tag, series in tables.items():
+            steps = np.asarray(series["step"], dtype=np.float64)
+            index = np.minimum(np.searchsorted(known, steps), len(known) - 1)
+            aligned[tag] = {
+                **series,
+                "epoch": np.where(
+                    known[index] == steps, values[index], series["epoch"]
+                ),
+            }
+        return aligned
+
+    @staticmethod
     def merge_mtimes(items: Iterable[Mapping[str, float]]) -> dict[str, float]:
         """Merge per-file mtimes by keeping the most recent value."""
         merged: dict[str, float] = {}

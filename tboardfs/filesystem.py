@@ -498,14 +498,14 @@ class _RunTree:
         step_digits: int,
     ) -> None:
         """Populate one run directory with indexed virtual files."""
-        _RunTree.add_scalar_files(run_node, run, scalar_formats)
-        _HistogramFiles.add_files(run_node, run, scalar_formats, step_digits)
+        scalars = _RunTree.merged_scalars(run)
+        _RunTree.add_scalar_files(run_node, run, scalars, scalar_formats)
+        _HistogramFiles.add_files(
+            run_node, run, scalars.get("epoch"), scalar_formats, step_digits
+        )
         _RunTree.add_binary_files(run_node, run, step_digits)
         consumed = add_typed_plugin_files(
-            run_node,
-            _RunData.run_json_entries(run),
-            _RunTree.merged_scalars(run),
-            step_digits,
+            run_node, _RunData.run_json_entries(run), scalars, step_digits
         )
         _RunTree.add_json_files(run_node, run, step_digits, consumed)
         _RunTree.add_graph_files(run_node, run)
@@ -513,12 +513,12 @@ class _RunTree:
 
     @staticmethod
     def add_scalar_files(
-        run_node: dict[str, Any], run: RunCache, scalar_formats: tuple[str, ...]
+        run_node: dict[str, Any],
+        run: RunCache,
+        scalars: dict[str, dict[str, Any]],
+        scalar_formats: tuple[str, ...],
     ) -> None:
-        """Add scalar export files for one run."""
-        scalars = _TableMerge.merge_series(
-            cache.scalars for cache in _RunData.sorted_file_caches(run)
-        )
+        """Add the merged scalar tables of one run as export files."""
         mtimes = _TableMerge.merge_mtimes(
             cache.scalar_mtimes for cache in _RunData.sorted_file_caches(run)
         )
@@ -579,10 +579,11 @@ class _RunTree:
 
     @staticmethod
     def merged_scalars(run: RunCache) -> dict[str, dict[str, Any]]:
-        """Return merged scalar series for one run."""
-        return _TableMerge.merge_series(
+        """Return merged scalar series for one run, with the epoch of each step."""
+        scalars = _TableMerge.merge_series(
             cache.scalars for cache in _RunData.sorted_file_caches(run)
         )
+        return _TableMerge.step_epochs(scalars, scalars.get("epoch"))
 
     @staticmethod
     def add_graph_files(run_node: dict[str, Any], run: RunCache) -> None:
@@ -641,13 +642,15 @@ class _HistogramFiles:
     def add_files(
         run_node: dict[str, Any],
         run: RunCache,
+        epochs: dict[str, Any] | None,
         scalar_formats: tuple[str, ...],
         step_digits: int,
     ) -> None:
-        """Add histogram and distribution table files for one run."""
+        """Add the histogram and distribution tables of one run, with its epochs."""
         histograms = _TableMerge.merge_series(
             cache.histograms for cache in _RunData.sorted_file_caches(run)
         )
+        histograms = _TableMerge.step_epochs(histograms, epochs)
         mtimes = _TableMerge.merge_mtimes(
             cache.histogram_mtimes for cache in _RunData.sorted_file_caches(run)
         )
