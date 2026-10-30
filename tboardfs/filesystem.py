@@ -227,6 +227,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             "st_mode": mode,
             "st_nlink": nlink,
             "st_size": len(data),
+            "st_blocks": (len(data) + 511) // 512,
             "st_ctime": mtime,
             "st_mtime": mtime,
             "st_atime": mtime,

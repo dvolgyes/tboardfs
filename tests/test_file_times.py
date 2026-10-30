@@ -1,4 +1,4 @@
-"""File times come from the data, so they stay the same until the data changes."""
+"""File times and sizes come from the data, so they change only with the data."""
 
 from pathlib import Path
 
@@ -48,3 +48,14 @@ def test_a_directory_time_follows_new_data(tmp_path: Path) -> None:
     _scalar(tmp_path, 3000.0, "loss")
 
     assert fs.getattr("/scalars")["st_mtime"] == 3000.0
+
+
+def test_a_file_has_the_blocks_of_its_size(tmp_path: Path) -> None:
+    """du counts 512-byte blocks, not the size."""
+    _scalar(tmp_path, 1000.0, "loss")
+    fs = TensorBoardFS(tmp_path)
+
+    status = fs.getattr("/scalars/loss.json")
+    assert status["st_size"] > 0
+    assert status["st_blocks"] == (status["st_size"] + 511) // 512
+    assert fs.getattr("/scalars")["st_blocks"] == 0
