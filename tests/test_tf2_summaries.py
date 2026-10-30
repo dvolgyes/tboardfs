@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from loguru import logger
 import numpy as np
 
 from tboardfs import TensorBoardFS
@@ -170,10 +171,16 @@ def test_empty_tf1_end_buckets_are_dropped(tmp_path: Path) -> None:
 
 
 def test_an_empty_tf1_histogram_has_no_buckets(tmp_path: Path) -> None:
-    """A histogram of no values has no bucket rows, so no file at all."""
-    fs = _log(tmp_path, _tf1_histogram([1.0, 2.0], [0.0, 0.0], low=0.0, high=0.0))
+    """A histogram of no values has no bucket rows, so no file and no warning."""
+    warnings: list[str] = []
+    sink = logger.add(warnings.append, level="WARNING", format="{message}")
+    try:
+        fs = _log(tmp_path, _tf1_histogram([1.0, 2.0], [0.0, 0.0], low=0.0, high=0.0))
 
-    assert list(_files(fs)) == []
+        assert list(_files(fs)) == []
+    finally:
+        logger.remove(sink)
+    assert warnings == []
 
 
 def test_a_large_image_is_only_an_image(tmp_path: Path) -> None:

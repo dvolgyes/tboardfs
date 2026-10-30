@@ -347,15 +347,24 @@ class _TableMerge:
         return (values == other) | (np.isnan(values) & np.isnan(other))
 
     @staticmethod
-    def unique_steps(series: dict[str, np.ndarray]) -> list[Any]:
-        """Return sorted distinct steps; all NaN steps collapse to one entry."""
-        steps: list[Any] = np.unique(series["step"]).tolist()
-        return steps
+    def split_steps(
+        series: dict[str, np.ndarray],
+    ) -> list[tuple[Any, dict[str, np.ndarray]]]:
+        """Return each distinct step in order, with its rows in their order.
 
-    @staticmethod
-    def series_for_step(
-        series: dict[str, np.ndarray], step: object
-    ) -> dict[str, np.ndarray]:
-        """Return a column-oriented table for one TensorBoard step."""
-        mask = _TableMerge.nan_equal(series["step"], step)
-        return {column: values[mask] for column, values in series.items()}
+        All NaN steps are one step.
+        """
+        steps, inverse = np.unique(series["step"], return_inverse=True)
+        order = np.argsort(inverse, kind="stable")
+        counts = np.bincount(inverse, minlength=len(steps))
+        ends = np.cumsum(counts)
+        return [
+            (
+                step,
+                {
+                    column: values[order[end - count : end]]
+                    for column, values in series.items()
+                },
+            )
+            for step, count, end in zip(steps.tolist(), counts, ends, strict=True)
+        ]

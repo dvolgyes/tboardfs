@@ -49,10 +49,9 @@ class _HistogramFiles:
     ) -> None:
         """Add the histogram and distribution tables of one tag."""
         tag, series, mtime = item["tag"], item["series"], item["mtime"]
-        steps = _TableMerge.unique_steps(series)
-        for fmt in scalar_formats:
-            for step in steps:
-                step_series = _TableMerge.series_for_step(series, step)
+        for step, step_series in _TableMerge.split_steps(series):
+            distribution = _TableMerge.distribution_from_histogram(step_series)
+            for fmt in scalar_formats:
                 _HistogramFiles.add_step_table(
                     files,
                     {
@@ -65,7 +64,6 @@ class _HistogramFiles:
                     },
                     step_digits,
                 )
-                distribution = _TableMerge.distribution_from_histogram(step_series)
                 _HistogramFiles.add_step_table(
                     files,
                     {
