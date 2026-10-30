@@ -15,7 +15,7 @@ def register_file_cli_commands(group: click.Group) -> None:
     """Register single-event file commands on a Click group."""
 
     @group.command("list")
-    @click.argument("source", type=click.Path(exists=True, dir_okay=False))
+    @click.argument("source", type=click.Path(exists=True))
     @click.argument("prefix", required=False, default="/")
     @STEP_DIGITS
     @SCALAR_FORMAT
@@ -30,7 +30,7 @@ def register_file_cli_commands(group: click.Group) -> None:
             sys.stdout.write(path + "\n")
 
     @group.command("get")
-    @click.argument("source", type=click.Path(exists=True, dir_okay=False))
+    @click.argument("source", type=click.Path(exists=True))
     @click.argument("vpath")
     @click.option(
         "-o",
@@ -75,7 +75,7 @@ def register_file_cli_commands(group: click.Group) -> None:
         logger.info("wrote {} to {}", _Paths.norm_virtual_path(vpath), output_path)
 
     @group.command("copy-all")
-    @click.argument("source", type=click.Path(exists=True, dir_okay=False))
+    @click.argument("source", type=click.Path(exists=True))
     @click.argument("outdir", type=click.Path(file_okay=False))
     @click.option("-f", "--force", is_flag=True)
     @click.option("-s", "--skip-existing", is_flag=True)

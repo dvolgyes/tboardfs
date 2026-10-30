@@ -13,7 +13,7 @@ from tboardfs.file_cli_commands import register_file_cli_commands
 @click.option("--logfile", type=click.Path(dir_okay=False))
 @LOGLEVEL
 def main(logfile: str | None, loglevel: str) -> None:
-    """Inspect one TensorBoard event file without mounting FUSE."""
+    """Inspect a TensorBoard event file or log directory without FUSE."""
     _configure_logging(Path(logfile) if logfile is not None else None, loglevel)
 
 

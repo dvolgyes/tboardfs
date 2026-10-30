@@ -2,7 +2,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from tboardfs.constants import DEFAULT_SCALAR_FORMATS
-from tboardfs.filesystem import _build_run_virtual_tree, _materialize_node_bytes
+from tboardfs.filesystem import (
+    TensorBoardFS,
+    _build_run_virtual_tree,
+    _materialize_node_bytes,
+)
 from tboardfs.indexer import _EventIndexer
 from tboardfs.model import RunCache
 from tboardfs.paths import _Paths
@@ -27,6 +31,9 @@ class _CopyConflictError(FileExistsError):
 class SingleEventTree:
     """Expose one event file through the shared virtual tree implementation.
 
+    A run or log directory is read as filesystem mode shows it, with its
+    run directories and sidecars.
+
     :ivar tree: root virtual directory node
     """
 
@@ -40,12 +47,21 @@ class SingleEventTree:
         scalar_format: str = "json,tsv,npz",
     ) -> None:
         source_path = Path(source)
+        scalar_formats = (
+            _Paths.normalize_formats(scalar_format) or DEFAULT_SCALAR_FORMATS
+        )
+        if source_path.is_dir():
+            filesystem = TensorBoardFS(
+                source_path,
+                step_digits=step_digits,
+                scalar_formats=scalar_formats,
+                cache_size_mb=0,
+            )
+            self.tree = filesystem.virtual_tree()
+            return
         run = RunCache(())
         run.files[source_path] = _EventIndexer.parse_event_file(
             source_path, ignore_truncated=True
-        )
-        scalar_formats = (
-            _Paths.normalize_formats(scalar_format) or DEFAULT_SCALAR_FORMATS
         )
         self.tree = _build_run_virtual_tree(run, scalar_formats, step_digits)
 

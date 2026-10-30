@@ -166,6 +166,13 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         self._lock = RLock()
         self._discover_runs(force=True)
 
+    def virtual_tree(self) -> dict[str, Any]:
+        """Return the current root node; nodes are not changed after creation."""
+        with self._lock:
+            self._discover_runs()
+            self._refresh_runs()
+            return self._cached_tree()
+
     def getattr(self, path: str, *file_handles: object) -> dict[str, Any]:
         """Return stat data for a virtual path, or for an open handle."""
         opened = self._open_file(file_handles)

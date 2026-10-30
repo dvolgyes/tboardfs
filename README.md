@@ -72,7 +72,7 @@ produce.
 
 ## Command Mode
 
-Use `tboardfs-file` when mounting is unavailable or when you need scripted access to one TensorBoard event file.
+Use `tboardfs-file` when mounting is unavailable or when you need scripted access to TensorBoard event files.
 
 List every virtual file:
 
@@ -111,8 +111,10 @@ Copy the full virtual tree:
 tboardfs-file copy-all events.out.tfevents.123 exported-event
 ```
 
-Command mode exposes tab directories directly at the root, for example `/scalars`, `/images`, and `/meshes`. It accepts
-a single event file and does not include sibling sidecars.
+For one event file, command mode exposes tab directories directly at the root, for example `/scalars`, `/images`, and
+`/meshes`, without sibling sidecars. SOURCE can also be a run directory or a log directory. Then the commands show the
+same tree as a mount of that directory: a run directory has its tabs at the root, a log directory has one directory per
+run, and both include sidecars.
 
 `get` refuses to overwrite existing files unless `--force` is provided. `copy-all` copies files in deterministic
 virtual-path order. If it reaches an existing target without `--force`, it stops, reports how many files were already
@@ -159,8 +161,8 @@ The virtual tree covers these TensorBoard objects:
   NumPy text arrays (dtype `U`), so `np.load` reads them without `allow_pickle`.
 - Graphs: graph protobuf files under `/graphs`. `graph.pb` is the newest graph of the run, as in TensorBoard. A run with
   several graphs also has `graph_<i>.pb` for each graph, in write order.
-- Projector and profile sidecars: available in filesystem mode under `/projector` and `/profile`; command mode
-  intentionally omits sibling sidecar files because it operates on one event file. The embedding files that
+- Projector and profile sidecars: available in filesystem mode, and in command mode for a directory, under `/projector`
+  and `/profile`; command mode for one event file omits sibling sidecar files. The embedding files that
   `projector_config.pbtxt` names (`tensor_path`, `metadata_path`, sprite `image_path`, `bookmarks_path`), such as the
   `<step>/<tag>/tensors.tsv` files of PyTorch and tensorboardX `add_embedding`, are under `/projector` at the same
   relative paths. Only relative paths to files of the run are followed, and only the first MiB of the config is read.
