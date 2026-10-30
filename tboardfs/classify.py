@@ -5,7 +5,7 @@ from typing import Any
 import magic
 import numpy as np
 
-from tboardfs.constants import LARGE_TENSOR_THRESHOLD
+from tboardfs.constants import DT_STRING, LARGE_TENSOR_THRESHOLD
 from tboardfs.model import Scalar
 from tboardfs.tensor import tensor_to_array
 
@@ -97,6 +97,11 @@ class _Classifier:
         return Scalar(struct.unpack(fmt, content)[0], np_dtype)
 
     @staticmethod
+    def plugin_name(value: dict[str, Any]) -> str:
+        """Return the plugin name of a summary value in lower case, or ""."""
+        return str(value.get("plugin_name") or "").lower()
+
+    @staticmethod
     def binary_kind(value: dict[str, Any]) -> str | None:
         """Classify summary values whose raw bytes should be exposed as files."""
         image_blob = value.get("image", {}).get("encoded_image_string")
@@ -107,7 +112,7 @@ class _Classifier:
         if value.get("audio", {}).get("encoded_audio_string"):
             return "audio"
 
-        plugin_name = (value.get("plugin_name") or "").lower()
+        plugin_name = _Classifier.plugin_name(value)
         if plugin_name in {"video", "videos"}:
             return "videos"
 
@@ -168,7 +173,7 @@ class _Classifier:
         tensor = value.get("tensor") or {}
         if not tensor:
             return None
-        if tensor.get("dtype") == 7:
+        if tensor.get("dtype") == DT_STRING:
             return "text" if tensor.get("string_val") else None
         if _Classifier.scalar_value(value) is not None:
             return None

@@ -1,7 +1,8 @@
 from typing import Any, cast
 
 from tboardfs.proto_schema import _ProtoParser
-from tboardfs.tensor_summary import DT_STRING, TAGGED_RUN_METADATA
+from tboardfs.constants import DT_STRING
+from tboardfs.tensor_summary import TAGGED_RUN_METADATA
 
 # SessionLog.SessionStatus.START in the vendored event proto.
 START = 1

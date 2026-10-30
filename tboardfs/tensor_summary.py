@@ -4,9 +4,9 @@ from types import MappingProxyType
 from typing import Any
 
 from tboardfs.classify import _Classifier, detect_extension
+from tboardfs.constants import DT_STRING
 from tboardfs.tensor import tensor_to_array
 
-DT_STRING = 7
 GIF_HEADERS = (b"GIF87a", b"GIF89a")
 # Columns of a TF2 histogram tensor: bucket left, bucket right, count.
 HISTOGRAM_COLUMNS = 3
@@ -46,7 +46,7 @@ class _TensorSummary:
         tensor = value.get("tensor") or {}
         if tensor.get("dtype") != DT_STRING:
             return None
-        plugin = (value.get("plugin_name") or "").lower()
+        plugin = _Classifier.plugin_name(value)
         strings = tensor.get("string_val", [])
         shape = tensor.get("shape") or []
         if plugin in GRAPH_PLUGINS:
@@ -74,13 +74,13 @@ class _TensorSummary:
     def part_extension(value: dict[str, Any], kind: str, blob: bytes) -> str:
         """Return the file extension of one item from media_parts."""
         if kind == "graphs":
-            return GRAPH_PLUGINS[(value.get("plugin_name") or "").lower()][1]
+            return GRAPH_PLUGINS[_Classifier.plugin_name(value)][1]
         return detect_extension(blob)
 
     @staticmethod
     def graph_views(value: dict[str, Any]) -> tuple[bool, bool]:
         """Return whether TensorBoard draws the graph and shows the profile of a graph tensor."""
-        _, _, graph, profile = GRAPH_PLUGINS[(value.get("plugin_name") or "").lower()]
+        _, _, graph, profile = GRAPH_PLUGINS[_Classifier.plugin_name(value)]
         return graph, profile
 
     @staticmethod
@@ -91,7 +91,7 @@ class _TensorSummary:
         histogram = value.get("histo")
         if histogram is not None:
             return _TensorSummary.tf1_histogram_buckets(histogram)
-        if (value.get("plugin_name") or "").lower() != "histograms":
+        if _Classifier.plugin_name(value) != "histograms":
             return None
         data = tensor_to_array(value.get("tensor") or {})
         if (
@@ -132,7 +132,7 @@ class _TensorSummary:
 
         Such a record has no JSON file of its own, as its TF1 form has none.
         """
-        if (value.get("plugin_name") or "").lower() == "scalars":
+        if _Classifier.plugin_name(value) == "scalars":
             return _Classifier.scalar_value(value) is not None
         return (
             _TensorSummary.media_parts(value) is not None

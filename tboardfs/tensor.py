@@ -3,7 +3,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
-from tboardfs.constants import MAX_REPEATED_TENSOR_BYTES
+from tboardfs.constants import DT_STRING, MAX_REPEATED_TENSOR_BYTES
 from tboardfs.decode import _Decode
 
 BFLOAT16 = 14
@@ -17,7 +17,7 @@ def tensor_to_array(tensor: dict[str, Any]) -> np.ndarray | None:
     malformed values, or values that do not fill the shape.
     """
     dtype = tensor.get("dtype")
-    if dtype == 7:
+    if dtype == DT_STRING:
         return _TensorDType.shaped(_TensorDType.strings(tensor), tensor, fill=True)
 
     spec = _TensorDType.spec(dtype)
