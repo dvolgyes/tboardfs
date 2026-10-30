@@ -1,7 +1,6 @@
 """Collect the virtual files of one run, then give each tag a directory that no file has."""
 
 from dataclasses import dataclass
-import time
 from typing import Any
 
 from loguru import logger
@@ -142,5 +141,4 @@ class RunFiles:
                 )
                 return
             parent = child
-        node.setdefault("mtime", time.time())
         _Paths.mkdirs(run_node, path[:-1])["children"][path[-1]] = node

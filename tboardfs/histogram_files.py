@@ -1,7 +1,6 @@
 """Add the per-step histogram and distribution files of a run."""
 
 from functools import partial
-import time
 from typing import Any
 
 from tboardfs.model import EventFileCache
@@ -31,7 +30,7 @@ def add_histogram_files(
             partial(
                 _HistogramFiles.add_tag_files,
                 files,
-                {"tag": tag, "series": series, "mtime": mtimes.get(tag, time.time())},
+                {"tag": tag, "series": series, "mtime": mtimes.get(tag, 0.0)},
                 scalar_formats,
                 step_digits,
             ),

@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 from errno import EIO, EISDIR, ENOENT, ENOTDIR, EOPNOTSUPP, EROFS
 from fnmatch import fnmatchcase
 from functools import partial
-import math
 import os
 from pathlib import Path
 import stat
@@ -20,6 +19,7 @@ from tboardfs.constants import (
     TENSORBOARD_EVENT_GLOB,
 )
 from tboardfs.errors import fuse_error
+from tboardfs.file_times import FileTimes
 from tboardfs.extract import _extract_graph_blob, extract_binary_blob
 from tboardfs.graph_files import add_graph_files
 from tboardfs.histogram_files import add_histogram_files
@@ -108,6 +108,7 @@ def _build_run_virtual_tree(
     for tab in FIXED_TABS:
         run_node["children"].setdefault(tab, {"type": "dir", "children": {}})
     _RunTree.add_run_files(run_node, run, scalar_formats, step_digits)
+    FileTimes.stamp_dirs(run_node)
     return run_node
 
 
@@ -211,13 +212,12 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     def getattr(self, path: str, *file_handles: object) -> dict[str, Any]:
         """Return stat data for a virtual path, or for an open handle."""
         opened = self._open_file(file_handles)
-        now = time.time()
         mode, nlink = stat.S_IFREG | 0o444, 1
         if opened is not None:
             data, mtime = opened
         else:
             node, key = self._locate(path)
-            mtime = _FsNode.mtime(node, now)
+            mtime = FileTimes.of(node)
             if node["type"] == "dir":
                 mode, nlink, data = stat.S_IFDIR | 0o555, 2, b""
             else:
@@ -227,9 +227,9 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             "st_mode": mode,
             "st_nlink": nlink,
             "st_size": len(data),
-            "st_ctime": now,
+            "st_ctime": mtime,
             "st_mtime": mtime,
-            "st_atime": now,
+            "st_atime": mtime,
             "st_uid": uid,
             "st_gid": gid,
         }
@@ -248,7 +248,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         node, key = self._locate(path)
         if node["type"] == "dir":
             raise fuse_error(EISDIR)
-        opened = (self._node_bytes(node, key), _FsNode.mtime(node, time.time()))
+        opened = (self._node_bytes(node, key), FileTimes.of(node))
         with self._lock:
             handle = self._state.next_handle
             self._state.next_handle += 1
@@ -357,12 +357,15 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             return node, (versions, parts)
 
     def _build_tree(self) -> dict[str, Any]:
-        return self._run_places.build(
+        tree = self._run_places.build(
             {
                 run_parts: self._run_tree(self._ensure_run(run_parts))
                 for run_parts in self._state.known_run_parts
             }
         )
+        # The run trees have their times, so only the run folders get them.
+        FileTimes.stamp_dirs(tree)
+        return tree
 
     def _run_tree(self, run: RunCache) -> dict[str, Any]:
         cached = self._state.run_trees.get(run.run_parts)
@@ -488,20 +491,6 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         self._state.tree_cache = None
 
 
-class _FsNode:
-    """Create virtual filesystem nodes."""
-
-    @staticmethod
-    def mtime(node: dict[str, Any], fallback: float) -> float:
-        """Return the file time of a node, or 0 for an event time that is not valid.
-
-        An event wall time can be NaN, infinite, negative, or after the year
-        2242, which a file time cannot hold.
-        """
-        value = float(node.get("mtime", fallback))
-        return value if math.isfinite(value) and 0 <= value < 1 << 33 else 0.0
-
-
 class _RunTree:
     """Populate virtual run directories from run caches."""
 
@@ -550,7 +539,7 @@ class _RunTree:
                         "type": "scalar",
                         "series": series,
                         "format": fmt,
-                        "mtime": mtimes.get(tag, time.time()),
+                        "mtime": mtimes.get(tag, 0.0),
                     },
                 )
 
