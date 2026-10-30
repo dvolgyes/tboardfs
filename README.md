@@ -129,10 +129,6 @@ tboardfs-file copy-all events.out.tfevents.123 exported-event --skip-existing
 
 Each skipped virtual path is reported as a warning on stderr. `--force` and `--skip-existing` are mutually exclusive.
 
-A virtual file that cannot be rendered, such as a graph that TensorBoard cannot draw, reads as EIO in a mount. `get`
-reports it as an error. `copy-all` reports each such file as an error, does not write it, copies the other files and
-exits with status 1.
-
 ## Supported Objects
 
 The virtual tree covers these TensorBoard objects:
@@ -179,7 +175,7 @@ The virtual tree covers these TensorBoard objects:
   is `<step>.run_metadata.pb`. Next to each one, `<step>.conceptual.pb` or `<step>.pb` is the GraphDef that the
   TensorBoard Graphs tab shows for it. TensorBoard 2.21 cannot draw a functional model inside a Sequential model from a
   Keras 3 config, because it reads the one input of the nested model as three inputs; tboardfs draws it with that one
-  input. Reading the GraphDef fails with EIO when the summary is malformed.
+  input. A malformed summary has no GraphDef file; tboardfs logs a warning for it once, when it reads the event.
 - Projector and profile sidecars: available in filesystem mode, and in command mode for a directory, under `/projector`
   and `/profile`; command mode for one event file omits sibling sidecar files. The embedding files that
   `projector_config.pbtxt` names (`tensor_path`, `metadata_path`, sprite `image_path`, `bookmarks_path`), such as the

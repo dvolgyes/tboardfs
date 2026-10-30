@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from tboardfs.model import EventFileCache
+from tboardfs.model import EventFileCache, GraphSummaryEntry
 from tboardfs.paths import _Paths
 
 
@@ -15,7 +15,7 @@ def add_graph_files(
     graphs also lists each one as graph_<i>.pb in write order. A TF2 graph
     summary is stored as <step>.json (Keras config) or <step>.run_metadata.pb;
     beside it, <step>.conceptual.pb or <step>.pb is the GraphDef that
-    TensorBoard shows for it.
+    TensorBoard shows for it, when the summary converts.
     """
     graphs = [entry for cache in caches for entry in cache.graphs]
     named = [(graphs[-1].name, graphs[-1])] if graphs else []
@@ -29,7 +29,7 @@ def add_graph_files(
         )
     for cache in caches:
         for entry in cache.binaries:
-            if entry.kind != "graphs":
+            if not isinstance(entry, GraphSummaryEntry) or not entry.converts:
                 continue
             step = _Paths.step_name(entry.step, step_digits)
             name = "conceptual.pb" if entry.extension == "json" else "pb"

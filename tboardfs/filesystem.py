@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from errno import EISDIR, ENOENT, ENOTDIR, EOPNOTSUPP, EROFS
+from errno import EIO, EISDIR, ENOENT, ENOTDIR, EOPNOTSUPP, EROFS
 from fnmatch import fnmatchcase
 import os
 from pathlib import Path
@@ -64,7 +64,11 @@ def _materialize_node_bytes(node: dict[str, Any]) -> bytes:
     if node_type == "graph":
         return _extract_graph_blob(node["entry"])
     if node_type == "graph_def":
-        return summary_graph_def(node["entry"])
+        entry = node["entry"]
+        graph_def = summary_graph_def(entry, extract_binary_blob(entry))
+        if graph_def is None:  # the event file changed after indexing
+            raise fuse_error(EIO)
+        return graph_def
     if node_type == "sidecar":
         return bytes(node["entry"].source_path.read_bytes())
     raise fuse_error(EOPNOTSUPP)

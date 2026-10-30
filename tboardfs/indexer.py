@@ -14,6 +14,7 @@ from tboardfs.constants import PLUGIN_TAB
 from tboardfs.model import (
     BinaryEntry,
     EventFileCache,
+    GraphSummaryEntry,
     GraphEntry,
     JsonEntry,
     ParseProgress,
@@ -23,6 +24,7 @@ from tboardfs.model import (
 )
 from tboardfs.restarts import _RestartPurge
 from tboardfs.summary import parse_event
+from tboardfs.summary_graph import summary_graph_def
 from tboardfs.tensor_summary import _TensorSummary
 from tboardfs.tables import (
     _TableMerge,
@@ -359,23 +361,24 @@ class _EventIndexer:
         parts = _TensorSummary.media_parts(value)
         if parts is not None:
             strings = value["tensor"]["string_val"]
-            cache.binaries.extend(
-                BinaryEntry(
+            for part_kind, part, suffix in parts:
+                data = bytes(strings[part])
+                entry = BinaryEntry(
                     source_path=path,
                     tag=tag,
-                    kind=kind,
+                    kind=part_kind,
                     step=step,
                     wall_time=wall_time,
                     payload_offset=record.payload_offset,
                     payload_size=record.payload_size,
-                    extension=_TensorSummary.part_extension(
-                        value, kind, bytes(strings[part])
-                    ),
+                    extension=_TensorSummary.part_extension(value, part_kind, data),
                     part=part,
                     suffix=suffix,
                 )
-                for kind, part, suffix in parts
-            )
+                if part_kind == "graphs":
+                    converts = summary_graph_def(entry, data) is not None
+                    entry = GraphSummaryEntry(**vars(entry), converts=converts)
+                cache.binaries.append(entry)
             return
         kind = _Classifier.binary_kind(value)
         if kind is None:

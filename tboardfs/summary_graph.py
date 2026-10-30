@@ -1,51 +1,56 @@
 """Render the GraphDef that TensorBoard shows for a TF2 graph summary."""
 
-from errno import EIO
 import json
 from typing import Any, cast
 
 from google.protobuf.message import DecodeError, Message
 from loguru import logger
 
-from tboardfs.errors import fuse_error
-from tboardfs.extract import extract_binary_blob
 from tboardfs.keras_graph import keras_model_to_graph_def
 from tboardfs.model import BinaryEntry
 from tboardfs.proto import graph_pb2
 
 
-def summary_graph_def(entry: BinaryEntry) -> bytes:
+def summary_graph_def(entry: BinaryEntry, blob: bytes) -> bytes | None:
     """Return the serialized GraphDef of a Keras or RunMetadata graph summary.
 
     A Keras config (a .json entry) gives the conceptual graph. A RunMetadata
     gives the op graph: the pre-optimization graphs of its functions, merged
-    as TensorBoard 2.21 merges them.
-
-    Raises:
-        FuseOSError: EIO when the summary cannot be converted.
+    as TensorBoard 2.21 merges them. A summary that TensorBoard cannot convert
+    gives None and a warning.
     """
-    blob = extract_binary_blob(entry)
     try:
-        if entry.extension == "json":
-            graph = keras_model_to_graph_def(json.loads(blob))
-        else:
-            run_metadata = cast(Any, getattr(graph_pb2, "RunMetadata")())
-            run_metadata.ParseFromString(blob)
-            graph = _OpGraph.merge(
-                [
-                    function.pre_optimization_graph
-                    for function in run_metadata.function_graphs
-                ]
-            )
+        return _graph_def(blob, entry.extension)
     except (DecodeError, ValueError) as error:
         logger.warning(
-            "cannot convert graph {} at step {} in {}: {}",
+            "graph {} at step {} in {} has no GraphDef file: {}",
             entry.tag,
             entry.step,
             entry.source_path,
             error,
         )
-        raise fuse_error(EIO) from error
+        return None
+
+
+def _graph_def(blob: bytes, extension: str) -> bytes:
+    """Return the serialized GraphDef of a Keras config or RunMetadata blob.
+
+    Raises:
+        DecodeError: The RunMetadata is malformed.
+        ValueError: The Keras config is malformed, or TensorBoard cannot
+            merge the function graphs.
+    """
+    if extension == "json":
+        graph = keras_model_to_graph_def(json.loads(blob))
+    else:
+        run_metadata = cast(Any, getattr(graph_pb2, "RunMetadata")())
+        run_metadata.ParseFromString(blob)
+        graph = _OpGraph.merge(
+            [
+                function.pre_optimization_graph
+                for function in run_metadata.function_graphs
+            ]
+        )
     data: bytes = graph.SerializeToString(deterministic=True)
     return data
 

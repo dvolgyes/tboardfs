@@ -7,16 +7,17 @@ TensorBoard 2.21 graph plugin builds for one summary.
 
 import errno
 import json
+import os
 from pathlib import Path
 
 from click.testing import CliRunner
 from google.protobuf import unknown_fields
 from google.protobuf.message import Message
+from loguru import logger
 import pytest
 
 from tboardfs import TensorBoardFS
 from tboardfs.file_cli import main
-from tboardfs.file_tree import SingleEventTree
 from tboardfs.proto import event_pb2, graph_pb2
 
 from test_incremental_parse import _files, _frame
@@ -26,7 +27,6 @@ DT_STRING = 7
 RUN = Path("test-logs/graphs")
 GOLDEN = Path("tests/golden/graphs")
 TAGS = sorted(path.stem for path in GOLDEN.iterdir())
-UNCONVERTIBLE = "/graphs/g/000000.conceptual.pb"
 
 
 @pytest.fixture(scope="module")
@@ -35,27 +35,24 @@ def fs() -> TensorBoardFS:
     return TensorBoardFS(RUN)
 
 
-def _graph_files(fs: TensorBoardFS, tag: str) -> tuple[str, str]:
-    """Return the native and the converted file of the only step of a tag.
-
-    readdir, not getattr: getattr renders the file, which can fail with EIO.
-    """
-    native, converted = (
-        f"/graphs/{tag}/{name}" for name in fs.readdir(f"/graphs/{tag}")[2:]
+def _graph_files(fs: TensorBoardFS, tag: str) -> tuple[str, str | None]:
+    """Return the native and the converted file of the only step of a tag."""
+    names = sorted(fs.readdir(f"/graphs/{tag}")[2:], key=len)
+    native = next(
+        name for name in names if name.endswith((".json", ".run_metadata.pb"))
     )
-    if native.endswith(".pb"):
-        native, converted = converted, native
-    return native, converted
+    converted = [f"/graphs/{tag}/{name}" for name in names if name != native]
+    return f"/graphs/{tag}/{native}", converted[0] if converted else None
 
 
 @pytest.mark.parametrize("tag", TAGS)
 def test_graphs_are_the_graphs_of_tensorboard(fs: TensorBoardFS, tag: str) -> None:
-    """The converted file is TensorBoard's GraphDef, or EIO where TensorBoard fails."""
+    """The converted file is TensorBoard's GraphDef, or absent where TensorBoard fails."""
     native, converted = _graph_files(fs, tag)
     golden = GOLDEN / f"{tag}.pb"
 
     if native.endswith(".json"):
-        assert converted.endswith(".conceptual.pb")
+        assert converted is None or converted.endswith(".conceptual.pb")
         assert "class_name" in json.loads(fs.read(native, 1 << 20, 0))
     else:
         assert native.endswith(".run_metadata.pb")
@@ -64,10 +61,9 @@ def test_graphs_are_the_graphs_of_tensorboard(fs: TensorBoardFS, tag: str) -> No
         ).function_graphs
     if not golden.exists():
         assert (GOLDEN / f"{tag}.error").exists()
-        with pytest.raises(OSError) as raised:
-            fs.read(converted, 1 << 20, 0)
-        assert raised.value.errno == errno.EIO
+        assert converted is None
         return
+    assert converted is not None
     assert _comparable(fs.read(converted, 1 << 20, 0)) == _comparable(
         golden.read_bytes()
     )
@@ -198,29 +194,49 @@ def test_graph_without_plugin_content_1_is_not_a_graph(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("blob", "plugin", "converted"),
+    ("blob", "plugin", "native"),
     [
-        (b"{not json", "graph_keras_model", "/graphs/g/000000.conceptual.pb"),
-        (b'{"config": []}', "graph_keras_model", "/graphs/g/000000.conceptual.pb"),
-        (b"\xff\xff", "graph_run_metadata_graph", "/graphs/g/000000.pb"),
-        (_run_metadata(1, 2), "graph_run_metadata", "/graphs/g/000000.pb"),
+        (b"{not json", "graph_keras_model", "000000.json"),
+        (b'{"config": []}', "graph_keras_model", "000000.json"),
+        (b"\xff\xff", "graph_run_metadata_graph", "000000.run_metadata.pb"),
+        (_run_metadata(1, 2), "graph_run_metadata", "000000.run_metadata.pb"),
     ],
 )
-def test_unconvertible_graph_is_eio(
-    tmp_path: Path, blob: bytes, plugin: str, converted: str
+def test_unconvertible_graph_has_only_its_native_file(
+    tmp_path: Path, blob: bytes, plugin: str, native: str
 ) -> None:
-    """A malformed config or graphs of different versions give EIO; the blob stays."""
-    fs = _log(tmp_path, _graph_event(blob, plugin=plugin))
-    native = next(
-        f"/graphs/g/{name}"
-        for name in fs.readdir("/graphs/g")[2:]
-        if name not in converted
-    )
+    """A malformed config or graphs of different versions have no GraphDef file."""
+    warnings: list[str] = []
+    sink = logger.add(warnings.append, level="WARNING", format="{message}")
+    try:
+        fs = _log(tmp_path, _graph_event(blob, plugin=plugin))
+        files = fs.readdir("/graphs/g")[2:]
+        data = fs.read(f"/graphs/g/{native}", 1 << 20, 0)
+    finally:
+        logger.remove(sink)
+
+    assert files == [native]
+    assert data == blob
+    assert len(warnings) == 1
+    assert warnings[0].startswith("graph g at step 0 in ")
+
+
+def test_graph_of_a_changed_event_file_is_eio(tmp_path: Path) -> None:
+    """A summary that no longer converts after indexing gives EIO on read."""
+    name = b"d" * 100
+    config = b'{"config": {"name": "m", "layers": [{"config": {"name": "%s"}}]}}' % name
+    fs = _log(tmp_path, _graph_event(config, plugin="graph_keras_model"))
+    assert "000000.conceptual.pb" in fs.readdir("/graphs/g")
+    path = tmp_path / "events.out.tfevents.host"
+    status = path.stat()
+    broken = config.replace(b"}}]}}", b"}}]} ")
+    path.write_bytes(_graph_event(broken, plugin="graph_keras_model"))
+    # The same size, mtime and first bytes: the mount does not index it again.
+    os.utime(path, ns=(status.st_atime_ns, status.st_mtime_ns))
 
     with pytest.raises(OSError) as raised:
-        fs.read(converted, 1 << 20, 0)
+        fs.read("/graphs/g/000000.conceptual.pb", 1 << 20, 0)
     assert raised.value.errno == errno.EIO
-    assert fs.read(native, 1 << 20, 0) == blob
 
 
 def test_graph_summaries_are_dropped_on_restart(tmp_path: Path) -> None:
@@ -234,44 +250,25 @@ def test_graph_summaries_are_dropped_on_restart(tmp_path: Path) -> None:
     )
 
 
-def test_copy_all_reports_an_unconvertible_graph_and_copies_the_rest(
-    tmp_path: Path,
-) -> None:
-    """copy-all names the file that gives EIO, copies the others and fails."""
-    run = _broken_run(tmp_path)
+def test_copy_all_copies_a_run_with_an_unconvertible_graph(tmp_path: Path) -> None:
+    """copy-all copies each listed file; the unconvertible GraphDef is not listed."""
+    run = tmp_path / "run"
+    run.mkdir()
+    scalar = event_pb2.Event(wall_time=1.0, step=0)
+    scalar.summary.value.add(tag="loss", simple_value=1.0)
+    _log(run, _frame(scalar), _graph_event(b"{not json", plugin="graph_keras_model"))
     result = CliRunner().invoke(main, ["copy-all", str(run), str(tmp_path / "out")])
     copied = sorted(
         "/" + path.relative_to(tmp_path / "out").as_posix()
         for path in (tmp_path / "out").rglob("*")
         if path.is_file()
     )
-    listed = CliRunner().invoke(main, ["list", str(run)]).output.splitlines()
+    listed = CliRunner().invoke(main, ["list", str(run)]).stdout.splitlines()
 
-    assert result.exit_code == 1
-    assert result.exception is None or isinstance(result.exception, SystemExit)
-    assert f"cannot convert: {UNCONVERTIBLE}" in result.stderr
-    assert f"copied {len(listed) - 1} files" in result.stderr
-    assert copied == sorted(set(listed) - {UNCONVERTIBLE})
-
-
-def test_get_of_an_unconvertible_graph_is_an_error(tmp_path: Path) -> None:
-    """get reports the file that gives EIO instead of a traceback."""
-    run = _broken_run(tmp_path)
-    result = CliRunner().invoke(main, ["get", str(run), UNCONVERTIBLE, "-o", "-"])
-
-    assert result.exit_code == 1
-    assert f"cannot convert virtual file: {UNCONVERTIBLE}" in result.stderr
-    assert result.stdout_bytes == b""
-
-
-def _broken_run(tmp_path: Path) -> Path:
-    """Return a run with a scalar and a Keras config that cannot be converted."""
-    run = tmp_path / "run"
-    run.mkdir()
-    scalar = event_pb2.Event(wall_time=1.0, step=0)
-    scalar.summary.value.add(tag="loss", simple_value=1.0)
-    _log(run, _frame(scalar), _graph_event(b"{not json", plugin="graph_keras_model"))
-    return run
+    assert result.exit_code == 0
+    assert "/graphs/g/000000.json" in listed
+    assert not any(path.endswith(".conceptual.pb") for path in listed)
+    assert copied == sorted(listed)
 
 
 def test_merged_gradients_name_the_prefixed_functions(tmp_path: Path) -> None:
@@ -289,16 +286,3 @@ def test_merged_gradients_name_the_prefixed_functions(tmp_path: Path) -> None:
     assert [(g.function_name, g.gradient_func) for g in graph.library.gradient] == [
         ("graph_2_f", "graph_2_f_grad")
     ]
-
-
-def test_copy_all_does_not_hide_other_read_errors(tmp_path: Path) -> None:
-    """Only EIO is a file that cannot be converted; a vanished event file is an error."""
-    run = tmp_path / "run"
-    run.mkdir()
-    (run / "events.out.tfevents.host").write_bytes(_graph_event(_run_metadata(1)))
-    tree = SingleEventTree(run)
-    (run / "events.out.tfevents.host").unlink()
-
-    with pytest.raises(OSError) as raised:
-        tree.copy_all(tmp_path / "out")
-    assert raised.value.errno == errno.ENOENT

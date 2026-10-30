@@ -1,4 +1,3 @@
-from errno import EIO
 from pathlib import Path
 from typing import Any, cast
 
@@ -85,20 +84,14 @@ class SingleEventTree:
 
     def copy_all(
         self, outdir: str | Path, *, existing: str = "fail"
-    ) -> tuple[int, list[str], list[str]]:
-        """Copy every virtual file into a directory.
-
-        Returns:
-            The number of copied files, the skipped virtual paths, and the
-            virtual paths that cannot be rendered (EIO), which are not written.
-        """
+    ) -> tuple[int, list[str]]:
+        """Copy every virtual file into a directory."""
         outdir_path = Path(outdir)
         root = outdir_path.resolve()
         paths = self._iter_file_parts(self.tree, ())
         targets = [(path, outdir_path.joinpath(*path)) for path in paths]
         copied_paths: list[str] = []
         skipped_paths: list[str] = []
-        failed_paths: list[str] = []
         for path, target in targets:
             virtual_path = _Paths.join_path(path)
             if not target.resolve().is_relative_to(root):
@@ -109,17 +102,10 @@ class SingleEventTree:
                     skipped_paths.append(virtual_path)
                     continue
                 raise _CopyConflictError(target, copied_paths)
-            try:
-                data = _materialize_node_bytes(self._lookup_parts(path))
-            except OSError as error:
-                if error.errno != EIO:
-                    raise
-                failed_paths.append(virtual_path)
-                continue
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
+            target.write_bytes(_materialize_node_bytes(self._lookup_parts(path)))
             copied_paths.append(virtual_path)
-        return len(copied_paths), skipped_paths, failed_paths
+        return len(copied_paths), skipped_paths
 
     def _lookup_path(self, path: str) -> dict[str, Any]:
         return self._lookup_parts(_Paths.path_parts(path))

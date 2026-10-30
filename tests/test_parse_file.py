@@ -635,7 +635,7 @@ def test_copy_all_writes_hostile_tags_inside_outdir(tmp_path: Path) -> None:
     source.write_bytes(_record(_event(100.0, 1, [_simple_value("../../ESCAPED", 1.0)])))
     outdir = tmp_path / "a" / "b" / "out"
 
-    count, _, _ = SingleEventTree(source).copy_all(outdir)
+    count, _ = SingleEventTree(source).copy_all(outdir)
 
     written = [p for p in tmp_path.rglob("*") if p.is_file() and p != source]
     assert count == len(written) > 0
