@@ -1,3 +1,4 @@
+from errno import EIO
 from pathlib import Path
 from pathlib import PurePosixPath
 import sys
@@ -61,6 +62,12 @@ def register_file_cli_commands(group: click.Group) -> None:
             raise click.ClickException(
                 f"virtual path is a directory: {vpath}"
             ) from error
+        except OSError as error:
+            if error.errno != EIO:
+                raise
+            raise click.ClickException(
+                f"cannot convert virtual file: {_Paths.norm_virtual_path(vpath)}"
+            ) from error
         if output == "-":
             sys.stdout.buffer.write(data)
             return
@@ -94,7 +101,7 @@ def register_file_cli_commands(group: click.Group) -> None:
             scalar_format=cast(str, params["scalar_format"]),
         )
         try:
-            copied, skipped = tree.copy_all(
+            copied, skipped, failed = tree.copy_all(
                 cast(str, params["outdir"]), existing=existing
             )
         except _CopyConflictError as error:
@@ -104,7 +111,11 @@ def register_file_cli_commands(group: click.Group) -> None:
             raise click.ClickException(str(error)) from error
         for path in skipped:
             logger.warning("Skipped existing: {}", path)
+        for path in failed:
+            logger.error("cannot convert: {}", path)
         logger.info("copied {} files", copied)
+        if failed:
+            raise click.exceptions.Exit(1)
 
 
 def _resolve_output_path(vpath: str, output: str) -> Path:

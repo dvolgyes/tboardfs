@@ -1,14 +1,24 @@
 """Read media items and histogram buckets from TF1 fields or TF2 tensors."""
 
+from types import MappingProxyType
 from typing import Any
 
-from tboardfs.classify import _Classifier
+from tboardfs.classify import _Classifier, detect_extension
 from tboardfs.tensor import tensor_to_array
 
 DT_STRING = 7
 GIF_HEADERS = (b"GIF87a", b"GIF89a")
 # Columns of a TF2 histogram tensor: bucket left, bucket right, count.
 HISTOGRAM_COLUMNS = 3
+# TensorBoard's graph plugins: file-name suffix and extension of the stored
+# Keras config or RunMetadata.
+GRAPH_PLUGINS = MappingProxyType(
+    {
+        "graph_keras_model": ("", "json"),
+        "graph_run_metadata": (".run_metadata", "pb"),
+        "graph_run_metadata_graph": (".run_metadata", "pb"),
+    }
+)
 
 
 class _TensorSummary:
@@ -17,6 +27,7 @@ class _TensorSummary:
     An image tensor is [width, height, image_1, ..., image_k]. An audio tensor
     has k rows of [encoded audio, label]. A histogram tensor has k rows of
     [left, right, count]. TF1 writers use the image, audio and histo fields.
+    A graph tensor holds a Keras config or a RunMetadata as its first string.
     """
 
     @staticmethod
@@ -24,7 +35,8 @@ class _TensorSummary:
         """Return (kind, string_val index, file-name suffix) per media item.
 
         One item has no suffix. Items of a step are _<i>, with i padded to one
-        width. Returns None when the value is not a TF2 image or audio tensor.
+        width. Returns None when the value is not a TF2 image, audio or graph
+        tensor. As in TensorBoard, a graph tensor needs plugin content b"1".
         """
         tensor = value.get("tensor") or {}
         if tensor.get("dtype") != DT_STRING:
@@ -32,6 +44,10 @@ class _TensorSummary:
         plugin = (value.get("plugin_name") or "").lower()
         strings = tensor.get("string_val", [])
         shape = tensor.get("shape") or []
+        if plugin in GRAPH_PLUGINS:
+            if value.get("plugin_content") != b"1" or not strings:
+                return None
+            return [("graphs", 0, GRAPH_PLUGINS[plugin][0])]
         if plugin == "images" and len(strings) >= 2:
             indices, kind = range(2, len(strings)), "images"
         elif plugin == "audio" and shape[1:] == [2] and len(strings) == 2 * shape[0]:
@@ -47,6 +63,13 @@ class _TensorSummary:
             )
             for sample, index in enumerate(indices)
         ]
+
+    @staticmethod
+    def part_extension(value: dict[str, Any], kind: str, blob: bytes) -> str:
+        """Return the file extension of one item from media_parts."""
+        if kind == "graphs":
+            return GRAPH_PLUGINS[(value.get("plugin_name") or "").lower()][1]
+        return detect_extension(blob, kind)
 
     @staticmethod
     def histogram_buckets(

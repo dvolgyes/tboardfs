@@ -19,11 +19,11 @@ from tboardfs.constants import (
 )
 from tboardfs.errors import fuse_error
 from tboardfs.extract import _extract_graph_blob, extract_binary_blob
+from tboardfs.graph_files import add_graph_files
 from tboardfs.indexer import _EventIndexer
 from tboardfs.model import (
     BinaryEntry,
     EventFileCache,
-    GraphEntry,
     JsonEntry,
     RunCache,
     SidecarEntry,
@@ -37,6 +37,7 @@ from tboardfs.plugin_files import add_typed_plugin_files
 from tboardfs.projector import _ProjectorConfig
 from tboardfs.render_cache import RenderCache
 from tboardfs.restarts import _RestartPurge
+from tboardfs.summary_graph import summary_graph_def
 from tboardfs.tables import (
     _TableExport,
     _TableMerge,
@@ -62,6 +63,8 @@ def _materialize_node_bytes(node: dict[str, Any]) -> bytes:
         return extract_binary_blob(node["entry"])
     if node_type == "graph":
         return _extract_graph_blob(node["entry"])
+    if node_type == "graph_def":
+        return summary_graph_def(node["entry"])
     if node_type == "sidecar":
         return bytes(node["entry"].source_path.read_bytes())
     raise fuse_error(EOPNOTSUPP)
@@ -507,7 +510,7 @@ class _RunTree:
             run_node, _RunData.run_json_entries(run), scalars, step_digits
         )
         _RunTree.add_json_files(run_node, run, step_digits, consumed)
-        _RunTree.add_graph_files(run_node, run)
+        add_graph_files(run_node, _RunData.sorted_file_caches(run), step_digits)
         _RunTree.add_sidecar_files(run_node, run)
 
     @staticmethod
@@ -583,28 +586,6 @@ class _RunTree:
             cache.scalars for cache in _RunData.sorted_file_caches(run)
         )
         return _TableMerge.step_epochs(scalars, scalars.get("epoch"))
-
-    @staticmethod
-    def add_graph_files(run_node: dict[str, Any], run: RunCache) -> None:
-        """Add graph protobuf files for one run.
-
-        graph.pb is the newest graph, as in TensorBoard. A run with several
-        graphs also lists each one as graph_<i>.pb in write order.
-        """
-        graphs = _RunData.run_graphs(run)
-        if not graphs:
-            return
-        named = [(graphs[-1].name, graphs[-1])]
-        if len(graphs) > 1:
-            named += [
-                (f"graph_{index}.pb", graph) for index, graph in enumerate(graphs)
-            ]
-        for name, graph in named:
-            _FsNode.add_file(
-                run_node,
-                ("graphs", name),
-                {"type": "graph", "entry": graph, "mtime": graph.wall_time},
-            )
 
     @staticmethod
     def add_sidecar_files(run_node: dict[str, Any], run: RunCache) -> None:
@@ -798,15 +779,6 @@ class _RunData:
             entry
             for cache in _RunData.sorted_file_caches(run)
             for entry in cache.json_entries
-        ]
-
-    @staticmethod
-    def run_graphs(run: RunCache) -> list[GraphEntry]:
-        """Return graph entries from all event-file caches."""
-        return [
-            entry
-            for cache in _RunData.sorted_file_caches(run)
-            for entry in cache.graphs
         ]
 
     @staticmethod

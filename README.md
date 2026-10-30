@@ -129,6 +129,10 @@ tboardfs-file copy-all events.out.tfevents.123 exported-event --skip-existing
 
 Each skipped virtual path is reported as a warning on stderr. `--force` and `--skip-existing` are mutually exclusive.
 
+A virtual file that cannot be rendered, such as a graph that TensorBoard cannot draw, reads as EIO in a mount. `get`
+reports it as an error. `copy-all` reports each such file as an error, does not write it, copies the other files and
+exits with status 1.
+
 ## Supported Objects
 
 The virtual tree covers these TensorBoard objects:
@@ -168,8 +172,13 @@ The virtual tree covers these TensorBoard objects:
   bfloat16 tensors are widened to float32; this is exact. Float8 and 4-bit tensors are not decoded. String tensors are
   NumPy text arrays (dtype `U`), so `np.load` reads them without `allow_pickle`. A numeric tensor written without a
   plugin name is also a tensor here. A tensor with one value is a scalar instead.
-- Graphs: graph protobuf files under `/graphs`. `graph.pb` is the newest graph of the run, as in TensorBoard. A run with
-  several graphs also has `graph_<i>.pb` for each graph, in write order.
+- Graphs: graph protobuf files under `/graphs`. `graph.pb` is the newest graph that the event files hold as a
+  `graph_def`, as in TensorBoard; TensorFlow 1 and PyTorch `add_graph` write these. A run with several such graphs also
+  has `graph_<i>.pb` for each graph, in write order. A TensorFlow 2 graph summary is in `/graphs/<tag>`. The Keras model
+  config that the Keras TensorBoard callback writes is `<step>.json`, and the RunMetadata of `tf.summary.trace_export`
+  is `<step>.run_metadata.pb`. Next to each one, `<step>.conceptual.pb` or `<step>.pb` is the GraphDef that the
+  TensorBoard Graphs tab shows for it. Reading that GraphDef fails with EIO when TensorBoard cannot draw the graph
+  either, for example for a functional model inside a Sequential model.
 - Projector and profile sidecars: available in filesystem mode, and in command mode for a directory, under `/projector`
   and `/profile`; command mode for one event file omits sibling sidecar files. The embedding files that
   `projector_config.pbtxt` names (`tensor_path`, `metadata_path`, sprite `image_path`, `bookmarks_path`), such as the

@@ -123,10 +123,7 @@ def test_tensorflow_2_summaries_are_unpacked() -> None:
     rows = json.loads(fs.read("/histograms/weights/001.json", 1 << 20, 0))
     assert sum(row["count"] for row in rows) == 200
     assert "/distributions/constant/003.json" in files
-    assert not any(
-        path.startswith("/plugins/")
-        for path in files - {"/plugins/graph_run_metadata_graph/square/000.json"}
-    )
+    assert not any(path.startswith("/plugins/") for path in files)
 
 
 def _tf1_histogram(

@@ -368,7 +368,9 @@ class _EventIndexer:
                     wall_time=wall_time,
                     payload_offset=record.payload_offset,
                     payload_size=record.payload_size,
-                    extension=detect_extension(bytes(strings[part]), kind),
+                    extension=_TensorSummary.part_extension(
+                        value, kind, bytes(strings[part])
+                    ),
                     part=part,
                     suffix=suffix,
                 )

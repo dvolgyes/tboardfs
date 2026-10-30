@@ -8,6 +8,7 @@ from google.protobuf import descriptor_pb2, descriptor_pool
 
 import tboardfs.proto.custom_scalar_layout_pb2
 import tboardfs.proto.event_pb2
+import tboardfs.proto.graph_pb2
 import tboardfs.proto.hparams_api_pb2
 import tboardfs.proto.hparams_plugin_data_pb2
 import tboardfs.proto.mesh_plugin_data_pb2
@@ -15,6 +16,13 @@ import tboardfs.proto.mesh_plugin_data_pb2
 UPSTREAM = [
     ("tensorflow/core/util/event.proto", "tensorflow", "Event"),
     ("tensorflow/core/framework/summary.proto", "tensorflow", "Summary"),
+    ("tensorflow/core/framework/graph.proto", "tensorflow", "GraphDef"),
+    ("tensorflow/core/framework/node_def.proto", "tensorflow", "NodeDef"),
+    ("tensorflow/core/framework/attr_value.proto", "tensorflow", "AttrValue"),
+    ("tensorflow/core/framework/function.proto", "tensorflow", "FunctionDef"),
+    ("tensorflow/core/framework/op_def.proto", "tensorflow", "OpDef"),
+    ("tensorflow/core/framework/versions.proto", "tensorflow", "VersionDef"),
+    ("tensorflow/core/protobuf/config.proto", "tensorflow", "RunMetadata"),
     ("tensorboard/plugins/hparams/api.proto", "tensorboard.hparams", "Experiment"),
     (
         "tensorboard/plugins/hparams/plugin_data.proto",
