@@ -131,8 +131,11 @@ class _SummaryParser:
             (5, "float_val"),
             (6, "double_val"),
             (7, "int_val"),
+            (9, "scomplex_val"),
             (10, "int64_val"),
             (11, "bool_val"),
+            (12, "dcomplex_val"),
+            (13, "half_val"),
             (16, "uint32_val"),
             (17, "uint64_val"),
         )

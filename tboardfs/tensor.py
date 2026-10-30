@@ -1,8 +1,10 @@
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
 from tboardfs.decode import _Decode
+
+BFLOAT16 = 14
 
 
 def tensor_to_array(tensor: dict[str, Any]) -> np.ndarray:
@@ -14,23 +16,25 @@ def tensor_to_array(tensor: dict[str, Any]) -> np.ndarray:
         ]
         return _shape_array(np.asarray(string_values, dtype=object), tensor)
 
-    np_dtype = _TensorDType.numpy_dtype(dtype)
-    if np_dtype is None:
+    spec = _TensorDType.spec(dtype)
+    if spec is None:
         return np.asarray([])
+    storage, field, field_dtype = spec
 
     content = tensor.get("tensor_content")
     if content:
-        content_values = np.frombuffer(bytes(content), dtype=np_dtype).copy()
-        return _shape_array(content_values, tensor)
-
-    field = _TensorDType.value_field(dtype)
-    if field is None:
-        return np.asarray([], dtype=np_dtype)
-    all_values = tensor.get("values", {})
-    raw_values = all_values.get(field, all_values.get(int(field), []))
-    if not isinstance(raw_values, list):
-        return np.asarray([], dtype=np_dtype)
-    return _shape_array(np.asarray(raw_values, dtype=np_dtype), tensor)
+        if len(content) % np.dtype(storage).itemsize:
+            return np.asarray([], dtype=storage)
+        values = np.frombuffer(bytes(content), dtype=storage).copy()
+    else:
+        all_values = tensor.get("values", {})
+        raw_values = all_values.get(field, all_values.get(str(field), []))
+        if not _TensorDType.fits(raw_values, field_dtype, storage):
+            return np.asarray([], dtype=storage)
+        values = np.asarray(raw_values, dtype=field_dtype).view(storage)
+    if dtype == BFLOAT16:
+        values = _TensorDType.widen_bfloat16(values)
+    return _shape_array(values, tensor)
 
 
 def _shape_array(values: np.ndarray, tensor: dict[str, Any]) -> np.ndarray:
@@ -44,38 +48,60 @@ def _shape_array(values: np.ndarray, tensor: dict[str, Any]) -> np.ndarray:
 
 
 class _TensorDType:
-    """Map TensorProto dtype ids to NumPy storage."""
+    """Map TensorProto dtype ids to NumPy storage.
+
+    Each id maps to the NumPy dtype of its tensor_content bytes, the
+    TensorProto field number of its repeated values, and the dtype of one
+    item in that field. half_val holds 16-bit patterns, and the complex
+    fields hold real and imaginary parts in turn, so their items are viewed
+    as the storage dtype. NumPy has no bfloat16; it widens exactly to
+    float32. Float8, 4-bit and resource/variant tensors are not decoded.
+    """
+
+    SPECS: ClassVar[dict[int, tuple[str, int, str]]] = {
+        1: ("<f4", 5, "<f4"),
+        2: ("<f8", 6, "<f8"),
+        3: ("<i4", 7, "<i4"),
+        4: ("u1", 7, "u1"),
+        5: ("<i2", 7, "<i2"),
+        6: ("i1", 7, "i1"),
+        8: ("<c8", 9, "<f4"),
+        9: ("<i8", 10, "<i8"),
+        10: ("?", 11, "?"),
+        11: ("i1", 7, "i1"),
+        12: ("u1", 7, "u1"),
+        13: ("<i4", 7, "<i4"),
+        BFLOAT16: ("<u2", 13, "<u2"),
+        15: ("<i2", 7, "<i2"),
+        16: ("<u2", 7, "<u2"),
+        17: ("<u2", 7, "<u2"),
+        18: ("<c16", 12, "<f8"),
+        19: ("<f2", 13, "<u2"),
+        22: ("<u4", 16, "<u4"),
+        23: ("<u8", 17, "<u8"),
+    }
 
     @staticmethod
-    def numpy_dtype(dtype: object) -> np.dtype | None:
-        """Return NumPy dtype for supported TensorProto dtype ids."""
+    def spec(dtype: object) -> tuple[str, int, str] | None:
+        """Return storage dtype, value field and field item dtype for an id."""
         if not isinstance(dtype, int):
             return None
-        mapping = {
-            1: np.dtype("<f4"),
-            2: np.dtype("<f8"),
-            3: np.dtype("<i4"),
-            4: np.dtype("u1"),
-            9: np.dtype("<i8"),
-            10: np.dtype("?"),
-            22: np.dtype("<u4"),
-            23: np.dtype("<u8"),
-        }
-        return mapping.get(dtype)
+        return _TensorDType.SPECS.get(dtype)
 
     @staticmethod
-    def value_field(dtype: object) -> str | None:
-        """Return parsed values field key for supported TensorProto dtype ids."""
-        if not isinstance(dtype, int):
-            return None
-        mapping = {
-            1: "5",
-            2: "6",
-            3: "7",
-            4: "7",
-            9: "10",
-            10: "11",
-            22: "16",
-            23: "17",
-        }
-        return mapping.get(dtype)
+    def fits(raw_values: object, field_dtype: str, storage: str) -> bool:
+        """Return true when field items convert to whole storage items."""
+        if not isinstance(raw_values, list):
+            return False
+        item = np.dtype(field_dtype)
+        if len(raw_values) * item.itemsize % np.dtype(storage).itemsize:
+            return False
+        if item.kind not in "iu" or not raw_values:
+            return True
+        info = np.iinfo(item)
+        return bool(info.min <= min(raw_values) and max(raw_values) <= info.max)
+
+    @staticmethod
+    def widen_bfloat16(bits: np.ndarray) -> np.ndarray:
+        """Return bfloat16 bit patterns as the float32 values they encode."""
+        return (bits.astype("<u4") << 16).view("<f4")

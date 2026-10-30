@@ -79,11 +79,15 @@ class _TableExport:
         Args:
             value: NumPy, bytes, container or plain value
             nan: replacement for NaN; tables use null for a missing value
+
+        A complex number becomes its [real, imag] pair.
         """
         if isinstance(value, np.ndarray):
             value = value.tolist()
         elif isinstance(value, np.generic):
             value = value.item()
+        if isinstance(value, complex):
+            value = [value.real, value.imag]
         if isinstance(value, float) and not np.isfinite(value):
             if np.isnan(value):
                 return nan

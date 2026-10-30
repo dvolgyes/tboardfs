@@ -136,7 +136,9 @@ The virtual tree covers these TensorBoard objects:
   data. Metrics in a sub-run group (for example Keras `validation`) have no value here; read them from the scalars of
   that run. `sessions` lists every session of the run; `session_start` and `session_end` are the first ones, as in
   TensorBoard.
-- Tensors: tensor arrays as `npy` plus compact JSON or native blob files under `/tensors`.
+- Tensors: tensor arrays as `npy` plus compact JSON or native blob files under `/tensors`. Every numeric TensorFlow
+  dtype that NumPy has keeps its dtype, including float16, int8, int16, uint16 and complex. NumPy has no bfloat16, so
+  bfloat16 tensors are widened to float32; this is exact. Float8 and 4-bit tensors are not decoded.
 - Graphs: graph protobuf files under `/graphs`.
 - Projector and profile sidecars: available in filesystem mode under `/projector` and `/profile`; command mode
   intentionally omits sibling sidecar files because it operates on one event file.
@@ -146,8 +148,8 @@ The virtual tree covers these TensorBoard objects:
 
 All `.json` files are strict JSON (RFC 8259). Infinities are written as the strings `"Infinity"` and `"-Infinity"`. In
 scalar, histogram and other table files, NaN is a missing value and is written as `null`. In other JSON files, NaN is
-written as the string `"NaN"`, as in protobuf JSON. Bytes that are valid UTF-8 are written as text. Other bytes are
-written as `{"base64": "..."}`.
+written as the string `"NaN"`, as in protobuf JSON. A complex number is written as its `[real, imag]` pair. Bytes that
+are valid UTF-8 are written as text. Other bytes are written as `{"base64": "..."}`.
 
 `tboardfs-file list` prints virtual file paths to stdout, one per line. `tboardfs-file get -o -` writes raw bytes to
 stdout. Extraction status, warnings, errors, copied-file counts, skipped-path warnings, copied-path conflict reports,
