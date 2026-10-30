@@ -96,9 +96,72 @@ class _TableExport:
     @staticmethod
     def json(series: dict[str, np.ndarray]) -> bytes:
         """Render a table as strict JSON rows."""
+        text = _TableExport.number_json(series)
+        if text is not None:
+            return text
         columns = [_TableExport.json_column(values) for values in series.values()]
         rows = [dict(zip(series, cells, strict=True)) for cells in zip(*columns)]
         return orjson.dumps(rows, option=_JSON_OPTIONS)
+
+    @staticmethod
+    def number_json(series: dict[str, np.ndarray]) -> bytes | None:
+        """Return a table of number columns as JSON rows, or None.
+
+        The bytes are those that orjson writes for a list of row objects, but
+        the text is built from the text of each column: an object for each
+        row costs more than the rest of the work. A table with other columns
+        gives None.
+        """
+        if any(
+            values.ndim != 1 or values.dtype not in _JSON_NUMBERS
+            for values in series.values()
+        ):
+            return None
+        columns = [_TableExport.json_cells(values) for values in series.values()]
+        rows = min(map(len, columns), default=0)
+        if not rows:
+            return b"[]\n"
+        # Each row is "  {", then '    "name": cell' for each column, then
+        # "  }"; slice assignment puts the constant text beside the cells.
+        width = 2 * len(columns)
+        parts = [""] * (rows * width)
+        for index, (name, cells) in enumerate(zip(series, columns, strict=True)):
+            start = "  {\n    " if index == 0 else ",\n    "
+            parts[2 * index :: width] = [
+                start + orjson.dumps(name).decode() + ": "
+            ] * rows
+            parts[2 * index + 1 :: width] = cells[:rows]
+        parts[width - 1 :: width] = [cell + "\n  },\n" for cell in columns[-1][:rows]]
+        parts[0] = "[\n" + parts[0]
+        parts[-1] = columns[-1][rows - 1] + "\n  }\n]\n"
+        return "".join(parts).encode()
+
+    @staticmethod
+    def json_cells(values: np.ndarray) -> list[str]:
+        """Return the JSON text of each number in a column, as json_column gives it.
+
+        A float is widened to float64, so its digits are those of the list.
+        NaN, a missing value, stays null; an infinity becomes its text.
+        """
+        if values.dtype.kind != "f":
+            return _TableExport.orjson_cells(values)
+        cells = _TableExport.orjson_cells(values.astype(np.float64, copy=False))
+        for index in np.flatnonzero(np.isinf(values)).tolist():
+            cells[index] = '"Infinity"' if values[index] > 0 else '"-Infinity"'
+        return cells
+
+    @staticmethod
+    def orjson_cells(values: np.ndarray) -> list[str]:
+        """Return the orjson text of each value of a 1-D number array.
+
+        orjson writes NaN and the infinities as null.
+        """
+        if not len(values):
+            return []
+        text = orjson.dumps(
+            np.ascontiguousarray(values), option=orjson.OPT_SERIALIZE_NUMPY
+        )
+        return text[1:-1].decode().split(",")
 
     @staticmethod
     def json_column(values: np.ndarray) -> list[object]:
@@ -121,12 +184,7 @@ class _TableExport:
         """
         if values.dtype not in _ORJSON_NUMBERS:
             return list(values.astype(str))
-        if not len(values):
-            return []
-        text = orjson.dumps(
-            np.ascontiguousarray(values), option=orjson.OPT_SERIALIZE_NUMPY
-        )
-        cells = text[1:-1].decode().split(",")
+        cells = _TableExport.orjson_cells(values)
         for index in np.flatnonzero(~np.isfinite(values)).tolist():
             cells[index] = str(values[index])
         return cells
