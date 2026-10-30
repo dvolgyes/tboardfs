@@ -39,6 +39,7 @@ def fs(tmp_path: Path) -> TensorBoardFS:
     value = event.summary.value.add(tag="act")
     value.metadata.plugin_data.plugin_name = "tensors"
     value.tensor.dtype = DT_FLOAT
+    value.tensor.tensor_shape.dim.add(size=4)
     value.tensor.float_val.extend([math.nan, math.inf, -math.inf, 2.0])
     custom = event.summary.value.add(tag="custom")
     custom.metadata.plugin_data.plugin_name = "my_plugin"

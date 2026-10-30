@@ -94,7 +94,11 @@ class _TensorSummary:
         if (value.get("plugin_name") or "").lower() != "histograms":
             return None
         data = tensor_to_array(value.get("tensor") or {})
-        if data.dtype.kind not in "fiu" or data.shape[1:] != (HISTOGRAM_COLUMNS,):
+        if (
+            data is None
+            or data.dtype.kind not in "fiu"
+            or data.shape[1:] != (HISTOGRAM_COLUMNS,)
+        ):
             return None
         return [
             (float(left), float(right), float(count)) for left, right, count in data

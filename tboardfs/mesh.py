@@ -64,7 +64,7 @@ class _MeshFiles:
                 continue
             content = entry.payload.get("plugin_content")
             data = tensor_to_array(entry.payload.get("tensor") or {})
-            if not isinstance(content, bytes) or data.size == 0:
+            if not isinstance(content, bytes) or data is None or data.size == 0:
                 continue
             metadata = cast(Any, _ProtoParser.mesh_plugin_data(content))
             if metadata.content_type == _MESH_UNDEFINED:

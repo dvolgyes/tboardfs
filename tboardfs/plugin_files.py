@@ -98,7 +98,7 @@ class _TypedPluginFiles:
     ) -> set[int]:
         """Add table, JSON, and NPY views for tensor-backed plugin records."""
         data = tensor_to_array(entry.payload.get("tensor") or {})
-        if data.size == 0:
+        if data is None or data.size == 0:
             return set()
         step = _Paths.step_name(entry.step, step_digits)
         table = _TypedPluginFiles.pr_curve_table(data)
@@ -127,7 +127,7 @@ class _TypedPluginFiles:
     ) -> set[int]:
         """Add JSON and NPY views for one tensor record."""
         data = tensor_to_array(entry.payload.get("tensor") or {})
-        if data.size == 0:
+        if data is None:
             return set()
         step = _Paths.step_name(entry.step, step_digits)
         rel = ("tensors", *_Paths.tag_dir_parts(entry.tag))

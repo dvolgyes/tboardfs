@@ -165,6 +165,27 @@ def test_malformed_tensors_are_left_out(
     assert not [path for path in _files(fs) if path.endswith(".npy")]
 
 
+@pytest.mark.parametrize(
+    ("shape", "values"),
+    [
+        ([3], [1.0, 2.0]),
+        ([2], [1.0, 2.0, 3.0]),
+        ([], [1.0, 2.0]),
+        ([0], [1.0]),
+        ([-1, -2], [1.0, 2.0]),
+    ],
+)
+def test_values_that_do_not_fill_the_shape_are_left_out(
+    tmp_path: Path, shape: list[int], values: list[float]
+) -> None:
+    """TensorBoard cannot shape these values, so they have no array file."""
+    float_val = 5
+    wire = _packed(float_val, np.array(values, "<f4").tobytes())
+    fs = _log(tmp_path, 1, shape, wire)
+
+    assert not [path for path in _files(fs) if path.endswith(".npy")]
+
+
 def test_string_tensors_load_without_pickle(tmp_path: Path) -> None:
     """String tensors are fixed-width text arrays, not pickled objects."""
     string_val = 8

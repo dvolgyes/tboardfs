@@ -21,12 +21,6 @@ from tboardfs.tfrecord import iter_tfrecords
 ROOT = Path(__file__).resolve().parent.parent
 LOGS = ROOT / "test-logs" / "proto3"
 GOLDEN = ROOT / "tests" / "golden" / "proto3"
-NO_ELEMENTS = "a tensor without elements has no .npy file"
-# (run, kind, tag) that tboardfs does not read as TensorBoard yet.
-KNOWN = {
-    ("tensor_zero_dims", "tensors", "empty"): NO_ELEMENTS,
-    ("tensor_zero_dims", "tensors", "empty_rows"): NO_ELEMENTS,
-}
 
 
 def _cases() -> list[Any]:
@@ -36,14 +30,7 @@ def _cases() -> list[Any]:
         for kind in ("scalars", "histograms", "tensors"):
             for tag, expected in view[kind].items():
                 key = (golden.stem, kind, tag)
-                marks = (
-                    [pytest.mark.xfail(reason=KNOWN[key], strict=True)]
-                    if key in KNOWN
-                    else []
-                )
-                cases.append(
-                    pytest.param(*key, expected, id="/".join(key), marks=marks)
-                )
+                cases.append(pytest.param(*key, expected, id="/".join(key)))
     return cases
 
 
