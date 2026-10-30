@@ -467,15 +467,12 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         if not _RunData.should_refresh(run, now, self.refresh_age_seconds, force):
             return False
         run_dir = self.source.joinpath(*run.run_parts)
-        files = sorted(
-            path
-            for path in run_dir.glob(TENSORBOARD_EVENT_GLOB)
-            if _Paths.is_file(path)
-        )
+        entries = _Paths.entries(run_dir)
+        files = _Paths.event_files(run_dir, entries)
         log_parse = logger.info if self.log_to_screen else None
         changed = _RunData.refresh_event_files(run, files, force=force, log=log_parse)
         # Sidecars can change after the last event, so they count as run data.
-        sidecars = tuple(_RunData.run_sidecars(self.source, run))
+        sidecars = tuple(_RunData.run_sidecars(self.source, run, entries))
         if sidecars != run.sidecars:
             run.sidecars = sidecars
             changed = True
@@ -691,7 +688,7 @@ class _RunData:
     ) -> bool:
         """Parse new records of one event file; return true when it changed."""
         old = run.files.get(source_path)
-        with source_path.open("rb") as handle:
+        with source_path.open("rb", buffering=0) as handle:
             size, identity = _EventIndexer.file_identity(handle)
         if old is not None and not old.progress.continues_in(identity):
             old = None
@@ -747,13 +744,18 @@ class _RunData:
         ]
 
     @staticmethod
-    def run_sidecars(source: Path, run: RunCache) -> list[SidecarEntry]:
-        """Return projector, profile and hparams sidecar entries under a run."""
+    def run_sidecars(
+        source: Path, run: RunCache, entries: list[os.DirEntry[str]]
+    ) -> list[SidecarEntry]:
+        """Return projector, profile and hparams sidecar entries under a run.
+
+        The entries are the listing of the run directory.
+        """
         if not run.files:
             return []
         run_dir = source.joinpath(*run.run_parts)
         sidecars = []
-        paths = list(_RunData.sidecar_paths(source, run_dir))
+        paths = list(_RunData.sidecar_paths(source, run_dir, entries))
         embeddings = _ProjectorConfig.references(paths)
         for path in paths:
             rel_parts = path.relative_to(run_dir).parts
@@ -780,32 +782,41 @@ class _RunData:
         return sidecars
 
     @staticmethod
-    def sidecar_paths(source: Path, run_dir: Path) -> Iterator[Path]:
+    def sidecar_paths(
+        source: Path, run_dir: Path, entries: list[os.DirEntry[str]]
+    ) -> Iterator[Path]:
         """Yield candidate sidecar files that belong to one run directory.
 
         Directories with their own event files are other runs and are pruned.
-        Symlinked directories are not followed, and symlinked files must
-        resolve inside the source or inside the real run directory, which a
-        symlinked run has outside the source.
+        Symlinked directories are not followed, so only a symlinked file can
+        lead out of the run directory: it must resolve inside the source or
+        inside the real run directory, which a symlinked run has outside the
+        source.
         """
-        roots = (source.resolve(), run_dir.resolve())
-        for dir_name, dir_names, file_names in os.walk(run_dir):
-            directory = Path(dir_name)
-            files = sorted(
-                name for name in file_names if _Paths.is_file(directory / name)
-            )
-            events = [
-                name for name in files if fnmatchcase(name, TENSORBOARD_EVENT_GLOB)
-            ]
-            if events and directory != run_dir:
-                dir_names.clear()
+        roots: tuple[Path, ...] = ()
+        pending = [run_dir]
+        while pending:
+            directory = pending.pop()
+            listing = entries if directory == run_dir else _Paths.entries(directory)
+            files = [entry for entry in listing if _Paths.is_file(entry)]
+            if directory != run_dir and _Paths.event_files(directory, files):
                 continue
-            dir_names.sort()
-            for name in files:
-                path = directory / name
-                real = path.resolve()
-                if name not in events and any(map(real.is_relative_to, roots)):
-                    yield path
+            for entry in files:
+                if fnmatchcase(entry.name, TENSORBOARD_EVENT_GLOB):
+                    continue
+                path = directory / entry.name
+                if entry.is_symlink():
+                    roots = roots or (source.resolve(), run_dir.resolve())
+                    if not any(map(path.resolve().is_relative_to, roots)):
+                        continue
+                yield path
+            pending += reversed(
+                [
+                    directory / entry.name
+                    for entry in listing
+                    if _Paths.is_dir(entry, follow_symlinks=False)
+                ]
+            )
 
     @staticmethod
     def sidecar_tab(rel_parts: tuple[str, ...]) -> str | None:

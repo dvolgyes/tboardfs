@@ -17,38 +17,71 @@ def find_tensorboard_files(directory: str | Path) -> list[Path]:
     """Return TensorBoard event files below a directory, recursively.
 
     Symlinked directories are followed, so runs linked in from elsewhere are
-    found. Each real directory is walked once, by the first path in sorted
-    order, so link loops end.
+    found. Each directory is walked once, by the first path in sorted order,
+    so link loops end. A directory is known by its device and inode, which
+    one stat gives, also on a network filesystem.
     """
-    walked: set[Path] = set()
+    walked: set[tuple[int, int]] = set()
     found: list[Path] = []
-    for dir_name, dir_names, file_names in os.walk(directory, followlinks=True):
-        real = Path(dir_name).resolve()
-        dir_names.sort()
-        if real in walked:
-            dir_names.clear()
+    pending = [Path(directory)]
+    while pending:
+        current = pending.pop()
+        try:
+            status = current.stat()
+        except OSError:
+            continue  # removed since its parent was listed
+        if (status.st_dev, status.st_ino) in walked:
             continue
-        walked.add(real)
-        found.extend(
-            Path(dir_name) / name
-            for name in file_names
-            if fnmatchcase(name, TENSORBOARD_EVENT_GLOB)
+        walked.add((status.st_dev, status.st_ino))
+        entries = _Paths.entries(current)
+        found += _Paths.event_files(current, entries)
+        pending += reversed(
+            [current / entry.name for entry in entries if _Paths.is_dir(entry)]
         )
-    return sorted(path for path in found if _Paths.is_file(path))
+    return sorted(found)
 
 
 class _Paths:
     """Virtual path helpers for TensorBoard run and tag names."""
 
     @staticmethod
-    def is_file(path: Path) -> bool:
-        """Return whether a path is a regular file that tboardfs can check.
+    def entries(directory: Path) -> list[os.DirEntry[str]]:
+        """Return the entries of a directory by name, or none when it cannot be read.
+
+        The entries keep the file types of the listing, so most need no stat.
+        """
+        try:
+            with os.scandir(directory) as listing:
+                return sorted(listing, key=lambda entry: entry.name)
+        except OSError:
+            return []
+
+    @staticmethod
+    def event_files(directory: Path, entries: list[os.DirEntry[str]]) -> list[Path]:
+        """Return the paths of the event files among the entries of a directory."""
+        return [
+            directory / entry.name
+            for entry in entries
+            if fnmatchcase(entry.name, TENSORBOARD_EVENT_GLOB) and _Paths.is_file(entry)
+        ]
+
+    @staticmethod
+    def is_file(entry: os.DirEntry[str]) -> bool:
+        """Return whether an entry is a regular file or a link to one.
 
         A file in a folder that cannot be searched has no status, so it is
         not shown, as a removed file is not.
         """
         try:
-            return path.is_file()
+            return entry.is_file()
+        except OSError:
+            return False
+
+    @staticmethod
+    def is_dir(entry: os.DirEntry[str], *, follow_symlinks: bool = True) -> bool:
+        """Return whether an entry is a directory, or a link to one when followed."""
+        try:
+            return entry.is_dir(follow_symlinks=follow_symlinks)
         except OSError:
             return False
 
