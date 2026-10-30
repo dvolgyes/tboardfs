@@ -1,3 +1,5 @@
+from fnmatch import fnmatchcase
+import os
 from pathlib import Path
 import posixpath
 from typing import Any
@@ -12,9 +14,27 @@ _UNSAFE_PATH_CHARS = frozenset(
 
 
 def find_tensorboard_files(directory: str | Path) -> list[Path]:
-    """Return TensorBoard event files below a directory, recursively."""
-    root = Path(directory)
-    return sorted(path for path in root.rglob(TENSORBOARD_EVENT_GLOB) if path.is_file())
+    """Return TensorBoard event files below a directory, recursively.
+
+    Symlinked directories are followed, so runs linked in from elsewhere are
+    found. Each real directory is walked once, by the first path in sorted
+    order, so link loops end.
+    """
+    walked: set[Path] = set()
+    found: list[Path] = []
+    for dir_name, dir_names, file_names in os.walk(directory, followlinks=True):
+        real = Path(dir_name).resolve()
+        dir_names.sort()
+        if real in walked:
+            dir_names.clear()
+            continue
+        walked.add(real)
+        found.extend(
+            Path(dir_name) / name
+            for name in file_names
+            if fnmatchcase(name, TENSORBOARD_EVENT_GLOB)
+        )
+    return sorted(path for path in found if path.is_file())
 
 
 class _Paths:

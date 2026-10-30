@@ -838,9 +838,10 @@ class _RunData:
 
         Directories with their own event files are other runs and are pruned.
         Symlinked directories are not followed, and symlinked files must
-        resolve inside the source.
+        resolve inside the source or inside the real run directory, which a
+        symlinked run has outside the source.
         """
-        root = source.resolve()
+        roots = (source.resolve(), run_dir.resolve())
         for dir_name, dir_names, file_names in os.walk(run_dir):
             directory = Path(dir_name)
             files = sorted(name for name in file_names if (directory / name).is_file())
@@ -853,7 +854,8 @@ class _RunData:
             dir_names.sort()
             for name in files:
                 path = directory / name
-                if name not in events and path.resolve().is_relative_to(root):
+                real = path.resolve()
+                if name not in events and any(map(real.is_relative_to, roots)):
                     yield path
 
     @staticmethod

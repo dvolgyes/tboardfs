@@ -47,6 +47,12 @@ cat mnt/tboardfs/train/scalars/loss.json
 Mount mode is the primary workflow for browsing full log directories. It exposes run directories and supported sidecars
 such as projector/profile files.
 
+Symlinked directories in the source are followed, so a run kept elsewhere and linked into the log directory is a run
+under the link name. A directory that several links reach is shown once, under the first path in sorted order, and link
+loops end. Sidecar files of a linked run may resolve inside its real run directory; other links out of the source stay
+hidden. Do not link to the mountpoint from inside the source: reading the link would call back into the mount and stop
+it.
+
 Each open file keeps the version it had when it was opened, so reads stay whole while a training run writes new events.
 A new `open` shows the new data. Mounted files use direct I/O: shared memory maps (`mmap` with `MAP_SHARED`,
 `np.load(..., mmap_mode="r")`) fail with `ENODEV`; private maps (`mmap_mode="c"`) and plain reads work.
