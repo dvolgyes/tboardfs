@@ -719,14 +719,15 @@ def test_distribution_keeps_repeated_step_events_apart(tmp_path: Path) -> None:
     path = tmp_path / "events.out.tfevents"
     path.write_bytes(
         _event_record(100.0, 1, [_histogram_value("w", [1.0, 2.0], [1.0, 0.0])])
-        + _event_record(105.0, 1, [_histogram_value("w", [1.0, 2.0], [0.0, 1.0])])
+        + _event_record(105.0, 1, [_histogram_value("w", [1.0, 2.0], [1.0, 3.0])])
     )
     fs = TensorBoardFS(tmp_path, step_digits=1)
 
     rows = json.loads(fs.read("/distributions/w/1.json", 100_000, 0))
 
     assert [row["wall_time"] for row in rows] == [100.0] * 9 + [105.0] * 9
-    assert [row["value"] for row in rows if row["percentile"] == 50.0] == [0.5, 1.0]
+    medians = [row["value"] for row in rows if row["percentile"] == 50.0]
+    assert medians == pytest.approx([1.0, 4 / 3])
 
 
 def test_histogram_with_missing_step_field_is_exported_once(tmp_path: Path) -> None:

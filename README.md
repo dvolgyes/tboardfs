@@ -140,7 +140,8 @@ The virtual tree covers these TensorBoard objects:
 - Audio: encoded audio files under `/audio`, with the same `<step>_<i>` names for more than one clip.
 - Videos: encoded video/GIF outputs under `/videos`, including raw subpaths when present.
 - Histograms: per-step `json`, `tsv`, and `npz` exports under `/histograms`. TensorFlow 1 and TensorFlow 2 histogram
-  summaries give the same tables.
+  summaries give the same tables. As in TensorBoard, a TensorFlow 1 histogram runs from its minimum to its maximum,
+  without the empty buckets at its two ends, and a histogram of no values has no step file.
 - Distributions: per-step distribution tables under `/distributions`, with the values that the TensorBoard Distributions
   tab shows. The `percentile` column has 9 values: 0, 6.68, 15.87, 30.85, 50, 69.15, 84.13, 93.32 and 100, which are the
   mean and ±1, 2 and 3 standard deviations of a normal distribution. Each value interpolates linearly inside its

@@ -129,21 +129,54 @@ def test_tensorflow_2_summaries_are_unpacked() -> None:
     )
 
 
-def test_a_tf1_histogram_starts_at_its_minimum(tmp_path: Path) -> None:
-    """A TF1 bucket starts where the bucket before it ends."""
+def _tf1_histogram(
+    limits: list[float], counts: list[float], *, low: float | None, high: float
+) -> event_pb2.Event:
     event = event_pb2.Event(wall_time=1.0, step=1)
     value = event.summary.value.add(tag="h")
-    value.histo.min = -1.0
-    value.histo.bucket_limit.extend([0.0, 1.0])
-    value.histo.bucket.extend([2.0, 3.0])
+    if low is not None:
+        value.histo.min = low
+    value.histo.max = high
+    value.histo.bucket_limit.extend(limits)
+    value.histo.bucket.extend(counts)
+    return event
+
+
+def _buckets(fs: TensorBoardFS) -> list[tuple[float, float, float]]:
+    rows = json.loads(fs.read("/histograms/h/000001.json", 1 << 20, 0))
+    return [(r["bucket_left"], r["bucket_right"], r["count"]) for r in rows]
+
+
+def test_a_tf1_histogram_spans_its_minimum_to_its_maximum(tmp_path: Path) -> None:
+    """Buckets run from min to max, as TensorBoard migrates TF1 histograms."""
+    event = _tf1_histogram([0.0, 1.0, 1.25], [2.0, 3.0, 1.0], low=-1.0, high=1.125)
     fs = _log(tmp_path, event)
 
-    rows = json.loads(fs.read("/histograms/h/000001.json", 1 << 20, 0))
+    assert _buckets(fs) == [(-1.0, 0.0, 2.0), (0.0, 1.0, 3.0), (1.0, 1.125, 1.0)]
 
-    assert [(r["bucket_left"], r["bucket_right"]) for r in rows] == [
-        (-1.0, 0.0),
-        (0.0, 1.0),
-    ]
+
+def test_a_tf1_histogram_without_min_starts_at_zero(tmp_path: Path) -> None:
+    """Proto3 writers leave out a minimum of 0, as TensorBoard reads it."""
+    fs = _log(tmp_path, _tf1_histogram([1.0, 2.0], [2.0, 3.0], low=None, high=2.0))
+
+    assert _buckets(fs) == [(0.0, 1.0, 2.0), (1.0, 2.0, 3.0)]
+
+
+def test_empty_tf1_end_buckets_are_dropped(tmp_path: Path) -> None:
+    """Empty buckets at the two ends are not shown, as in TensorBoard."""
+    event = _tf1_histogram(
+        [-1e300, 0.0, 1.0, 2.0, 1.7e308], [0.0, 2.0, 0.0, 3.0, 0.0], low=-0.5, high=1.5
+    )
+    fs = _log(tmp_path, event)
+
+    assert _buckets(fs) == [(-0.5, 0.0, 2.0), (0.0, 1.0, 0.0), (1.0, 1.5, 3.0)]
+
+
+def test_an_empty_tf1_histogram_has_no_buckets(tmp_path: Path) -> None:
+    """A histogram of no values has no bucket rows, so no file at all."""
+    fs = _log(tmp_path, _tf1_histogram([1.0, 2.0], [0.0, 0.0], low=0.0, high=0.0))
+
+    assert list(_files(fs)) == []
 
 
 def test_a_large_image_is_only_an_image(tmp_path: Path) -> None:
@@ -178,3 +211,11 @@ def test_a_malformed_histogram_tensor_is_left_packed(tmp_path: Path) -> None:
     assert (
         "bucket_left" not in fs.read("/histograms/h/000001.json", 1 << 20, 0).decode()
     )
+
+
+def test_a_tf1_histogram_with_too_few_limits_is_read(tmp_path: Path) -> None:
+    """A malformed histogram pairs counts with the edges it has: min, limits, max."""
+    event = _tf1_histogram([1.0], [2.0, 3.0, 4.0], low=0.0, high=3.0)
+    fs = _log(tmp_path, event)
+
+    assert _buckets(fs) == [(0.0, 1.0, 2.0), (1.0, 3.0, 3.0)]

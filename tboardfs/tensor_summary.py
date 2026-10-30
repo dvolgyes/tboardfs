@@ -52,17 +52,10 @@ class _TensorSummary:
     def histogram_buckets(
         value: dict[str, Any],
     ) -> list[tuple[float, float, float]] | None:
-        """Return (left, right, count) per bucket, or None for no histogram.
-
-        A TF1 bucket starts at the limit of the bucket before it, and the
-        first one at the histogram minimum.
-        """
+        """Return (left, right, count) per bucket, or None for no histogram."""
         histogram = value.get("histo")
         if histogram is not None:
-            limits = [float(limit) for limit in histogram.get("bucket_limit", [])]
-            lefts = [float(histogram.get("min", float("-inf"))), *limits[:-1]]
-            counts = [float(count) for count in histogram.get("bucket", [])]
-            return list(zip(lefts, limits, counts, strict=False))
+            return _TensorSummary.tf1_histogram_buckets(histogram)
         if (value.get("plugin_name") or "").lower() != "histograms":
             return None
         data = tensor_to_array(value.get("tensor") or {})
@@ -71,6 +64,29 @@ class _TensorSummary:
         return [
             (float(left), float(right), float(count)) for left, right, count in data
         ]
+
+    @staticmethod
+    def tf1_histogram_buckets(
+        histogram: dict[str, Any],
+    ) -> list[tuple[float, float, float]]:
+        """Return (left, right, count) per bucket of a TF1 HistogramProto.
+
+        The buckets are read as TensorBoard's data_compat migrates them: the
+        empty buckets at the two ends are dropped, and the buckets run from
+        the minimum to the maximum. Proto3 writers leave out a 0 minimum or
+        maximum.
+        """
+        counts = [float(count) for count in histogram.get("bucket", [])]
+        filled = [index for index, count in enumerate(counts) if count > 0]
+        if not filled:
+            return []
+        start, end = filled[0], filled[-1]
+        limits = histogram.get("bucket_limit", [])
+        inner = [float(limit) for limit in limits[start:end]]
+        lefts = [float(histogram.get("min", 0.0)), *inner]
+        rights = [*inner, float(histogram.get("max", 0.0))]
+        # A malformed histogram with too few limits keeps the buckets it has.
+        return list(zip(lefts, rights, counts[start : end + 1], strict=False))
 
     @staticmethod
     def unpacked(value: dict[str, Any]) -> bool:

@@ -44,6 +44,7 @@ def _values(step: int, value: float) -> bytes:
     image.encoded_image_string = PNG
     histogram = event.summary.value.add(tag="weights").histo
     histogram.min = 0.0
+    histogram.max = value
     histogram.bucket_limit.extend([value])
     histogram.bucket.extend([1.0])
     return _frame(event)
