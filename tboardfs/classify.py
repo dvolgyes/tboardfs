@@ -1,3 +1,4 @@
+import math
 import struct
 from typing import Any
 
@@ -33,7 +34,7 @@ class _Classifier:
             return Scalar(value["simple_value"], np.dtype("float32"))
 
         tensor = value.get("tensor")
-        if not tensor:
+        if not tensor or math.prod(tensor.get("shape") or []) != 1:
             return None
 
         dtype = tensor.get("dtype")
@@ -44,21 +45,22 @@ class _Classifier:
             if scalar is not None:
                 return scalar
 
-        if dtype == 1 and values.get(5):
-            return Scalar(values[5][0], np.dtype("float32"))
-        if dtype == 2 and values.get(6):
-            return Scalar(values[6][0], np.dtype("float64"))
-        if dtype == 3 and values.get(7):
-            return Scalar(values[7][0], np.dtype("int32"))
-        if dtype == 9 and values.get(10):
-            return Scalar(values[10][0], np.dtype("int64"))
-        if dtype == 10 and values.get(11):
-            return Scalar(values[11][0], np.dtype("bool"))
-        if dtype == 22 and values.get(16):
-            return Scalar(values[16][0], np.dtype("uint32"))
-        if dtype == 23 and values.get(17):
-            return Scalar(values[17][0], np.dtype("uint64"))
-        return None
+        # dtype id: (TensorProto repeated field number, NumPy dtype)
+        fields = {
+            1: (5, "float32"),
+            2: (6, "float64"),
+            3: (7, "int32"),
+            9: (10, "int64"),
+            10: (11, "bool"),
+            22: (16, "uint32"),
+            23: (17, "uint64"),
+        }
+        if dtype not in fields:
+            return None
+        field, np_dtype = fields[dtype]
+        if not values.get(field):
+            return None
+        return Scalar(values[field][0], np.dtype(np_dtype))
 
     @staticmethod
     def tensor_content_scalar(dtype: int | None, content: bytes) -> Scalar | None:
@@ -130,13 +132,9 @@ class _Classifier:
     @staticmethod
     def plugin_json_payload(value: dict[str, Any]) -> dict[str, Any] | None:
         """Return JSON-safe plugin metadata for known TensorBoard plugin records."""
-        plugin_name = value.get("plugin_name")
+        plugin_name = value.get("plugin_name") or _Classifier.unnamed_plugin(value)
         if not plugin_name:
-            tensor = value.get("tensor") or {}
-            if tensor.get("dtype") == 7 and tensor.get("string_val"):
-                plugin_name = "text"
-            else:
-                return None
+            return None
         if str(plugin_name).lower() in {"video", "videos"} and _Classifier.binary_blob(
             value
         ):
@@ -148,6 +146,22 @@ class _Classifier:
         if tensor:
             payload["tensor"] = tensor
         return payload
+
+    @staticmethod
+    def unnamed_plugin(value: dict[str, Any]) -> str | None:
+        """Return the tab plugin for a tensor written without a plugin name.
+
+        String tensors are text. Numeric tensors are tensors, unless they are
+        scalars, which the scalar table holds.
+        """
+        tensor = value.get("tensor") or {}
+        if not tensor:
+            return None
+        if tensor.get("dtype") == 7:
+            return "text" if tensor.get("string_val") else None
+        if _Classifier.scalar_value(value) is not None:
+            return None
+        return "tensors"
 
     @staticmethod
     def json_tensor(tensor: dict[str, Any]) -> dict[str, Any]:

@@ -158,7 +158,8 @@ The virtual tree covers these TensorBoard objects:
 - Tensors: tensor arrays as `npy` plus compact JSON or native blob files under `/tensors`. Every numeric TensorFlow
   dtype that NumPy has keeps its dtype, including float16, int8, int16, uint16 and complex. NumPy has no bfloat16, so
   bfloat16 tensors are widened to float32; this is exact. Float8 and 4-bit tensors are not decoded. String tensors are
-  NumPy text arrays (dtype `U`), so `np.load` reads them without `allow_pickle`.
+  NumPy text arrays (dtype `U`), so `np.load` reads them without `allow_pickle`. A numeric tensor written without a
+  plugin name is also a tensor here. A tensor with one value is a scalar instead.
 - Graphs: graph protobuf files under `/graphs`. `graph.pb` is the newest graph of the run, as in TensorBoard. A run with
   several graphs also has `graph_<i>.pb` for each graph, in write order.
 - Projector and profile sidecars: available in filesystem mode, and in command mode for a directory, under `/projector`
