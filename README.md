@@ -11,234 +11,413 @@
   <a href="https://www.python.org/"><img alt="Python: >=3.12" src="https://img.shields.io/badge/python-%3E=3.12-blue.svg" /></a>
 </p>
 
-Mount and inspect TensorBoard event logs as ordinary files.
+Read TensorBoard event logs as ordinary files.
 
-`tboardfs` has two access modes:
+tboardfs shows the content of TensorBoard event files (`events.out.tfevents*`) as a read-only directory tree. Each
+TensorBoard tab is a directory, each tag is a path below it, and each value is a file in a common format: JSON, TSV,
+CSV, NumPy `.npy`/`.npz`, PNG, WAV, GIF, OBJ, PLY, or protobuf. You can then use `ls`, `cat`, `cp`, `grep`, pandas,
+NumPy, or any other tool on your training logs, without TensorBoard and without TensorFlow.
 
-- Filesystem mode mounts a log directory with FUSE.
-- Command mode inspects or copies the virtual content of one event file.
-
-Both modes use the same virtual paths for TensorBoard tabs such as `scalars`, `images`, `tensors`, `meshes`,
-`pr_curves`, `hparams`, and `custom_scalars`.
-
-## Filesystem Mode
-
-Mount a TensorBoard log directory:
-
-```bash
-tboardfs SOURCE MOUNTPOINT
+```console
+$ tboardfs runs mnt
+$ ls mnt
+experiment-1  experiment-2
+$ ls mnt/experiment-1/scalars/train
+accuracy.json  accuracy.npz  accuracy.tsv  loss.json  loss.npz  loss.tsv
+$ head -3 mnt/experiment-1/scalars/train/loss.tsv
+epoch	step	wall_time	relative_time	value
+0.0	1	1700000001.0	0.0	1.5
+1.0	2	1700000002.0	1.0	0.75
 ```
 
-For non-developers, the simplest way to run it without cloning this repository or managing a local virtual environment
-is:
+tboardfs reads the logs of TensorFlow 1 and 2, Keras, PyTorch (`torch.utils.tensorboard`), PyTorch Lightning,
+tensorboardX, and other writers of the same event format.
+
+There are two ways to use it:
+
+- `tboardfs` mounts a log directory with FUSE. The mount follows a training run while it writes new events.
+- `tboardfs-file` lists and copies the same virtual files without FUSE, for example in scripts, in containers, or on
+  machines where you cannot mount.
+
+## Installation
+
+tboardfs needs Python 3.12 or later, and these system libraries:
+
+- FUSE (libfuse 2 or 3, with `fusermount`) for filesystem mode. `tboardfs-file` does not need FUSE.
+- libmagic, which finds the file type of images, audio and other stored files.
+
+On Debian or Ubuntu, for example:
+
+```bash
+sudo apt install fuse3 libmagic1
+```
+
+Install tboardfs from PyPI:
+
+```bash
+pip install tboardfs
+```
+
+Or run it without an installation:
 
 ```bash
 uvx tboardfs SOURCE MOUNTPOINT
+uvx --from tboardfs tboardfs-file list SOURCE
 ```
 
-Example:
+## Filesystem Mode
 
 ```bash
-tboardfs runs/experiment-1 mnt/tboardfs
-ls mnt/tboardfs
-cat mnt/tboardfs/train/scalars/loss.json
+tboardfs [OPTIONS] SOURCE MOUNTPOINT
 ```
 
-Mount mode is the primary workflow for browsing full log directories. It exposes run directories and supported sidecars
-such as projector/profile files.
+SOURCE is a log directory or a run directory. MOUNTPOINT is an existing directory. The mountpoint must not be inside
+SOURCE, and SOURCE must not be inside the mountpoint.
 
-A run directory inside another run is a directory beside the tabs of that run. When its name is also an entry of that
-run, such as the run `exp/scalars` below the run `exp`, which has the tab `scalars`, it gets `~2` (then `~3`, and so on)
-and tboardfs logs a warning once. The run `exp/scalars` is then under `/exp/scalars~2/`, and `/exp/scalars/` has only
-the scalars of `exp`. The runs below a renamed directory follow it. A directory that has the name `scalars~2` on disk
-keeps that name; the renamed directory then gets `~3`.
+```bash
+mkdir -p mnt
+tboardfs runs/experiment-1 mnt
+ls mnt
+cat mnt/scalars/loss.json
+fusermount -u mnt    # unmount; with libfuse 3, use fusermount3 -u
+```
 
-Symlinked directories in the source are followed, so a run kept elsewhere and linked into the log directory is a run
-under the link name. A directory that several links reach is shown once, under the first path in sorted order, and link
-loops end. Sidecar files of a linked run may resolve inside its real run directory; other links out of the source stay
-hidden. Do not link to the mountpoint from inside the source: reading the link would call back into the mount and stop
-it.
+tboardfs runs in the background by default. With `--foreground`, it stays in the terminal until you stop it with Ctrl+C.
 
-Each open file keeps the version it had when it was opened, so reads stay whole while a training run writes new events.
-A new `open` shows the new data. Mounted files use direct I/O: shared memory maps (`mmap` with `MAP_SHARED`,
-`np.load(..., mmap_mode="r")`) fail with `ENODEV`; private maps (`mmap_mode="c"`) and plain reads work.
+| Option | Default | Meaning |
+| -- | -- | -- |
+| `--scalar-format LIST` | `json,tsv,npz` | Comma-separated table formats for scalars, histograms and distributions: `json`, `tsv`, `csv`, `npz`. |
+| `--step-digits N` | `6` | Zero-padding width of step file names, from 1 to 20. |
+| `--refresh-age-seconds S` | `60` | How old the data can get before the next file operation checks the source again. `inf` never checks again. |
+| `--cache-size-mb N` | `1024` | Memory for rendered files. `0` turns the cache off. |
+| `--root-owner` / `--user-owner` | `--root-owner` | Owner of all files and directories: root, or the user who mounts. |
+| `--foreground` / `--background` | `--background` | Stay in the terminal, or detach. |
+| `--logfile FILE` | none | Write the log to FILE. |
+| `--loglevel LEVEL` | `INFO` | `trace`, `debug`, `info`, `success`, `warning`, `error`, or `critical`, in any case. |
 
-`--refresh-age-seconds` (default 60) sets how old the data can get before the next file operation checks the source
-again. A check lists each directory once and opens only the event files whose device, inode, size, mtime or ctime
-changed. Every write changes the ctime, so a rewritten file is read again even when its mtime is set back. Only a
-rewrite to the same size within one timestamp tick of a filesystem with coarse timestamps is not seen until the next
-change. On a network filesystem, a larger value makes fewer round trips.
+In the background, the log goes only to `--logfile`. Without `--logfile`, you do not see the warnings about damaged
+data; use `--logfile` or `--foreground` when you need them.
 
-Rendered files are kept in memory, so `ls -l` followed by `cat` renders a file once. `--cache-size-mb` sets the memory
-for this cache (default 1024; 0 turns it off). When the cache goes over the limit, the least recently used files are
-dropped until half the limit is left. New events in a run make only the files of that run render again.
+### Live Training Runs
 
-Files and directories belong to root (uid and gid 0) by default. `--user-owner` gives them to the user and group that
-mount the filesystem; `--root-owner` is the default. The permissions stay read-only for everyone (`0444` files, `0555`
-directories).
+A mount shows new events while a training run writes them. When the data is older than `--refresh-age-seconds`, the next
+file operation checks the source again. A check lists each directory once, and reads only the event files whose device,
+inode, size, mtime or ctime changed. A file that grew is read from the position where the last read stopped. On a
+network filesystem, a larger value makes fewer round trips.
 
-`--scalar-format` selects the scalar and histogram table formats, as a comma-separated list of `json`, `tsv`, `csv`, and
-`npz` (default `json,tsv,npz`). `--step-digits` sets the zero-padding width of step file names, from 1 to 20 (default
-6). `--loglevel` takes a loguru level name in any case. Both commands refuse other values with a usage error.
+Each open file keeps the content it had when it was opened, so a read never mixes two versions. Open the file again to
+see new data.
 
-A resumed run hides the rows it replaces, as TensorBoard does. When a writer marks a restart at step S (a
-`SessionLog.START` event, for example from PyTorch `SummaryWriter(purge_step=S)`), rows written before it with step S or
-higher are not shown. Graphs stay. This applies to event files with file version 2 or later, which all current writers
-produce.
+### Memory and Caching
+
+Rendered files are kept in memory, so `ls -l` followed by `cat` renders a file once. When the cache goes over
+`--cache-size-mb`, the least recently used files are dropped until half the limit is left. New events in a run make only
+the files of that run render again.
+
+### Permissions and Memory Maps
+
+The filesystem is read-only. Files have mode `0444` and directories `0555`. They belong to root (uid and gid 0), or to
+the user who mounts with `--user-owner`.
+
+Mounted files use direct I/O. Plain reads and private memory maps work, for example `np.load(path, mmap_mode="c")`.
+Shared memory maps (`mmap` with `MAP_SHARED`, `np.load(path, mmap_mode="r")`) fail with `ENODEV`.
 
 ## Command Mode
 
-Use `tboardfs-file` when mounting is unavailable or when you need scripted access to TensorBoard event files.
+```bash
+tboardfs-file [--logfile FILE] [--loglevel LEVEL] COMMAND [OPTIONS] SOURCE ...
+```
 
-List every virtual file:
+SOURCE is one event file, a run directory, or a log directory.
+
+- For one event file, the tabs are at the root, for example `/scalars` and `/images`. The files beside the event file
+  (projector, profile, `hparams.yaml`) are not included.
+- For a directory, the tree is the same as a mount of that directory, with those files.
+
+| Command | Purpose |
+| -- | -- |
+| `list SOURCE [PREFIX]` | Print the virtual file paths below PREFIX, one per line. |
+| `get SOURCE VPATH -o OUTPUT` | Write one virtual file to OUTPUT. `-o -` writes it to stdout. |
+| `copy-all SOURCE OUTDIR` | Copy the full virtual tree into OUTDIR. |
+
+All three commands accept `--scalar-format` and `--step-digits`, with the same meaning as in filesystem mode.
 
 ```bash
 tboardfs-file list events.out.tfevents.123
-```
-
-List files below a virtual path:
-
-```bash
-tboardfs-file list events.out.tfevents.123 /meshes
-```
-
-Extract one virtual file to stdout:
-
-```bash
+tboardfs-file list runs /experiment-1/meshes
 tboardfs-file get events.out.tfevents.123 /scalars/loss.json -o -
+tboardfs-file get events.out.tfevents.123 images/sample/000001.png -o sample.png
+tboardfs-file get events.out.tfevents.123 scalars/loss.tsv -o exported/
+tboardfs-file copy-all runs exported-runs --skip-existing
 ```
 
-Extract one virtual file to disk:
+- A virtual path can start with or without `/`.
+- When `-o` is an existing directory, or a missing path that ends in `/`, `get` writes the file under its own name in
+  that directory.
+- `get` does not overwrite a file unless you give `--force`.
+- `copy-all` copies the files in sorted virtual-path order. When it finds a file that already exists, it stops, and
+  tells which files it copied and which path stopped it. `-f/--force` overwrites existing files. `-s/--skip-existing`
+  keeps existing files, writes a warning for each, and copies the rest. You cannot use both.
 
-```bash
-tboardfs-file get events.out.tfevents.123 /images/sample/000001.png -o sample.png
+Only file data and file lists go to stdout, so you can pipe them. Messages, warnings and errors go to stderr.
+
+## Directory Layout
+
+A log directory has one directory for each run. A run is a directory that holds event files. The tabs of a run are
+directories in the run directory:
+
+```text
+MOUNTPOINT/
+├── experiment-1/                  a run
+│   ├── scalars/train/loss.json    the tag train/loss
+│   ├── images/sample/000010.png   the tag sample at step 10
+│   ├── ...                        the other tabs
+│   └── eval/                      a run inside the run experiment-1
+│       └── scalars/...
+└── experiment-2/
+    └── ...
 ```
 
-The virtual path may be written with or without the leading `/`. If `-o` points to an existing directory, or to a
-missing path ending in `/`, `get` writes the virtual file basename inside that directory.
+When SOURCE is itself a run directory, its tabs are at the root of the mount. Each run has all 16 tab directories of the
+table in [Exported Data](#exported-data); a tab without data is empty. When a run has several event files, for example
+after a restart, tboardfs merges them into one run.
 
-```bash
-tboardfs-file get events.out.tfevents.123 scalars/loss.json -o exported/
+### Tags and Steps
+
+- A tag is a path below its tab: the tag `train/loss` is `scalars/train/loss.json`.
+- Empty parts of a tag are left out, and a tag without a name is `untagged`.
+- tboardfs writes `.` and `..`, backslashes and control characters in a tag as `%XX` escapes, so a tag cannot point
+  outside its directory.
+- Data with one value for each step has one file per step. The file name is the step, zero-padded to `--step-digits`
+  digits, such as `000010.png`.
+- An event without a step field is at step 0, as in TensorBoard.
+
+### Name Conflicts
+
+When two entries get the same path, tboardfs keeps both: it adds `~2` (then `~3`, and so on) to one of them, and logs a
+warning once.
+
+- When two tags of a run give the same path, such as `a/b` and `a//b`, the tag that the path spells keeps it. The other
+  tag gets `~2` on its last part, in every tab.
+- When a tag directory has the name of a file, such as the tag `loss.json/x` beside `scalars/loss.json`, the directory
+  becomes `loss.json~2/`, and the file keeps its name.
+- When a run inside another run has the name of a tab, such as the run `exp/scalars`, it becomes `exp/scalars~2/`.
+  `exp/scalars/` keeps only the scalars of `exp`.
+- A directory that has the name `scalars~2` on disk keeps that name; the renamed directory then gets `~3`.
+
+The only exception is two files from the run directory (projector or profile files) at one path: the first file stays,
+and tboardfs logs a warning.
+
+### Symbolic Links
+
+Symlinked directories in SOURCE are followed, so a run kept elsewhere and linked into the log directory is a run under
+the name of the link. A directory that several links reach is shown once, under the first path in sorted order. Link
+loops end. A projector or profile file of a linked run can point into its real run directory; other links out of SOURCE
+are not shown.
+
+Do not make a link from inside SOURCE to the mountpoint: a read of that link calls back into the mount and stops it.
+
+## Exported Data
+
+| Tab | Files | Content |
+| -- | -- | -- |
+| `scalars` | `<tag>.json` `.tsv` `.csv` `.npz` | One table per tag, all steps |
+| `histograms` | `<tag>/<step>.json` `.tsv` `.csv` `.npz` | The buckets of one histogram |
+| `distributions` | `<tag>/<step>.json` `.tsv` `.csv` `.npz` | The 9 percentiles of the Distributions tab |
+| `pr_curves` | `<tag>/<step>.json` `.tsv` `.npy` | One row per threshold |
+| `images` | `<tag>/<step>.png` (or `.jpg`, ...) | The stored image |
+| `audio` | `<tag>/<step>.wav` (or other type) | The stored audio clip |
+| `videos` | `<tag>/<step>.gif` (or other type) | Animated GIFs and videos |
+| `text` | `<tag>/<step>.txt` (and `.json`) | Text, or a Markdown table |
+| `meshes` | `<tag>/<step>.json` `.npz` `.obj` `.ply` | Vertices, faces and colors |
+| `tensors` | `<tag>/<step>.npy` `.json` | Tensor values |
+| `hparams` | `hparams.json`, `hparams.yaml` | Hyperparameters and metrics |
+| `custom_scalars` | `layout.json` | The Custom Scalars layout |
+| `graphs` | `graph.pb`, `<tag>/<step>.*` | Model graphs and run metadata |
+| `projector` | files of the run directory | Embedding projector files |
+| `profile` | files of the run directory | Profiler files |
+| `plugins` | `<plugin>/<tag>/<step>.json` | Data of other plugins |
+
+`--scalar-format` selects the table formats of scalars, histograms and distributions. The default is `json,tsv,npz`;
+`csv` is also available.
+
+### Scalars
+
+Each scalar tag is one table with all its steps, in step order.
+
+| Column | Meaning |
+| -- | -- |
+| `epoch` | The `epoch` scalar at that step (see below) |
+| `step` | The global step |
+| `wall_time` | Seconds since the Unix epoch |
+| `relative_time` | Seconds since the first summary of the event file |
+| `value` | The scalar value |
+
+- The `epoch` column is the value of the scalar tag `epoch` at the same step, as PyTorch Lightning writes it. A step
+  without an `epoch` value has the last epoch written before it. Without an earlier `epoch` value, the cell is missing
+  (`null` in JSON, `nan` in TSV and CSV).
+- In the `.npz` file, each column is an array with the same name. `value` keeps the stored type: float32 for TensorFlow
+  1 and PyTorch scalars, or the dtype of a tensor scalar, such as float64 or int64.
+- A tensor summary with one value is a scalar.
+
+### Histograms and Distributions
+
+A histogram table has one row per bucket, with the columns `step`, `epoch`, `wall_time`, `relative_time`, `bucket_left`,
+`bucket_right` and `count`. TensorFlow 1 and TensorFlow 2 histograms give the same table. As in TensorBoard, a
+TensorFlow 1 histogram runs from its minimum to its maximum, without the empty buckets at its two ends. A histogram of
+no values has no step file.
+
+A distribution table has the values that the TensorBoard Distributions tab shows, with the columns `step`, `epoch`,
+`wall_time`, `relative_time`, `percentile` and `value`. The 9 percentiles are 0, 6.68, 15.87, 30.85, 50, 69.15, 84.13,
+93.32 and 100: the minimum, the maximum, and the positions of the mean and ±1, 2 and 3 standard deviations of a normal
+distribution. Each value interpolates linearly inside its histogram bucket.
+
+### PR Curves
+
+The `.json` and `.tsv` tables have one row per threshold, with the columns `threshold`, `true_positives`,
+`false_positives`, `true_negatives`, `false_negatives`, `precision` and `recall`. The thresholds are evenly spaced in
+[0, 1], as in TensorBoard. The `.npy` file is the stored `[6, N]` tensor. A tensor of another shape has the columns
+`value_0`, `value_1`, and so on.
+
+### Images, Audio and Videos
+
+These files are the stored bytes, with the extension of their content type. When a TensorFlow 2 summary holds more than
+one image or audio clip at one step, each one is a file `<step>_<i>`, such as `000001_0.png` and `000001_1.png`. GIF
+images, which tensorboardX and PyTorch `add_video` write, are under `videos`.
+
+### Text
+
+A text summary with one string is a `.txt` file with that text. A summary with many strings is a Markdown table in the
+`.txt` file, as TensorBoard shows it: a vector is one column, and a tensor with more than 2 dimensions shows its first
+2-D slice (tboardfs logs a warning). A `.json` file beside the table keeps the shape and the exact strings.
+
+### Meshes
+
+The path of a mesh is its tag without the `_VERTEX`, `_FACE` or `_COLOR` suffix, so `train/cloud_VERTEX` is under
+`meshes/train/cloud`. A tag without that suffix uses the mesh name, which the `.json` file keeps. TensorBoard groups
+meshes by the mesh name only, and thus mixes `train/cloud` and `val/cloud`; tboardfs keeps them apart.
+
+- `.npz` holds the arrays `vertices`, `faces` and `colors` (when present), with their stored types and shapes.
+- `.json` holds the mesh name, the content types, the shape, and the JSON config of the summary.
+- `.obj` is a Wavefront OBJ file. A batch of more than one mesh has one object (`o mesh_<i>`) per element. Vertex colors
+  follow the coordinates as `r g b` values in [0, 1], which MeshLab and Blender read. A mesh without faces is a point
+  cloud.
+- `.ply` is a binary PLY file that keeps the coordinates exactly: float32 coordinates as `float`, other numbers as
+  `double`, and colors as `uchar` `red green blue`. A point cloud has no `face` element. A batch is one PLY mesh, with
+  the faces of a later element offset by the vertices before it, and one `comment mesh_<i> vertices <start> <count>`
+  line per element. Faces that are not vertex indices, and colors that are not whole numbers from 0 to 255, are not in
+  the PLY file; the `.npz` file keeps them.
+
+### Tensors
+
+Each tensor summary is a `.npy` file, and a `.json` file with its `shape`, `dtype` and `values`.
+
+- Every numeric TensorFlow dtype that NumPy has keeps its dtype, including float16, int8, int16, uint16 and complex.
+- NumPy has no bfloat16, so bfloat16 tensors become float32; this is exact.
+- Float8 and 4-bit tensors are not decoded.
+- String tensors are NumPy text arrays (dtype `U`), so `np.load` reads them without `allow_pickle`.
+- A numeric tensor without a plugin name is also a tensor here.
+- A tensor of 1 KiB or more also has its raw bytes as a file with the extension of its content type (`.bin` when the
+  type is not known). A large histogram, PR curve, mesh or text tensor is only in its own tab.
+
+### HParams
+
+`hparams.json` merges the experiment, the sessions and the metrics of the run.
+
+- The metrics are the declared metric tags, or all scalar tags when the run declares no experiment, as in TensorBoard.
+- Each metric has its last value, or `null` without data. Metrics of a sub-run group (for example the Keras `validation`
+  run) have no value here; read them from the scalars of that run.
+- `sessions` lists every session of the run; `session_start` and `session_end` are the first ones, as in TensorBoard.
+
+The `hparams.yaml` file that PyTorch Lightning writes in the run directory is also in `hparams`.
+
+### Graphs
+
+- `graph.pb` is the `GraphDef` that TensorBoard shows: the newest `graph_def` of the event files, which TensorFlow 1 and
+  PyTorch `add_graph` write, or else the graph of the newest TensorFlow 1 meta graph. A run with several `graph_def`
+  graphs also has `graph_<i>.pb` for each one, in write order.
+- `meta_graph.pb` is the newest TensorFlow 1 `MetaGraphDef`, with `meta_graph_<i>.pb` in the same way.
+- A TensorFlow 2 graph summary is under `graphs/<tag>/`:
+  - `<step>.json` is the Keras model config that the Keras TensorBoard callback writes.
+  - `<step>.run_metadata.pb` is the `RunMetadata` of `tf.summary.trace_export`.
+  - `<step>.conceptual.pb` or `<step>.pb` beside it is the `GraphDef` that the Graphs tab draws for it.
+- A TensorFlow 1 tagged `RunMetadata` (`FileWriter.add_run_metadata`, PyTorch `add_graph`) is
+  `graphs/<tag>/<step>.run_metadata.pb`.
+- Beside each `RunMetadata`, `<step>.run_metadata.pbtxt` is the profile text that the Graphs tab shows.
+
+The `.pb` files are binary protobuf messages, which TensorFlow and Netron can read. TensorBoard 2.21 cannot draw a
+functional model inside a Sequential model from a Keras 3 config, because it reads the one input of the nested model as
+three inputs; tboardfs gives the graph with that one input.
+
+### Projector and Profile
+
+These files come from the run directory, not from the event files, so they are only available when SOURCE is a
+directory.
+
+- `projector` has `projector_config.pbtxt` and the other files of a `projector` directory. It also has the files that
+  the config names (`tensor_path`, `metadata_path`, sprite `image_path`, `bookmarks_path`), such as the
+  `<step>/<tag>/tensors.tsv` files of PyTorch and tensorboardX `add_embedding`, at the paths that the config uses. Only
+  relative paths to files of the run are followed, and only the first MiB of the config is read.
+- `profile` has the files below a `profile` directory of the run, such as `plugins/profile/...`.
+
+### Other Plugins
+
+Summaries of a plugin without its own tab are JSON files under `plugins/<plugin>/<tag>/<step>.json`.
+
+## File Formats
+
+### JSON
+
+All `.json` files are strict JSON (RFC 8259), UTF-8, and indented with 2 spaces.
+
+- A table is a list of row objects, with the column names as keys.
+- Infinities are the strings `"Infinity"` and `"-Infinity"`.
+- In tables, NaN is a missing value and is `null`. In other JSON files, NaN is the string `"NaN"`, as in protobuf JSON.
+- A complex number is its `[real, imag]` pair.
+- Bytes that are valid UTF-8 are text; other bytes are `{"base64": "..."}`.
+- A number reads back as the same value, but its spelling can differ from Python `repr`, for example `1e-5` for `1e-05`.
+
+### TSV and CSV
+
+The first line has the column names. Missing values and NaN are `nan`; infinities are `inf` and `-inf`. A cell that
+contains the separator or a quote is quoted.
+
+```python
+import pandas as pd
+
+df = pd.read_csv("mnt/run/scalars/loss.tsv", sep="\t")
 ```
 
-Copy the full virtual tree:
+### NumPy
 
-```bash
-tboardfs-file copy-all events.out.tfevents.123 exported-event
+An `.npz` table has one array per column, with the stored types: float32 values stay float32.
+
+```python
+import numpy as np
+
+table = np.load("mnt/run/scalars/loss.npz")
+steps, values = table["step"], table["value"]
 ```
 
-For one event file, command mode exposes tab directories directly at the root, for example `/scalars`, `/images`, and
-`/meshes`, without sibling sidecars. SOURCE can also be a run directory or a log directory. Then the commands show the
-same tree as a mount of that directory: a run directory has its tabs at the root, a log directory has one directory per
-run, and both include sidecars.
+## Resumed Runs
 
-`get` refuses to overwrite existing files unless `--force` is provided. `copy-all` copies files in deterministic
-virtual-path order. If it reaches an existing target without `--force`, it stops, reports how many files were already
-copied, lists those virtual paths, prints the conflicting output path, and suggests `--force`. After a successful copy,
-`copy-all` reports the number of copied files.
+A resumed run hides the rows it replaces, as TensorBoard does. When a writer marks a restart at step S (a
+`SessionLog.START` event, for example from PyTorch `SummaryWriter(purge_step=S)`), the rows written before it at step S
+or later are not shown. Graphs stay. This applies to event files with file version 2 or later, which all current writers
+produce.
 
-Use `--skip-existing` to leave existing output files untouched and continue copying the rest of the tree:
+## Damaged and Unsupported Data
 
-```bash
-tboardfs-file copy-all events.out.tfevents.123 exported-event --skip-existing
-```
+tboardfs shows what it can read and leaves out what it cannot.
 
-Each skipped virtual path is reported as a warning on stderr. `--force` and `--skip-existing` are mutually exclusive.
-
-## Supported Objects
-
-A tag is a path below its tab, so `train/loss` is `/scalars/train/loss.json`. Empty parts of a tag are left out, and a
-tag without a name is `untagged`. When two tags of a run get the same path, such as `a/b` and `a//b`, the tag that the
-path spells keeps it. The other tag gets `~2` (then `~3`, and so on) on its last part in every tab, and tboardfs logs a
-warning once. A tag directory can also have the name of a file, such as the tag `a/000001.npy` beside the step file
-`000001.npy` of the tag `a`, or the tag `loss.json/x` beside `/scalars/loss.json`. Then the directory gets `~2` in every
-tab, such as `/tensors/a/000001.npy~2/`, and the file keeps its name. When two files without a tag meet at one path,
-such as two profile sidecars `a` and `a/c`, the first file stays, and tboardfs logs a warning.
-
-The virtual tree covers these TensorBoard objects:
-
-- Scalars: full-series `json`, `tsv`, and `npz` exports under `/scalars`. The `epoch` column of scalar and histogram
-  tables is the `epoch` scalar written at the same step, as PyTorch Lightning writes it. A step without an `epoch`
-  scalar has the last epoch written before it.
-- Custom scalars: layout JSON under `/custom_scalars`.
-- Images: encoded image files under `/images`. A TensorFlow 2 image summary with more than one image gives one file per
-  image, `<step>_<i>`, such as `000001_0.png`.
-- Audio: encoded audio files under `/audio`, with the same `<step>_<i>` names for more than one clip.
-- Videos: encoded video/GIF outputs under `/videos`, including raw subpaths when present.
-- Histograms: per-step `json`, `tsv`, and `npz` exports under `/histograms`. TensorFlow 1 and TensorFlow 2 histogram
-  summaries give the same tables. As in TensorBoard, a TensorFlow 1 histogram runs from its minimum to its maximum,
-  without the empty buckets at its two ends, and a histogram of no values has no step file.
-- Distributions: per-step distribution tables under `/distributions`, with the values that the TensorBoard Distributions
-  tab shows. The `percentile` column has 9 values: 0, 6.68, 15.87, 30.85, 50, 69.15, 84.13, 93.32 and 100, which are the
-  mean and ±1, 2 and 3 standard deviations of a normal distribution. Each value interpolates linearly inside its
-  histogram bucket.
-- Text summaries: UTF-8 text files under `/text`. A summary with one string is that text. A summary with many strings is
-  a Markdown table, as TensorBoard shows it: a vector is one column, and a tensor with more than 2 dimensions shows its
-  first 2-D slice after a warning. A `.json` file next to the table keeps the shape and the exact strings.
-- Meshes: per-step `json`, `npz`, and Wavefront `obj` exports under `/meshes`. The OBJ file has one object
-  (`o mesh_<i>`) per batch element when the batch has more than one mesh. Vertex colors follow the coordinates as
-  `r g b` values in [0, 1], which MeshLab and Blender read. A mesh without faces is an OBJ point cloud. The `ply` file
-  is a binary PLY mesh, which keeps the coordinates exactly: float32 coordinates as `float`, other numbers as `double`,
-  and colors as `uchar` `red green blue`. A point cloud has no `face` element. A batch is one PLY mesh, with the faces
-  of a later element offset by the vertices before it, and a `comment mesh_<i> vertices <start> <count>` line per
-  element. Faces that are not vertex indices, and colors that are not whole numbers from 0 to 255, are not in the PLY
-  file; the `npz` file keeps them. The path of a mesh is its tag without the `_VERTEX`, `_FACE` or `_COLOR` suffix, so
-  `train/cloud_VERTEX` is under `/meshes/train/cloud`. A tag without that suffix uses the mesh name, which the `json`
-  file keeps. This is different from TensorBoard, which groups meshes by the mesh name only and thus mixes `train/cloud`
-  and `val/cloud`.
-- PR curves: per-step `json`, `tsv`, and `npy` exports under `/pr_curves`. The tables have one row per threshold, with
-  the columns `threshold`, `true_positives`, `false_positives`, `true_negatives`, `false_negatives`, `precision`, and
-  `recall`. The thresholds are evenly spaced in [0, 1], as in TensorBoard. The `.npy` file keeps the raw `[6, N]`
-  tensor. A tensor of another shape keeps generic `value_<i>` columns.
-- HParams: merged experiment/session/metric JSON under `/hparams`. The metrics are the declared metric tags, or all
-  scalar tags when the run declares no experiment, as in TensorBoard. Each metric has its last value, or `null` without
-  data. Metrics in a sub-run group (for example Keras `validation`) have no value here; read them from the scalars of
-  that run. `sessions` lists every session of the run; `session_start` and `session_end` are the first ones, as in
-  TensorBoard. The `hparams.yaml` file that PyTorch Lightning writes in the run directory is also in `/hparams`.
-- Tensors: tensor arrays as `npy` plus compact JSON or native blob files under `/tensors`. Every numeric TensorFlow
-  dtype that NumPy has keeps its dtype, including float16, int8, int16, uint16 and complex. NumPy has no bfloat16, so
-  bfloat16 tensors are widened to float32; this is exact. Float8 and 4-bit tensors are not decoded. String tensors are
-  NumPy text arrays (dtype `U`), so `np.load` reads them without `allow_pickle`. A numeric tensor written without a
-  plugin name is also a tensor here. A tensor with one value is a scalar instead. A tensor of 1 KiB or more also has its
-  raw bytes as a native blob file, unless its plugin has its own tab: a large histogram, PR curve, mesh or text summary
-  is only in that tab.
-- Graphs: graph protobuf files under `/graphs`. `graph.pb` is the graph that TensorBoard shows: the newest graph that
-  the event files hold as a `graph_def`, which TensorFlow 1 and PyTorch `add_graph` write, or without one, the graph of
-  the newest TensorFlow 1 meta graph. A run with several `graph_def` graphs also has `graph_<i>.pb` for each one, in
-  write order. `meta_graph.pb` is the newest TensorFlow 1 `MetaGraphDef`, with `meta_graph_<i>.pb` in the same way. A
-  TensorFlow 2 graph summary is in `/graphs/<tag>`. The Keras model config that the Keras TensorBoard callback writes is
-  `<step>.json`, and the RunMetadata of `tf.summary.trace_export` is `<step>.run_metadata.pb`. Next to each one,
-  `<step>.conceptual.pb` or `<step>.pb` is the GraphDef that the TensorBoard Graphs tab shows for it. A TensorFlow 1
-  tagged RunMetadata, which `FileWriter.add_run_metadata` and PyTorch `add_graph` write, is also
-  `/graphs/<tag>/<step>.run_metadata.pb`. Next to each RunMetadata, `<step>.run_metadata.pbtxt` is the profile text that
-  the Graphs tab shows for it. TensorBoard 2.21 cannot draw a functional model inside a Sequential model from a Keras 3
-  config, because it reads the one input of the nested model as three inputs; tboardfs draws it with that one input. A
-  malformed summary, RunMetadata or meta graph has no converted file (GraphDef, profile text or `graph.pb`); tboardfs
-  logs a warning for it once, when it reads the event. Its native file stays.
-- Projector and profile sidecars: available in filesystem mode, and in command mode for a directory, under `/projector`
-  and `/profile`; command mode for one event file omits sibling sidecar files. The embedding files that
-  `projector_config.pbtxt` names (`tensor_path`, `metadata_path`, sprite `image_path`, `bookmarks_path`), such as the
-  `<step>/<tag>/tensors.tsv` files of PyTorch and tensorboardX `add_embedding`, are under `/projector` at the same
-  relative paths. Only relative paths to files of the run are followed, and only the first MiB of the config is read.
-- Other plugin JSON payloads: exposed under `/plugins` when no typed tab handles them.
-
-A record that tboardfs cannot convert has no file. Such records are an hparams or mesh record whose plugin content does
-not decode, a custom scalar summary whose tensor has no layout that decodes, and the malformed graph data above.
-tboardfs logs one warning for each, when it reads the event. The other values of the same event stay. A native file,
-which holds the stored bytes, always stays.
-
-## Output Rules
-
-All `.json` files are strict JSON (RFC 8259). Infinities are written as the strings `"Infinity"` and `"-Infinity"`. In
-scalar, histogram and other table files, NaN is a missing value and is written as `null`. In other JSON files, NaN is
-written as the string `"NaN"`, as in protobuf JSON. A complex number is written as its `[real, imag]` pair. Bytes that
-are valid UTF-8 are written as text. Other bytes are written as `{"base64": "..."}`.
-
-An event without a step field is at step 0, as in TensorBoard: writers leave out step 0.
-
-`tboardfs-file list` prints virtual file paths to stdout, one per line. `tboardfs-file get -o -` writes raw bytes to
-stdout. Extraction status, warnings, errors, copied-file counts, skipped-path warnings, copied-path conflict reports,
-and overwrite hints are written to stderr through Loguru/Click so stdout remains safe for pipelines.
+- A record that does not decode is skipped, with a warning; the other records of the file stay.
+- A damaged record frame stops the read of that file, with a warning; the records before it stay.
+- An incomplete record at the end of a file is not shown until the writer completes it.
+- A value that tboardfs cannot convert has no file, and tboardfs logs a warning once. Examples are an hparams or mesh
+  record whose plugin data does not decode, a custom scalar layout that does not decode, and a malformed graph,
+  `RunMetadata` or meta graph. The other values of the same event stay.
+- When only a conversion fails, the file with the stored bytes stays, for example `<step>.run_metadata.pb` without its
+  `.pbtxt`.
 
 ## License
 
