@@ -4,7 +4,10 @@ from types import MappingProxyType
 TENSORBOARD_EVENT_GLOB = "events.out.tfevents*"
 LARGE_TENSOR_THRESHOLD = 1024
 SCALAR_COLUMNS = ("epoch", "step", "wall_time", "relative_time", "value")
+SCALAR_FORMATS = ("json", "tsv", "csv", "npz")
 DEFAULT_SCALAR_FORMATS = ("json", "tsv", "npz")
+MAX_STEP_DIGITS = 20  # an int64 step and its sign
+LOG_LEVELS = ("TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL")
 DEFAULT_CACHE_SIZE_MB = 1024
 LOG_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "

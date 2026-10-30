@@ -4,13 +4,14 @@ import sys
 import click
 from loguru import logger
 
+from tboardfs.cli_options import LOGLEVEL
 from tboardfs.constants import LOG_FORMAT
 from tboardfs.file_cli_commands import register_file_cli_commands
 
 
 @click.group()
 @click.option("--logfile", type=click.Path(dir_okay=False))
-@click.option("--loglevel", default="INFO", show_default=True)
+@LOGLEVEL
 def main(logfile: str | None, loglevel: str) -> None:
     """Inspect one TensorBoard event file without mounting FUSE."""
     _configure_logging(Path(logfile) if logfile is not None else None, loglevel)

@@ -6,6 +6,7 @@ from typing import cast
 import click
 from loguru import logger
 
+from tboardfs.cli_options import SCALAR_FORMAT, STEP_DIGITS
 from tboardfs.file_tree import SingleEventTree, _CopyConflictError
 from tboardfs.paths import _Paths
 
@@ -16,8 +17,8 @@ def register_file_cli_commands(group: click.Group) -> None:
     @group.command("list")
     @click.argument("source", type=click.Path(exists=True, dir_okay=False))
     @click.argument("prefix", required=False, default="/")
-    @click.option("--step-digits", type=int, default=6, show_default=True)
-    @click.option("--scalar-format", default="json,tsv,npz", show_default=True)
+    @STEP_DIGITS
+    @SCALAR_FORMAT
     def list_files(
         source: str, prefix: str, step_digits: int, scalar_format: str
     ) -> None:
@@ -38,8 +39,8 @@ def register_file_cli_commands(group: click.Group) -> None:
         type=click.Path(writable=True),
     )
     @click.option("--force", is_flag=True)
-    @click.option("--step-digits", type=int, default=6, show_default=True)
-    @click.option("--scalar-format", default="json,tsv,npz", show_default=True)
+    @STEP_DIGITS
+    @SCALAR_FORMAT
     def get_file(
         source: str,
         vpath: str,
@@ -78,8 +79,8 @@ def register_file_cli_commands(group: click.Group) -> None:
     @click.argument("outdir", type=click.Path(file_okay=False))
     @click.option("-f", "--force", is_flag=True)
     @click.option("-s", "--skip-existing", is_flag=True)
-    @click.option("--step-digits", type=int, default=6, show_default=True)
-    @click.option("--scalar-format", default="json,tsv,npz", show_default=True)
+    @STEP_DIGITS
+    @SCALAR_FORMAT
     def copy_all(**params: object) -> None:
         """Copy every virtual file into OUTDIR."""
         force = cast(bool, params["force"])

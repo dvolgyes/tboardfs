@@ -1,7 +1,6 @@
 import base64
 from collections import defaultdict
 from io import BytesIO
-import inspect
 import json
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -35,16 +34,10 @@ class _TableExport:
 
         frame = _TableExport.dataframe(series)
         handle = BytesIO()
-        if fmt == "tsv":
-            frame.to_csv(handle, sep="\t", index=False, na_rep="nan")
-        else:
-            writer = getattr(frame, f"to_{fmt}", None)
-            if writer is None:
-                raise ValueError(f"unsupported tabular export format: {fmt}")
-            kwargs: dict[str, Any] = {"index": False}
-            if "na_rep" in inspect.signature(writer).parameters:
-                kwargs["na_rep"] = "nan"
-            writer(handle, **kwargs)
+        separators = {"tsv": "\t", "csv": ","}
+        if fmt not in separators:
+            raise ValueError(f"unsupported tabular export format: {fmt}")
+        frame.to_csv(handle, sep=separators[fmt], index=False, na_rep="nan")
         return handle.getvalue()
 
     @staticmethod

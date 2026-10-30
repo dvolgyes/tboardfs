@@ -6,6 +6,7 @@ import click
 from loguru import logger
 from mfusepy import FUSE
 
+from tboardfs.cli_options import LOGLEVEL, SCALAR_FORMAT, STEP_DIGITS
 from tboardfs.constants import DEFAULT_CACHE_SIZE_MB, LOG_FORMAT
 from tboardfs.mounted import MountedTensorBoardFS
 
@@ -13,9 +14,9 @@ from tboardfs.mounted import MountedTensorBoardFS
 @click.command()
 @click.argument("source", type=click.Path(exists=True, file_okay=False))
 @click.argument("mountpoint", type=click.Path(file_okay=False))
-@click.option("--step-digits", type=int, default=6, show_default=True)
+@STEP_DIGITS
 @click.option("--refresh-age-seconds", type=float, default=60.0, show_default=True)
-@click.option("--scalar-format", default="json,tsv,npz", show_default=True)
+@SCALAR_FORMAT
 @click.option(
     "--cache-size-mb",
     type=click.IntRange(min=0),
@@ -25,7 +26,7 @@ from tboardfs.mounted import MountedTensorBoardFS
 )
 @click.option("--foreground/--background", default=False, show_default=True)
 @click.option("--logfile", type=click.Path(dir_okay=False))
-@click.option("--loglevel", default="INFO", show_default=True)
+@LOGLEVEL
 def main(
     **params: object,
 ) -> None:
