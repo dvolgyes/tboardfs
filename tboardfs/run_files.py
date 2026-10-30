@@ -1,6 +1,7 @@
 """Collect the virtual files of one run, then give each tag a directory that no file has."""
 
 from dataclasses import dataclass
+import hashlib
 from typing import Any
 
 from loguru import logger
@@ -12,6 +13,10 @@ from tboardfs.tag_paths import TagPaths
 # Each round can only move tag directories that a file is in the way of; more
 # rounds than this mean that the moved names keep meeting files.
 _ROUNDS = 8
+# The kernel refuses a longer name with ENAMETOOLONG.
+_MAX_NAME_BYTES = 255
+# A longer suffix is not an extension, such as the end of "lr.decay.0.0001".
+_MAX_EXTENSION_CHARS = 8
 
 
 @dataclass
@@ -29,13 +34,36 @@ class _RunFile:
     named: bool
 
     def path(self, tags: TagPaths) -> tuple[str, ...]:
-        """Return the virtual path of the file."""
+        """Return the virtual path of the file, with each name cut to the limit."""
         if self.tag is None:
-            return (*self.root, self.name)
-        parts = tags.dir_parts(self.tag)
-        if self.named:
-            return (*self.root, *parts[:-1], f"{parts[-1]}.{self.name}")
-        return (*self.root, *parts, self.name)
+            path = (*self.root, self.name)
+        elif self.named:
+            parts = tags.dir_parts(self.tag)
+            path = (*self.root, *parts[:-1], f"{parts[-1]}.{self.name}")
+        else:
+            path = (*self.root, *tags.dir_parts(self.tag), self.name)
+        return tuple(_RunFile.fit(part) for part in path)
+
+    @staticmethod
+    def fit(name: str) -> str:
+        """Return the name, or a cut name with a hash if it has more than 255 bytes.
+
+        The cut name keeps the start and the extension of the name, and the
+        hash of the full name keeps different names different.
+        """
+        if len(name) <= _MAX_NAME_BYTES // 4:  # a character has at most 4 bytes
+            return name
+        data = name.encode("utf-8", "surrogatepass")
+        if len(data) <= _MAX_NAME_BYTES:
+            return name
+        stem, dot, extension = name.rpartition(".")
+        if not dot or len(extension) > _MAX_EXTENSION_CHARS:
+            stem, dot, extension = name, "", ""
+        tail = f"~{hashlib.sha256(data).hexdigest()[:16]}{dot}{extension}"
+        budget = _MAX_NAME_BYTES - len(tail.encode("utf-8", "surrogatepass"))
+        # "ignore" drops a character that the cut splits.
+        cut = stem.encode("utf-8", "surrogatepass")[:budget].decode("utf-8", "ignore")
+        return cut + tail
 
     def tag_dir_ends(self, tags: TagPaths) -> range:
         """Return the lengths of the path prefixes that are tag directories."""
