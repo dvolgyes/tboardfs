@@ -106,10 +106,11 @@ def test_tensorboardx_media_exposes_clean_representations() -> None:
         "003.gif",
         "raw",
     ]
-    assert fs.readdir("/tensorboardx/meshes/box")[-3:] == [
+    assert fs.readdir("/tensorboardx/meshes/box")[-4:] == [
         "003.json",
         "003.npz",
         "003.obj",
+        "003.ply",
     ]
 
 
@@ -204,12 +205,15 @@ def test_tensorboard_meshes_expose_clean_representations() -> None:
         "001.json",
         "001.npz",
         "001.obj",
+        "001.ply",
         "002.json",
         "002.npz",
         "002.obj",
+        "002.ply",
         "003.json",
         "003.npz",
         "003.obj",
+        "003.ply",
     ]
     mesh_archive = np.load(
         BytesIO(fs.read("/tensorboard/meshes/box/001.npz", 10000, 0))

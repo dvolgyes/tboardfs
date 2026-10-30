@@ -44,12 +44,15 @@ def test_file_cli_list_prefix_recurses_under_virtual_directory() -> None:
         "/meshes/box/001.json",
         "/meshes/box/001.npz",
         "/meshes/box/001.obj",
+        "/meshes/box/001.ply",
         "/meshes/box/002.json",
         "/meshes/box/002.npz",
         "/meshes/box/002.obj",
+        "/meshes/box/002.ply",
         "/meshes/box/003.json",
         "/meshes/box/003.npz",
         "/meshes/box/003.obj",
+        "/meshes/box/003.ply",
     ]
 
 

@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import numpy as np
 
+from tboardfs.mesh_ply import ply_bytes
 from tboardfs.model import JsonEntry
 from tboardfs.paths import _Paths
 from tboardfs.proto_schema import _ProtoParser
@@ -61,7 +62,7 @@ def mesh_nodes(
 
 
 class _MeshFiles:
-    """Build the OBJ, NPZ, and metadata files of TensorBoard meshes.
+    """Build the OBJ, PLY, NPZ, and metadata files of TensorBoard meshes.
 
     The OBJ file keeps every batch element as one object, vertex colors as
     r g b values in [0, 1] after the coordinates, and point clouds as
@@ -112,7 +113,7 @@ class _MeshFiles:
 
     @staticmethod
     def files(step: str, group: _MeshGroup) -> list[tuple[str, dict[str, Any]]]:
-        """Return the names and nodes of the OBJ, NPZ, and metadata files."""
+        """Return the names and nodes of the OBJ, PLY, NPZ, and metadata files."""
         mesh = {
             label: group.components[key]
             for key, label in _MESH_COMPONENTS
@@ -123,6 +124,11 @@ class _MeshFiles:
         if obj is not None:
             nodes.append(
                 (f"{step}.obj", {"type": "obj", "data": obj, "mtime": group.mtime})
+            )
+        ply = _MeshFiles.ply(mesh)
+        if ply is not None:
+            nodes.append(
+                (f"{step}.ply", {"type": "bytes", "data": ply, "mtime": group.mtime})
             )
         handle = BytesIO()
         np.savez(handle, **mesh)
@@ -196,6 +202,36 @@ class _MeshFiles:
             offset += len(points)
         lines.append("")
         return "\n".join(lines)
+
+    @staticmethod
+    def ply(mesh: dict[str, np.ndarray]) -> bytes | None:
+        """Return a binary PLY file, or None when the vertices are not [B,] N x 3.
+
+        Faces that are not vertex indices and colors that are not 0..255
+        bytes of each vertex are left out; the NPZ file keeps them.
+        """
+        vertices = _MeshFiles.batched(mesh["vertices"])
+        if vertices is None or vertices.dtype.kind not in "biuf":
+            return None
+        faces = _MeshFiles.indices(
+            _MeshFiles.batched(mesh.get("faces")), vertices.shape[1]
+        )
+        colors = _MeshFiles.batched(mesh.get("colors"))
+        if colors is not None and (
+            colors.shape != vertices.shape or not _MeshFiles.rgb_bytes(colors)
+        ):
+            colors = None
+        return ply_bytes(vertices, faces, colors)
+
+    @staticmethod
+    def rgb_bytes(colors: np.ndarray) -> bool:
+        """Return whether colors are whole numbers from 0 to 255."""
+        return (
+            colors.dtype.kind in "iuf"
+            and _MeshFiles.finite(colors)
+            and bool((colors == np.round(colors)).all())
+            and (colors.size == 0 or (colors.min() >= 0 and colors.max() <= 255))
+        )
 
     @staticmethod
     def batched(array: np.ndarray | None) -> np.ndarray | None:
