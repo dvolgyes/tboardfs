@@ -8,6 +8,7 @@ import numpy as np
 from tboardfs.constants import LARGE_TENSOR_THRESHOLD
 from tboardfs.decode import _Decode
 from tboardfs.model import Scalar
+from tboardfs.tensor import tensor_to_array
 
 
 def detect_extension(blob: bytes | None, kind: str) -> str:
@@ -37,6 +38,18 @@ class _Classifier:
         if not tensor or math.prod(tensor.get("shape") or []) != 1:
             return None
 
+        scalar = _Classifier.common_scalar(tensor)
+        if scalar is not None:
+            return scalar
+        # The other real dtypes are rare, so they take the slower general path.
+        array = tensor_to_array(tensor)
+        if array is None or array.size != 1 or array.dtype.kind not in "biuf":
+            return None
+        return Scalar(array.item(), array.dtype)
+
+    @staticmethod
+    def common_scalar(tensor: dict[str, Any]) -> Scalar | None:
+        """Return a scalar of a common dtype from its fields, without NumPy."""
         dtype = tensor.get("dtype")
         values = tensor.get("values", {})
         content = tensor.get("tensor_content")
