@@ -1,0 +1,46 @@
+{
+  "histograms": {},
+  "scalars": {},
+  "tensors": {
+    "empty": {
+      "1": {
+        "dtype": "float32",
+        "shape": [
+          0
+        ],
+        "values": []
+      }
+    },
+    "empty_rows": {
+      "1": {
+        "dtype": "float32",
+        "shape": [
+          3,
+          0
+        ],
+        "values": []
+      }
+    },
+    "zero_int": {
+      "1": {
+        "dtype": "int32",
+        "shape": [],
+        "values": [
+          0
+        ]
+      }
+    },
+    "zeros": {
+      "1": {
+        "dtype": "float32",
+        "shape": [
+          2
+        ],
+        "values": [
+          0.0,
+          0.0
+        ]
+      }
+    }
+  }
+}

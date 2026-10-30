@@ -1,0 +1,22 @@
+{
+  "histograms": {},
+  "scalars": {},
+  "tensors": {
+    "note": {
+      "1": {
+        "dtype": "object",
+        "shape": [],
+        "values": [
+          "hello"
+        ]
+      },
+      "2": {
+        "dtype": "object",
+        "shape": [],
+        "values": [
+          ""
+        ]
+      }
+    }
+  }
+}
