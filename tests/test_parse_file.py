@@ -1,16 +1,24 @@
 import base64
+from collections.abc import Iterator
+import errno
 import json
+import os
 from pathlib import Path
 import struct
+from typing import BinaryIO
 
 import numpy as np
 import pytest
 
 from tboardfs import FIXED_TABS, TensorBoardFS, find_tensorboard_files, parse_file
 from tboardfs.classify import detect_extension
+from tboardfs.file_tree import SingleEventTree
 from tboardfs.proto import event_pb2
 from tboardfs.summary import parse_event
 from tboardfs.tables import export_table
+from tboardfs.crc32c import masked_crc32c
+from tboardfs.model import Record, TFRecordError
+import tboardfs.indexer
 
 
 def _varint(value: int) -> bytes:
@@ -89,8 +97,13 @@ def _event(wall_time: float, step: int, values: list[bytes]) -> bytes:
     return _double_field(1, wall_time) + _int_field(2, step) + _bytes_field(5, summary)
 
 
+def _header(length: int) -> bytes:
+    length_bytes = struct.pack("<Q", length)
+    return length_bytes + struct.pack("<I", masked_crc32c(length_bytes))
+
+
 def _record(payload: bytes) -> bytes:
-    return struct.pack("<Q", len(payload)) + b"\0\0\0\0" + payload + b"\0\0\0\0"
+    return _header(len(payload)) + payload + struct.pack("<I", masked_crc32c(payload))
 
 
 def _event_record(
@@ -191,19 +204,19 @@ def test_detect_extension_uses_magic_for_native_formats() -> None:
     assert detect_extension(unknown, "tensors") == "bin"
 
 
-def test_export_table_json_converts_non_finite_floats_to_null() -> None:
-    """Strict JSON table export replaces non-finite floats with null."""
+def test_export_table_json_spells_infinities_and_nulls_nan() -> None:
+    """Strict JSON keeps open bucket edges; NaN, a missing cell, becomes null."""
     series = {
-        "bucket_left": np.asarray([float("-inf"), 0.0, 1.0], dtype=np.float64),
+        "bucket_left": np.asarray([float("-inf"), 0.0, np.nan], dtype=np.float64),
         "bucket_right": np.asarray([0.0, 1.0, float("inf")], dtype=np.float64),
     }
 
     rows = json.loads(export_table(series, "json"))
 
     assert rows == [
-        {"bucket_left": None, "bucket_right": 0.0},
+        {"bucket_left": "-Infinity", "bucket_right": 0.0},
         {"bucket_left": 0.0, "bucket_right": 1.0},
-        {"bucket_left": 1.0, "bucket_right": None},
+        {"bucket_left": None, "bucket_right": "Infinity"},
     ]
 
 
@@ -352,7 +365,7 @@ def test_parse_file_mixed_scalar_types_fall_back_to_double(tmp_path: Path) -> No
 def test_parse_file_rejects_truncated_record(tmp_path: Path) -> None:
     """Strict parsing rejects truncated TFRecords."""
     path = tmp_path / "events.out.tfevents"
-    path.write_bytes(struct.pack("<Q", 100) + b"\0\0\0\0" + b"too-short")
+    path.write_bytes(_header(100) + b"too-short")
 
     with pytest.raises(ValueError, match="truncated TFRecord payload"):
         parse_file(path)
@@ -364,10 +377,7 @@ def test_filesystem_lists_fixed_tabs_for_empty_source(tmp_path: Path) -> None:
 
     listing = fs.readdir("/")
 
-    for tab in FIXED_TABS:
-        assert tab in listing
-    assert ".cache" in listing
-    assert ".in_memory" in listing
+    assert sorted(listing) == sorted([".", "..", *FIXED_TABS])
 
 
 def test_filesystem_exposes_nested_scalar_formats(tmp_path: Path) -> None:
@@ -402,36 +412,29 @@ def test_filesystem_exposes_nested_scalar_formats(tmp_path: Path) -> None:
     assert tsv.splitlines()[0] == "epoch\tstep\twall_time\trelative_time\tvalue"
 
 
-def test_filesystem_registers_same_stem_scalar_symlink_format(tmp_path: Path) -> None:
-    """Scalar symlink aliases register same-stem export formats."""
-    path = tmp_path / "events.out.tfevents"
-    path.write_bytes(_record(_event(100.0, 1, [_simple_value("loss", 2.0)])))
-    fs = TensorBoardFS(tmp_path)
-
-    fs.symlink("/scalars/loss.json", "/scalars/loss.xlsx")
-
-    assert "loss.xlsx" in fs.readdir("/scalars")
-
-
 @pytest.mark.parametrize(
-    ("target", "source"),
+    ("operation", "args"),
     [
-        ("/scalars/loss.json", "/scalars/other.xlsx"),
-        ("/scalars/loss.json", "/images/loss.xlsx"),
-        ("/scalars/missing.json", "/scalars/missing.xlsx"),
-        ("/scalars/loss.json", "/run/scalars/loss.xlsx"),
+        ("symlink", ("/scalars/loss.json", "/scalars/loss.xlsx")),
+        ("unlink", ("/.cache",)),
+        ("unlink", ("/.in_memory",)),
+        ("unlink", ("/scalars/loss.json",)),
     ],
 )
-def test_filesystem_rejects_invalid_scalar_symlinks(
-    tmp_path: Path, target: str, source: str
+def test_filesystem_rejects_links_and_unlinks_as_read_only(
+    tmp_path: Path, operation: str, args: tuple[str, ...]
 ) -> None:
-    """Invalid scalar symlink aliases are rejected."""
+    """symlink and unlink fail with EROFS and leave the tree unchanged."""
     path = tmp_path / "events.out.tfevents"
     path.write_bytes(_record(_event(100.0, 1, [_simple_value("loss", 2.0)])))
     fs = TensorBoardFS(tmp_path)
+    before = sorted(fs.readdir("/scalars"))
 
-    with pytest.raises(OSError):
-        fs.symlink(target, source)
+    with pytest.raises(OSError) as error:
+        getattr(fs, operation)(*args)
+
+    assert error.value.errno == errno.EROFS
+    assert sorted(fs.readdir("/scalars")) == before
 
 
 def test_filesystem_ignores_truncated_trailing_record_during_refresh(
@@ -441,8 +444,7 @@ def test_filesystem_ignores_truncated_trailing_record_during_refresh(
     path = tmp_path / "events.out.tfevents"
     path.write_bytes(
         _record(_event(100.0, 1, [_simple_value("loss", 2.0)]))
-        + struct.pack("<Q", 100)
-        + b"\0\0\0\0"
+        + _header(100)
         + b"too-short"
     )
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
@@ -461,7 +463,7 @@ def test_filesystem_incrementally_parses_appended_records(tmp_path: Path) -> Non
 
     assert len(json.loads(fs.read("/scalars/loss.json", 10000, 0))) == 1
     first_cache = fs._state.runs[()].files[path]
-    first_processed_pos = first_cache.processed_pos
+    first_processed_pos = first_cache.progress.processed_pos
     path.write_bytes(
         path.read_bytes() + _record(_event(102.0, 2, [_simple_value("loss", 1.5)]))
     )
@@ -469,9 +471,36 @@ def test_filesystem_incrementally_parses_appended_records(tmp_path: Path) -> Non
     rows = json.loads(fs.read("/scalars/loss.json", 10000, 0))
     second_cache = fs._state.runs[()].files[path]
 
-    assert first_processed_pos < second_cache.processed_pos
+    assert first_processed_pos < second_cache.progress.processed_pos
     assert [row["step"] for row in rows] == [1, 2]
     assert [row["relative_time"] for row in rows] == [0.0, 2.0]
+
+
+def test_filesystem_reads_records_appended_during_a_parse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Records appended while a parse runs are read on the next refresh."""
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(_record(_event(100.0, 1, [_simple_value("loss", 2.0)])))
+    original = tboardfs.indexer.iter_tfrecords
+    appended = []
+
+    def append_during_parse(handle: BinaryIO) -> Iterator[Record]:
+        for record in original(handle):
+            if not appended:
+                appended.append(_event(102.0, 2, [_simple_value("loss", 1.5)]))
+                with path.open("ab") as writer:
+                    writer.write(_record(appended[0]))
+            yield record
+
+    monkeypatch.setattr(tboardfs.indexer, "iter_tfrecords", append_during_parse)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    assert len(json.loads(fs.read("/scalars/loss.json", 10000, 0))) == 1
+    monkeypatch.setattr(tboardfs.indexer, "iter_tfrecords", original)
+
+    rows = json.loads(fs.read("/scalars/loss.json", 10000, 0))
+
+    assert [row["step"] for row in rows] == [1, 2]
 
 
 def test_filesystem_lists_projector_and_profile_sidecars(tmp_path: Path) -> None:
@@ -494,6 +523,61 @@ def test_filesystem_lists_projector_and_profile_sidecars(tmp_path: Path) -> None
     assert fs.read("/run/profile/trace.json", 1000, 0) == b"profile-trace"
 
 
+def test_filesystem_empty_source_does_not_scan_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A source without event files exposes no sidecars from the cwd."""
+    cwd = tmp_path / "cwd"
+    trace = cwd / "plugins" / "profile" / "trace.json"
+    trace.parent.mkdir(parents=True)
+    trace.write_text("unrelated")
+    source = tmp_path / "source"
+    source.mkdir()
+    monkeypatch.chdir(cwd)
+    fs = TensorBoardFS(source)
+
+    assert "trace.json" not in fs.readdir("/profile")
+
+
+def test_filesystem_sidecars_stay_with_their_nested_run(tmp_path: Path) -> None:
+    """A nested run's sidecars do not also appear in the parent run."""
+    record = _record(_event(100.0, 1, [_simple_value("loss", 2.0)]))
+    (tmp_path / "events.out.tfevents.root").write_bytes(record)
+    child = tmp_path / "child"
+    trace = child / "plugins" / "profile" / "trace.json"
+    trace.parent.mkdir(parents=True)
+    (child / "events.out.tfevents.child").write_bytes(record)
+    trace.write_text("child-trace")
+    fs = TensorBoardFS(tmp_path)
+
+    assert "trace.json" not in fs.readdir("/profile")
+    assert fs.read("/child/profile/trace.json", 1000, 0) == b"child-trace"
+
+
+def test_filesystem_skips_sidecar_symlinks_outside_source(tmp_path: Path) -> None:
+    """Sidecar symlinks that resolve outside the source are not served."""
+    secret = tmp_path / "secret.json"
+    secret.write_text("secret")
+    run = tmp_path / "source" / "run"
+    profile = run / "plugins" / "profile"
+    profile.mkdir(parents=True)
+    (run / "events.out.tfevents").write_bytes(
+        _record(_event(100.0, 1, [_simple_value("loss", 2.0)]))
+    )
+    (profile / "escape.json").symlink_to(secret)
+    (profile / "outside").symlink_to(tmp_path, target_is_directory=True)
+    (profile / "inside.json").write_text("inside")
+    (profile / "alias.json").symlink_to(profile / "inside.json")
+    fs = TensorBoardFS(tmp_path / "source")
+
+    assert sorted(fs.readdir("/run/profile")) == [
+        ".",
+        "..",
+        "alias.json",
+        "inside.json",
+    ]
+
+
 def test_filesystem_accepts_mfusepy_positional_file_handles(tmp_path: Path) -> None:
     """FUSE callbacks accept file handles as positional arguments."""
     path = tmp_path / "events.out.tfevents"
@@ -512,3 +596,217 @@ def test_filesystem_accepts_mfusepy_positional_file_handles(tmp_path: Path) -> N
         fs.write("/scalars/loss.json", b"{}", 0, None)
     with pytest.raises(OSError):
         fs.truncate("/scalars/loss.json", 0, None)
+
+
+@pytest.mark.parametrize(
+    "tag",
+    ["../../ESCAPED", "a/../b", "./x", "back\\slash", "nul\0byte", "ctl\x1fchar"],
+)
+def test_virtual_paths_never_contain_traversal_components(
+    tmp_path: Path, tag: str
+) -> None:
+    """Hostile tags and plugin names stay inside one virtual path component."""
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(
+        _record(
+            _event(
+                100.0,
+                1,
+                [
+                    _simple_value(tag, 1.0),
+                    _tensor_string_value(tag, b"x", plugin_name="../" + tag),
+                ],
+            )
+        )
+    )
+    tree = SingleEventTree(path)
+
+    for virtual_path in tree.list_file_paths():
+        parts = virtual_path.lstrip("/").split("/")
+        assert all(part not in {"", ".", ".."} for part in parts), virtual_path
+        assert all("\\" not in part for part in parts), virtual_path
+        assert all(ch >= " " for part in parts for ch in part), virtual_path
+
+
+def test_copy_all_writes_hostile_tags_inside_outdir(tmp_path: Path) -> None:
+    """copy-all keeps every output file below the output directory."""
+    source = tmp_path / "src" / "events.out.tfevents"
+    source.parent.mkdir()
+    source.write_bytes(_record(_event(100.0, 1, [_simple_value("../../ESCAPED", 1.0)])))
+    outdir = tmp_path / "a" / "b" / "out"
+
+    count, _ = SingleEventTree(source).copy_all(outdir)
+
+    written = [p for p in tmp_path.rglob("*") if p.is_file() and p != source]
+    assert count == len(written) > 0
+    assert all(p.resolve().is_relative_to(outdir.resolve()) for p in written)
+
+
+def test_copy_all_refuses_symlink_escape(tmp_path: Path) -> None:
+    """copy-all refuses to follow an existing symlink out of the output directory."""
+    source = tmp_path / "src" / "events.out.tfevents"
+    source.parent.mkdir()
+    source.write_bytes(_record(_event(100.0, 1, [_simple_value("loss", 1.0)])))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+    (outdir / "scalars").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(OSError, match="outside the output directory"):
+        SingleEventTree(source).copy_all(outdir, existing="overwrite")
+
+    assert list(outside.iterdir()) == []
+
+
+def _histogram_value(tag: str, limits: list[float], counts: list[float]) -> object:
+    SummaryValue = getattr(event_pb2, "SummaryValue")
+    HistogramProto = getattr(event_pb2, "HistogramProto")
+    histo = HistogramProto(min=0.0, max=limits[-1], bucket_limit=limits, bucket=counts)
+    return SummaryValue(tag=tag, histo=histo)
+
+
+def test_histogram_step_files_hold_only_their_step(tmp_path: Path) -> None:
+    """Each per-step histogram file contains the buckets of that step only."""
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(
+        _event_record(100.0, 1, [_histogram_value("w", [1.0, 2.0], [3.0, 4.0])])
+        + _event_record(101.0, 2, [_histogram_value("w", [1.0, 2.0], [5.0, 6.0])])
+    )
+    fs = TensorBoardFS(tmp_path, step_digits=1)
+
+    step1 = json.loads(fs.read("/histograms/w/1.json", 100_000, 0))
+    step2 = json.loads(fs.read("/histograms/w/2.json", 100_000, 0))
+
+    assert [row["step"] for row in step1] == [1, 1]
+    assert [row["count"] for row in step1] == [3.0, 4.0]
+    assert [row["count"] for row in step2] == [5.0, 6.0]
+
+
+def test_distribution_without_epoch_scalar_has_one_group_per_event(
+    tmp_path: Path,
+) -> None:
+    """Distribution percentiles use all buckets of a histogram event."""
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(
+        _event_record(
+            100.0, 1, [_histogram_value("w", [1.0, 2.0, 3.0, 4.0], [1.0] * 4)]
+        )
+    )
+    fs = TensorBoardFS(tmp_path, step_digits=1)
+
+    rows = json.loads(fs.read("/distributions/w/1.json", 100_000, 0))
+
+    assert [row["percentile"] for row in rows] == [0.0, 25.0, 50.0, 75.0, 100.0]
+    assert [row["value"] for row in rows] == [1.0, 1.0, 2.0, 3.0, 4.0]
+
+
+def test_distribution_keeps_repeated_step_events_apart(tmp_path: Path) -> None:
+    """Two histogram events at one step give two percentile groups."""
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(
+        _event_record(100.0, 1, [_histogram_value("w", [1.0, 2.0], [1.0, 0.0])])
+        + _event_record(105.0, 1, [_histogram_value("w", [1.0, 2.0], [0.0, 1.0])])
+    )
+    fs = TensorBoardFS(tmp_path, step_digits=1)
+
+    rows = json.loads(fs.read("/distributions/w/1.json", 100_000, 0))
+
+    assert [row["wall_time"] for row in rows] == [100.0] * 5 + [105.0] * 5
+    assert [row["value"] for row in rows if row["percentile"] == 100.0] == [1.0, 2.0]
+
+
+def test_histogram_with_missing_step_field_is_exported_once(tmp_path: Path) -> None:
+    """A step omitted on the wire still yields one non-empty step file."""
+    Event = getattr(event_pb2, "Event")
+    Summary = getattr(event_pb2, "Summary")
+    value = _histogram_value("w", [1.0, 2.0], [1.0, 1.0])
+    payloads = [
+        Event(wall_time=wall, summary=Summary(value=[value])).SerializeToString()
+        for wall in (100.0, 101.0)
+    ]
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(b"".join(_record(payload) for payload in payloads))
+    fs = TensorBoardFS(tmp_path, step_digits=1)
+
+    names = [n for n in fs.readdir("/histograms/w") if n.endswith(".json")]
+    assert len(names) == 1
+    rows = json.loads(fs.read(f"/histograms/w/{names[0]}", 100_000, 0))
+    dist = json.loads(fs.read(f"/distributions/w/{names[0]}", 100_000, 0))
+    assert len(rows) == 4
+    assert len(dist) == 10
+
+
+def test_masked_crc32c_matches_reference_vectors() -> None:
+    """CRC32C uses the Castagnoli polynomial and the TFRecord mask."""
+    crc = 0xE3069283  # CRC32C("123456789"), RFC 3720 check value
+    masked = (((crc >> 15) | (crc << 17)) + 0xA282EAD8) & 0xFFFFFFFF
+
+    assert masked_crc32c(b"123456789") == masked
+
+
+def _loss_record(step: int) -> bytes:
+    return _record(_event(100.0 + step, step, [_simple_value("loss", float(step))]))
+
+
+def test_corrupt_length_checksum_stops_tolerant_parse(tmp_path: Path) -> None:
+    """A bad length CRC is corruption: strict mode fails, tolerant mode keeps the prefix."""
+    path = tmp_path / "events.out.tfevents"
+    bad = struct.pack("<Q", 5) + b"\xde\xad\xbe\xef" + b"hello" + b"\0\0\0\0"
+    path.write_bytes(_loss_record(1) + bad + _loss_record(2))
+
+    with pytest.raises(TFRecordError, match="checksum") as error:
+        parse_file(path)
+    assert error.value.corrupt
+    tree = SingleEventTree(path, step_digits=1)
+
+    rows = json.loads(tree.read_file("/scalars/loss.json"))
+    assert [row["step"] for row in rows] == [1]
+
+
+def test_huge_declared_length_is_truncation_without_allocation(
+    tmp_path: Path,
+) -> None:
+    """A length larger than the file never allocates the declared size."""
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(_loss_record(1) + _header(2**62) + b"tail")
+
+    with pytest.raises(TFRecordError, match="truncated TFRecord payload") as error:
+        parse_file(path)
+    assert not error.value.corrupt
+    tree = SingleEventTree(path, step_digits=1)
+
+    rows = json.loads(tree.read_file("/scalars/loss.json"))
+    assert [row["step"] for row in rows] == [1]
+
+
+def test_malformed_payload_is_skipped_in_tolerant_mode(tmp_path: Path) -> None:
+    """A framed record with an undecodable payload does not hide later records."""
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(_loss_record(1) + _record(b"\xff\xff\xff") + _loss_record(2))
+
+    tree = SingleEventTree(path, step_digits=1)
+
+    rows = json.loads(tree.read_file("/scalars/loss.json"))
+    assert [row["step"] for row in rows] == [1, 2]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read mode-000 files")
+def test_unreadable_event_file_does_not_break_other_runs(tmp_path: Path) -> None:
+    """An unreadable event file affects only its own run."""
+    good = tmp_path / "good" / "events.out.tfevents"
+    bad = tmp_path / "bad" / "events.out.tfevents"
+    for path in (good, bad):
+        path.parent.mkdir()
+        path.write_bytes(_loss_record(1))
+    bad.chmod(0)
+    fs = TensorBoardFS(tmp_path, step_digits=1)
+
+    try:
+        listing = fs.readdir("/")
+        rows = json.loads(fs.read("/good/scalars/loss.json", 10_000, 0))
+    finally:
+        bad.chmod(0o644)
+
+    assert {"good", "bad"} <= set(listing)
+    assert [row["step"] for row in rows] == [1]

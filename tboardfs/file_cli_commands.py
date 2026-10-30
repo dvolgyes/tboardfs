@@ -99,6 +99,8 @@ def register_file_cli_commands(group: click.Group) -> None:
         except _CopyConflictError as error:
             _report_copy_conflict(error)
             raise click.exceptions.Exit(1) from error
+        except PermissionError as error:
+            raise click.ClickException(str(error)) from error
         for path in skipped:
             logger.warning("Skipped existing: {}", path)
         logger.info("copied {} files", copied)

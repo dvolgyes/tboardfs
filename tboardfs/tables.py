@@ -1,3 +1,4 @@
+import base64
 from collections import defaultdict
 from io import BytesIO
 import inspect
@@ -10,7 +11,6 @@ import pandas as pd
 
 from tboardfs.constants import SCALAR_COLUMNS
 from tboardfs.decode import _Decode
-from tboardfs.model import EventFileCache
 
 
 def export_table(series: dict[str, np.ndarray], fmt: str) -> bytes:
@@ -62,23 +62,49 @@ class _TableExport:
         return pd.DataFrame({column: series[column] for column in series})
 
     @staticmethod
-    def json_default(value: object) -> object:
-        """Convert NumPy and bytes objects to JSON-compatible values."""
-        if isinstance(value, bytes):
-            return value.decode("utf-8", errors="replace")
-        if isinstance(value, np.generic):
-            return value.item()
+    def json_document(data: object) -> bytes:
+        """Render any virtual JSON document as strict JSON.
+
+        NaN and infinities use the protobuf JSON spelling ("NaN", "Infinity",
+        "-Infinity"). Bytes that are UTF-8 become text; other bytes become
+        ``{"base64": ...}``.
+        """
+        value = _TableExport.json_value(data, "NaN")
+        return (json.dumps(value, allow_nan=False, indent=2) + "\n").encode()
+
+    @staticmethod
+    def json_value(value: object, nan: str | None) -> object:
+        """Convert a value and its items to strict JSON types.
+
+        Args:
+            value: NumPy, bytes, container or plain value
+            nan: replacement for NaN; tables use null for a missing value
+        """
         if isinstance(value, np.ndarray):
-            return value.tolist()
+            value = value.tolist()
+        elif isinstance(value, np.generic):
+            value = value.item()
+        if isinstance(value, float) and not np.isfinite(value):
+            if np.isnan(value):
+                return nan
+            return "Infinity" if value > 0 else "-Infinity"
+        if isinstance(value, bytes):
+            try:
+                return value.decode("utf-8")
+            except UnicodeDecodeError:
+                return {"base64": base64.b64encode(value).decode("ascii")}
+        if isinstance(value, Mapping):
+            return {
+                key: _TableExport.json_value(item, nan) for key, item in value.items()
+            }
+        if isinstance(value, list | tuple):
+            return [_TableExport.json_value(item, nan) for item in value]
         return value
 
     @staticmethod
     def json_safe(value: object) -> object:
-        """Return a JSON value, converting missing numeric values to null."""
-        converted = _TableExport.json_default(value)
-        if isinstance(converted, float) and not np.isfinite(converted):
-            return None
-        return converted
+        """Return a table cell as JSON; NaN, a missing value, becomes null."""
+        return _TableExport.json_value(value, None)
 
     @staticmethod
     def fill_missing_values(series: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -121,55 +147,6 @@ class _TableExport:
 
 class _TableRows:
     """Convert mutable parse rows to NumPy-backed table columns."""
-
-    @staticmethod
-    def scalar_rows_from_cache(
-        cache: EventFileCache | None,
-    ) -> tuple[dict[str, dict[str, list[Any]]], dict[str, list[np.dtype]]]:
-        """Rebuild mutable scalar rows from an existing cache."""
-        rows: dict[str, dict[str, list[Any]]] = defaultdict(
-            _TableRows.empty_scalar_rows
-        )
-        dtypes: dict[str, list[np.dtype]] = defaultdict(list)
-        if cache is None:
-            return rows, dtypes
-        for tag, series in cache.scalars.items():
-            rows[tag] = {column: list(series[column]) for column in SCALAR_COLUMNS}
-            dtypes[tag] = [series["value"].dtype] * len(series["value"])
-        return rows, dtypes
-
-    @staticmethod
-    def histogram_rows_from_cache(
-        cache: EventFileCache | None,
-    ) -> dict[str, dict[str, list[Any]]]:
-        """Rebuild mutable histogram rows from an existing cache."""
-        rows: dict[str, dict[str, list[Any]]] = defaultdict(
-            _TableRows.empty_histogram_rows
-        )
-        if cache is None:
-            return rows
-        for tag, series in cache.histograms.items():
-            rows[tag] = {column: list(series[column]) for column in series}
-        return rows
-
-    @staticmethod
-    def first_wall_time(scalar_rows: dict[str, dict[str, list[Any]]]) -> float | None:
-        """Return the earliest valid scalar wall time in mutable row storage."""
-        wall_times = [
-            float(value)
-            for rows in scalar_rows.values()
-            for value in rows["wall_time"]
-            if not np.isnan(float(value))
-        ]
-        return min(wall_times) if wall_times else None
-
-    @staticmethod
-    def current_epoch(scalar_rows: dict[str, dict[str, list[Any]]]) -> object:
-        """Return the most recent epoch scalar value from mutable row storage."""
-        epoch_rows = scalar_rows.get("epoch")
-        if epoch_rows and epoch_rows["value"]:
-            return epoch_rows["value"][-1]
-        return np.nan
 
     @staticmethod
     def arrays_from_scalar_rows(
@@ -258,6 +235,32 @@ class _TableMerge:
         }
 
     @staticmethod
+    def append_series(
+        base: Mapping[str, Mapping[str, np.ndarray]],
+        new: Mapping[str, Mapping[str, np.ndarray]],
+    ) -> dict[str, dict[str, np.ndarray]]:
+        """Append rows of ``new`` to ``base`` with the dtypes of one parse.
+
+        A parse keeps a column dtype only when all rows agree, else float64.
+        """
+        merged = {tag: dict(series) for tag, series in base.items()}
+        for tag, series in new.items():
+            old = merged.setdefault(tag, {})
+            for column, values in series.items():
+                if column not in old:
+                    old[column] = values
+                    continue
+                dtype = (
+                    old[column].dtype
+                    if old[column].dtype == values.dtype
+                    else np.dtype("float64")
+                )
+                old[column] = np.concatenate((old[column], values)).astype(
+                    dtype, copy=False
+                )
+        return merged
+
+    @staticmethod
     def merge_mtimes(items: Iterable[Mapping[str, float]]) -> dict[str, float]:
         """Merge per-file mtimes by keeping the most recent value."""
         merged: dict[str, float] = {}
@@ -270,53 +273,62 @@ class _TableMerge:
     def distribution_from_histogram(
         series: dict[str, np.ndarray],
     ) -> dict[str, np.ndarray]:
-        """Derive TensorBoard-style percentile rows from histogram buckets."""
-        rows = _TableMerge.rows_from_series(series)
+        """Derive TensorBoard-style percentile rows from histogram buckets.
+
+        Each histogram event is one contiguous run of bucket rows with the same
+        step and wall time, so repeated steps stay separate groups.
+        """
         out = defaultdict(list)
         percentiles = (0.0, 25.0, 50.0, 75.0, 100.0)
-        by_step: dict[tuple[Any, Any, float, float], list[dict[str, Any]]] = (
-            defaultdict(list)
-        )
-        for row in rows:
-            by_step[
-                (
-                    row["step"],
-                    row.get("epoch", np.nan),
-                    row["wall_time"],
-                    row["relative_time"],
-                )
-            ].append(row)
-        for (step, epoch, wall_time, relative_time), buckets in by_step.items():
-            total = sum(float(row["count"]) for row in buckets)
-            cumulative = 0.0
-            targets = {p: total * p / 100.0 for p in percentiles}
-            found: dict[float, float] = {}
-            for row in buckets:
-                cumulative += float(row["count"])
-                for percentile, target in targets.items():
-                    if percentile not in found and cumulative >= target:
-                        found[percentile] = float(row["bucket_right"])
+        counts = np.asarray(series.get("count", []), dtype=np.float64)
+        rights = np.asarray(series.get("bucket_right", []), dtype=np.float64)
+        epochs = series.get("epoch", np.full(len(counts), np.nan))
+        for start, stop in _TableMerge.event_bounds(series):
+            cumulative = np.cumsum(counts[start:stop])
             for percentile in percentiles:
-                out["step"].append(step)
-                out["epoch"].append(epoch)
-                out["wall_time"].append(wall_time)
-                out["relative_time"].append(relative_time)
+                target = cumulative[-1] * percentile / 100.0
+                index = int(np.searchsorted(cumulative, target, side="left"))
+                out["step"].append(series["step"][start])
+                out["epoch"].append(epochs[start])
+                out["wall_time"].append(series["wall_time"][start])
+                out["relative_time"].append(series["relative_time"][start])
                 out["percentile"].append(percentile)
-                out["value"].append(found.get(percentile, float("nan")))
+                out["value"].append(
+                    rights[start + index] if index < stop - start else np.nan
+                )
         return {key: np.asarray(value) for key, value in out.items()}
 
     @staticmethod
-    def rows_from_series(series: dict[str, np.ndarray]) -> list[dict[str, Any]]:
-        """Return row dictionaries for a column-oriented table."""
-        return [
-            {column: series[column][index] for column in series}
-            for index in range(_TableExport.series_len(series))
-        ]
+    def event_bounds(series: dict[str, np.ndarray]) -> list[tuple[int, int]]:
+        """Return [start, stop) row ranges with a constant step and wall time."""
+        size = len(series.get("step", []))
+        if size == 0:
+            return []
+        changed = np.zeros(size, dtype=bool)
+        changed[0] = True
+        for column in ("step", "wall_time"):
+            values = np.asarray(series[column], dtype=np.float64)
+            changed[1:] |= ~_TableMerge.nan_equal(values[:-1], values[1:])
+        starts = np.flatnonzero(changed).tolist()
+        return list(zip(starts, [*starts[1:], size], strict=True))
+
+    @staticmethod
+    def nan_equal(left: np.ndarray, right: object) -> np.ndarray:
+        """Compare elementwise and treat NaN as equal to NaN."""
+        values = np.asarray(left, dtype=np.float64)
+        other = np.asarray(right, dtype=np.float64)
+        return (values == other) | (np.isnan(values) & np.isnan(other))
+
+    @staticmethod
+    def unique_steps(series: dict[str, np.ndarray]) -> list[Any]:
+        """Return sorted distinct steps; all NaN steps collapse to one entry."""
+        steps: list[Any] = np.unique(series["step"]).tolist()
+        return steps
 
     @staticmethod
     def series_for_step(
         series: dict[str, np.ndarray], step: object
     ) -> dict[str, np.ndarray]:
         """Return a column-oriented table for one TensorBoard step."""
-        mask = series["step"] == step
+        mask = _TableMerge.nan_equal(series["step"], step)
         return {column: values[mask] for column, values in series.items()}

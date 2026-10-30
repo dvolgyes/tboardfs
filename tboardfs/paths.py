@@ -6,6 +6,10 @@ import numpy as np
 
 from tboardfs.constants import TENSORBOARD_EVENT_GLOB
 
+_UNSAFE_PATH_CHARS = frozenset(
+    [chr(code) for code in range(0x20)] + ["\\", "/", "\x7f"]
+)
+
 
 def find_tensorboard_files(directory: str | Path) -> list[Path]:
     """Return TensorBoard event files below a directory, recursively."""
@@ -64,7 +68,21 @@ class _Paths:
     @staticmethod
     def tag_dir_parts(tag: str) -> tuple[str, ...]:
         """Preserve TensorBoard slash hierarchy in a virtual path."""
-        return tuple(part for part in tag.split("/") if part) or ("untagged",)
+        parts = tuple(_Paths.safe_component(part) for part in tag.split("/") if part)
+        return parts or ("untagged",)
+
+    @staticmethod
+    def safe_component(name: str) -> str:
+        """Return one virtual path component that cannot traverse or split.
+
+        Dot-only names, backslashes, and control characters are percent-escaped,
+        so untrusted tags and plugin names stay inside their parent directory.
+        """
+        if name in {".", ".."}:
+            return "%2E" * len(name)
+        return "".join(
+            f"%{ord(ch):02X}" if ch in _UNSAFE_PATH_CHARS else ch for ch in name
+        )
 
     @staticmethod
     def step_name(step: object, digits: int) -> str:
@@ -76,16 +94,6 @@ class _Paths:
         if isinstance(step, float) and step.is_integer():
             return f"{int(step):0{digits}d}"
         return str(step)
-
-    @staticmethod
-    def split_ext(rel: str) -> tuple[str, str]:
-        """Split a virtual relative path into stem and extension."""
-        parent = posixpath.dirname(rel)
-        name = posixpath.basename(rel)
-        stem, dot, ext = name.rpartition(".")
-        if not dot:
-            return rel, ""
-        return (posixpath.join(parent, stem) if parent else stem), ext.lower()
 
     @staticmethod
     def normalize_formats(

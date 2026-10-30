@@ -1,16 +1,38 @@
+from collections import defaultdict
+from dataclasses import replace
+import os
 from pathlib import Path
-from typing import Any
+import struct
+from typing import Any, BinaryIO
 
+from google.protobuf.message import DecodeError
+from loguru import logger
 import numpy as np
 
 from tboardfs.classify import _Classifier, detect_extension
 from tboardfs.constants import PLUGIN_TAB
-from tboardfs.model import BinaryEntry, EventFileCache, GraphEntry, JsonEntry, Record
+from tboardfs.model import (
+    BinaryEntry,
+    EventFileCache,
+    GraphEntry,
+    JsonEntry,
+    ParseProgress,
+    Record,
+    RestartMark,
+    TFRecordError,
+)
+from tboardfs.restarts import _RestartPurge
 from tboardfs.summary import parse_event
 from tboardfs.tables import (
+    _TableMerge,
     _TableRows,
 )
 from tboardfs.tfrecord import iter_tfrecords
+
+# A framed record whose payload cannot be decoded or indexed; framing is intact.
+_MALFORMED_RECORD_ERRORS = (DecodeError, ValueError, struct.error)
+# The first record holds a wall time, so these bytes tell files apart.
+IDENTITY_HEAD_BYTES = 64
 
 
 def parse_file(filename: str | Path) -> dict[str, Any]:
@@ -48,57 +70,175 @@ class _EventIndexer:
         start_pos: int = 0,
         base_cache: EventFileCache | None = None,
     ) -> EventFileCache:
-        """Build an in-memory index for one TensorBoard event file."""
+        """Build an in-memory index for one TensorBoard event file.
+
+        With ``base_cache``, only records from ``start_pos`` are parsed and
+        their rows are appended, so the result equals a parse of the whole file.
+        """
         cache = EventFileCache(source_path=path)
-        scalar_rows, scalar_dtypes = _TableRows.scalar_rows_from_cache(base_cache)
-        histogram_rows = _TableRows.histogram_rows_from_cache(base_cache)
-        first_time = _TableRows.first_wall_time(scalar_rows)
-        epoch = _TableRows.current_epoch(scalar_rows)
+        scalar_rows: dict[str, dict[str, list[Any]]] = defaultdict(
+            _TableRows.empty_scalar_rows
+        )
+        scalar_dtypes: dict[str, list[np.dtype]] = defaultdict(list)
+        histogram_rows: dict[str, dict[str, list[Any]]] = defaultdict(
+            _TableRows.empty_histogram_rows
+        )
+        first_time: float | None = None
+        epoch: object = np.nan
         processed_pos = start_pos
         if base_cache is not None:
+            first_time, epoch = (
+                base_cache.progress.first_time,
+                base_cache.progress.epoch,
+            )
             cache.binaries = list(base_cache.binaries)
             cache.graphs = list(base_cache.graphs)
             cache.json_entries = list(base_cache.json_entries)
             cache.scalar_mtimes = dict(base_cache.scalar_mtimes)
             cache.histogram_mtimes = dict(base_cache.histogram_mtimes)
 
+        rows = (scalar_rows, scalar_dtypes, histogram_rows)
         with path.open("rb") as handle:
+            # Size before reading: records appended during the parse must
+            # look unread to the next refresh.
+            checked_size, identity = _EventIndexer.file_identity(handle)
             handle.seek(start_pos)
             try:
                 for record in iter_tfrecords(handle):
                     processed_pos = record.record_offset + record.total_size
-                    event = parse_event(record.payload)
-                    wall_time = (
-                        float(event["wall_time"]) if "wall_time" in event else np.nan
-                    )
-                    values = event.get("values", [])
-                    if first_time is None and values and not np.isnan(wall_time):
-                        first_time = wall_time
-                    relative_time = (
-                        np.nan
-                        if first_time is None or np.isnan(wall_time)
-                        else wall_time - first_time
-                    )
-                    timing = (event.get("step", np.nan), wall_time, relative_time)
-                    _EventIndexer.add_graph(cache, path, event, record, wall_time)
-                    for value in values:
-                        epoch = _EventIndexer.add_summary(
-                            cache,
-                            path,
-                            record,
-                            value,
-                            (scalar_rows, scalar_dtypes, histogram_rows),
-                            (epoch, *timing),
+                    try:
+                        first_time, epoch = _EventIndexer.index_record(
+                            cache, record, rows, (first_time, epoch)
                         )
-            except ValueError:
+                    except _MALFORMED_RECORD_ERRORS as error:
+                        if not ignore_truncated:
+                            raise
+                        logger.warning(
+                            "skipping malformed record at offset {} in {}: {}",
+                            record.record_offset,
+                            path,
+                            error,
+                        )
+            except TFRecordError as error:
                 if not ignore_truncated:
                     raise
+                if error.corrupt:
+                    logger.warning("stopped reading {}: {}", path, error)
 
-        cache.processed_pos = processed_pos
-        cache.last_checked_size = path.stat().st_size
+        cache.progress = ParseProgress(
+            processed_pos, checked_size, identity, first_time, epoch
+        )
         cache.scalars = _TableRows.arrays_from_scalar_rows(scalar_rows, scalar_dtypes)
         cache.histograms = _TableRows.arrays_from_histogram_rows(histogram_rows)
+        if base_cache is not None:
+            cache.scalars = _TableMerge.append_series(base_cache.scalars, cache.scalars)
+            cache.histograms = _TableMerge.append_series(
+                base_cache.histograms, cache.histograms
+            )
+            cache.restarts = _EventIndexer.rebase_restarts(cache.restarts, base_cache)
         return cache
+
+    @staticmethod
+    def rebase_restarts(
+        marks: list[RestartMark], base_cache: EventFileCache
+    ) -> list[RestartMark]:
+        """Count the table rows before each new START from the file start."""
+        lengths = {
+            (table, tag): len(series["step"])
+            for table, series_by_tag in (
+                ("scalars", base_cache.scalars),
+                ("histograms", base_cache.histograms),
+            )
+            for tag, series in series_by_tag.items()
+        }
+        return [
+            *base_cache.restarts,
+            *(
+                replace(
+                    mark,
+                    counts={
+                        key: lengths.get(key, 0) + mark.counts.get(key, 0)
+                        for key in lengths.keys() | mark.counts.keys()
+                    },
+                )
+                if mark.kind == "start"
+                else mark
+                for mark in marks
+            ),
+        ]
+
+    @staticmethod
+    def file_identity(handle: BinaryIO) -> tuple[int, tuple[int, int, bytes]]:
+        """Return the size and the identity of an open event file."""
+        status = os.fstat(handle.fileno())
+        head = os.pread(handle.fileno(), IDENTITY_HEAD_BYTES, 0)
+        return status.st_size, (status.st_dev, status.st_ino, head)
+
+    @staticmethod
+    def index_record(
+        cache: EventFileCache,
+        record: Record,
+        rows: tuple[
+            dict[str, dict[str, list[Any]]],
+            dict[str, list[np.dtype]],
+            dict[str, dict[str, list[Any]]],
+        ],
+        clock: tuple[float | None, object],
+    ) -> tuple[float | None, object]:
+        """Index one framed record and return the updated (first_time, epoch)."""
+        first_time, epoch = clock
+        path = cache.source_path
+        event = parse_event(record.payload)
+        wall_time = float(event["wall_time"]) if "wall_time" in event else np.nan
+        values = event.get("values", [])
+        if first_time is None and values and not np.isnan(wall_time):
+            first_time = wall_time
+        relative_time = (
+            np.nan
+            if first_time is None or np.isnan(wall_time)
+            else wall_time - first_time
+        )
+        timing = (event.get("step", np.nan), wall_time, relative_time)
+        _EventIndexer.add_restart(cache, event, rows)
+        _EventIndexer.add_graph(cache, path, event, record, wall_time)
+        for value in values:
+            epoch = _EventIndexer.add_summary(
+                cache, path, record, value, rows, (epoch, *timing)
+            )
+        return first_time, epoch
+
+    @staticmethod
+    def add_restart(
+        cache: EventFileCache,
+        event: dict[str, Any],
+        rows: tuple[
+            dict[str, dict[str, list[Any]]],
+            dict[str, list[np.dtype]],
+            dict[str, dict[str, list[Any]]],
+        ],
+    ) -> None:
+        """Record a file version or SessionLog.START before the event's values.
+
+        The table counts cover the rows of this parse only; ``rebase_restarts``
+        adds the rows of an earlier parse. The list counts cover the whole file.
+        """
+        if "file_version" in event:
+            version = _RestartPurge.parse_version(event["file_version"])
+            cache.restarts.append(RestartMark("version", version))
+        if not event.get("session_start"):
+            return
+        scalar_rows, _, histogram_rows = rows
+        counts = {
+            (table, tag): len(columns["step"])
+            for table, rows_by_tag in (
+                ("scalars", scalar_rows),
+                ("histograms", histogram_rows),
+            )
+            for tag, columns in rows_by_tag.items()
+        }
+        counts[("binaries", "")] = len(cache.binaries)
+        counts[("json_entries", "")] = len(cache.json_entries)
+        cache.restarts.append(RestartMark("start", event.get("step", 0), counts))
 
     @staticmethod
     def add_graph(

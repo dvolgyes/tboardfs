@@ -2,6 +2,9 @@ from typing import Any, cast
 
 from tboardfs.proto_schema import _ProtoParser
 
+# SessionLog.SessionStatus.START in the vendored event proto.
+START = 1
+
 
 def parse_event(data: bytes) -> dict[str, Any]:
     """Parse a TensorBoard Event protobuf with vendored protobuf classes."""
@@ -20,6 +23,10 @@ class _SummaryParser:
             event["wall_time"] = event_message.wall_time
         if event_message.HasField("step"):
             event["step"] = event_message.step
+        if event_message.HasField("file_version"):
+            event["file_version"] = event_message.file_version
+        if event_message.session_log.status == START:
+            event["session_start"] = True
         if event_message.HasField("graph_def"):
             event["graph_def"] = event_message.graph_def
         if event_message.HasField("summary"):

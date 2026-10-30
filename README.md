@@ -18,8 +18,8 @@ Mount and inspect TensorBoard event logs as ordinary files.
 - Filesystem mode mounts a log directory with FUSE.
 - Command mode inspects or copies the virtual content of one event file.
 
-Both modes use the same virtual paths for TensorBoard tabs such as `scalars`,
-`images`, `tensors`, `meshes`, `pr_curves`, `hparams`, and `custom_scalars`.
+Both modes use the same virtual paths for TensorBoard tabs such as `scalars`, `images`, `tensors`, `meshes`,
+`pr_curves`, `hparams`, and `custom_scalars`.
 
 ## Filesystem Mode
 
@@ -29,8 +29,8 @@ Mount a TensorBoard log directory:
 tboardfs SOURCE MOUNTPOINT
 ```
 
-For non-developers, the simplest way to run it without cloning this repository
-or managing a local virtual environment is:
+For non-developers, the simplest way to run it without cloning this repository or managing a local virtual environment
+is:
 
 ```bash
 uvx tboardfs SOURCE MOUNTPOINT
@@ -44,14 +44,25 @@ ls mnt/tboardfs
 cat mnt/tboardfs/train/scalars/loss.json
 ```
 
-Mount mode is the primary workflow for browsing full log directories. It exposes
-run directories, FUSE cache-control files, and supported sidecars such as
-projector/profile files.
+Mount mode is the primary workflow for browsing full log directories. It exposes run directories and supported sidecars
+such as projector/profile files.
+
+Each open file keeps the version it had when it was opened, so reads stay whole while a training run writes new events.
+A new `open` shows the new data. Mounted files use direct I/O: shared memory maps (`mmap` with `MAP_SHARED`,
+`np.load(..., mmap_mode="r")`) fail with `ENODEV`; private maps (`mmap_mode="c"`) and plain reads work.
+
+Rendered files are kept in memory, so `ls -l` followed by `cat` renders a file once. `--cache-size-mb` sets the memory
+for this cache (default 1024; 0 turns it off). When the cache goes over the limit, the least recently used files are
+dropped until half the limit is left. New events in a run make only the files of that run render again.
+
+A resumed run hides the rows it replaces, as TensorBoard does. When a writer marks a restart at step S (a
+`SessionLog.START` event, for example from PyTorch `SummaryWriter(purge_step=S)`), rows written before it with step S or
+higher are not shown. Graphs stay. This applies to event files with file version 2 or later, which all current writers
+produce.
 
 ## Command Mode
 
-Use `tboardfs-file` when mounting is unavailable or when you need scripted
-access to one TensorBoard event file.
+Use `tboardfs-file` when mounting is unavailable or when you need scripted access to one TensorBoard event file.
 
 List every virtual file:
 
@@ -77,9 +88,8 @@ Extract one virtual file to disk:
 tboardfs-file get events.out.tfevents.123 /images/sample/000001.png -o sample.png
 ```
 
-The virtual path may be written with or without the leading `/`. If `-o` points
-to an existing directory, or to a missing path ending in `/`, `get` writes the
-virtual file basename inside that directory.
+The virtual path may be written with or without the leading `/`. If `-o` points to an existing directory, or to a
+missing path ending in `/`, `get` writes the virtual file basename inside that directory.
 
 ```bash
 tboardfs-file get events.out.tfevents.123 scalars/loss.json -o exported/
@@ -91,26 +101,21 @@ Copy the full virtual tree:
 tboardfs-file copy-all events.out.tfevents.123 exported-event
 ```
 
-Command mode exposes tab directories directly at the root, for example
-`/scalars`, `/images`, and `/meshes`. It accepts a single event file, omits FUSE
-control files, and does not include sibling sidecars.
+Command mode exposes tab directories directly at the root, for example `/scalars`, `/images`, and `/meshes`. It accepts
+a single event file and does not include sibling sidecars.
 
-`get` refuses to overwrite existing files unless `--force` is provided.
-`copy-all` copies files in deterministic virtual-path order. If it reaches an
-existing target without `--force`, it stops, reports how many files were already
-copied, lists those virtual paths, prints the conflicting output path, and
-suggests `--force`. After a successful copy, `copy-all` reports the number of
-copied files.
+`get` refuses to overwrite existing files unless `--force` is provided. `copy-all` copies files in deterministic
+virtual-path order. If it reaches an existing target without `--force`, it stops, reports how many files were already
+copied, lists those virtual paths, prints the conflicting output path, and suggests `--force`. After a successful copy,
+`copy-all` reports the number of copied files.
 
-Use `--skip-existing` to leave existing output files untouched and continue
-copying the rest of the tree:
+Use `--skip-existing` to leave existing output files untouched and continue copying the rest of the tree:
 
 ```bash
 tboardfs-file copy-all events.out.tfevents.123 exported-event --skip-existing
 ```
 
-Each skipped virtual path is reported as a warning on stderr. `--force` and
-`--skip-existing` are mutually exclusive.
+Each skipped virtual path is reported as a warning on stderr. `--force` and `--skip-existing` are mutually exclusive.
 
 ## Supported Objects
 
@@ -120,30 +125,29 @@ The virtual tree covers these TensorBoard objects:
 - Custom scalars: layout JSON under `/custom_scalars`.
 - Images: encoded image files under `/images`.
 - Audio: encoded audio files under `/audio`.
-- Videos: encoded video/GIF outputs under `/videos`, including raw subpaths
-  when present.
+- Videos: encoded video/GIF outputs under `/videos`, including raw subpaths when present.
 - Histograms: per-step `json`, `tsv`, and `npz` exports under `/histograms`.
 - Distributions: per-step distribution tables under `/distributions`.
 - Text summaries: UTF-8 text files under `/text`.
 - Meshes: per-step `json`, `npz`, and Wavefront `obj` exports under `/meshes`.
 - PR curves: per-step `json`, `tsv`, and `npy` exports under `/pr_curves`.
 - HParams: merged experiment/session/metric JSON under `/hparams`.
-- Tensors: tensor arrays as `npy` plus compact JSON or native blob files under
-  `/tensors`.
+- Tensors: tensor arrays as `npy` plus compact JSON or native blob files under `/tensors`.
 - Graphs: graph protobuf files under `/graphs`.
-- Projector and profile sidecars: available in filesystem mode under
-  `/projector` and `/profile`; command mode intentionally omits sibling
-  sidecar files because it operates on one event file.
-- Other plugin JSON payloads: exposed under `/plugins` when no typed tab handles
-  them.
+- Projector and profile sidecars: available in filesystem mode under `/projector` and `/profile`; command mode
+  intentionally omits sibling sidecar files because it operates on one event file.
+- Other plugin JSON payloads: exposed under `/plugins` when no typed tab handles them.
 
 ## Output Rules
 
-`tboardfs-file list` prints virtual file paths to stdout, one per line.
-`tboardfs-file get -o -` writes raw bytes to stdout. Extraction status,
-warnings, errors, copied-file counts, skipped-path warnings, copied-path
-conflict reports, and overwrite hints are written to stderr through Loguru/Click
-so stdout remains safe for pipelines.
+All `.json` files are strict JSON (RFC 8259). Infinities are written as the strings `"Infinity"` and `"-Infinity"`. In
+scalar, histogram and other table files, NaN is a missing value and is written as `null`. In other JSON files, NaN is
+written as the string `"NaN"`, as in protobuf JSON. Bytes that are valid UTF-8 are written as text. Other bytes are
+written as `{"base64": "..."}`.
+
+`tboardfs-file list` prints virtual file paths to stdout, one per line. `tboardfs-file get -o -` writes raw bytes to
+stdout. Extraction status, warnings, errors, copied-file counts, skipped-path warnings, copied-path conflict reports,
+and overwrite hints are written to stderr through Loguru/Click so stdout remains safe for pipelines.
 
 ## License
 

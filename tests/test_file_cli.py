@@ -295,6 +295,19 @@ def test_file_cli_copy_all_rejects_force_with_skip_existing(tmp_path: Path) -> N
     assert "Use either --force or --skip-existing" in result.output
 
 
+def test_file_cli_copy_all_reports_symlink_escape(tmp_path: Path) -> None:
+    """copy-all fails cleanly when an output symlink leaves OUTDIR."""
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+    (outdir / "scalars").symlink_to(tmp_path, target_is_directory=True)
+
+    result = CliRunner().invoke(main, ["copy-all", str(FIXTURE_EVENT), str(outdir)])
+
+    assert result.exit_code == 1
+    assert "outside the output directory" in result.output
+    assert not isinstance(result.exception, PermissionError)
+
+
 def test_single_file_tree_matches_filesystem_for_one_event_file(tmp_path: Path) -> None:
     """Single-event mode and FUSE mode expose identical file bytes."""
     source = tmp_path / FIXTURE_EVENT.name
@@ -332,7 +345,7 @@ def test_metadata_and_readme_document_both_access_modes() -> None:
 def _filesystem_file_paths(fs: TensorBoardFS, path: str) -> list[str]:
     paths = []
     for name in fs.readdir(path):
-        if name in {".", "..", ".cache", ".in_memory"}:
+        if name in {".", ".."}:
             continue
         child = path.rstrip("/") + "/" + name if path != "/" else "/" + name
         try:

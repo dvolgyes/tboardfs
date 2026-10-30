@@ -2,161 +2,165 @@
 # Changes will be overwritten on next `pcm render`.
 
 ci:
-  skip: [deptry, refurb]
+  skip: [deptry]
 
 repos:
-# Source: 010_deptry.yaml [central]
-- repo: local
-  hooks:
-  - id: deptry
-    name: Deptry dependency checker
-    entry: uvx deptry .  -pri DEP004=tests/ -ee scripts/ -ee .venv -pmnm ruamel-yaml=ruamel,gitpython=git,loguru=loguru,tqdm=tqdm,coverage=coverage,pytest=pytest,pytest-cov=pytest_cov,pytest-xdist=pytest_xdist,protobuf=google,python-magic=magic,numpy=numpy,scipy=scipy,torch=torch,pandas=pandas,coveralls=coveralls
-    language: system
-    types: [python]
-    pass_filenames: false
-    always_run: true
+  # Source: 010_deptry.yaml [central]
+  - repo: local
+    hooks:
+      - id: deptry
+        name: Deptry dependency checker
+        entry: uvx deptry .  -pri DEP004=tests/ -ee scripts/ -ee .venv -pmnm ruamel-yaml=ruamel,gitpython=git,loguru=loguru,tqdm=tqdm,coverage=coverage,pytest=pytest,pytest-cov=pytest_cov,pytest-xdist=pytest_xdist,protobuf=google,python-magic=magic,numpy=numpy,scipy=scipy,torch=torch,pandas=pandas,coveralls=coveralls
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
 
-# Source: 050_uv_secure.yaml [central]
-- repo: https://github.com/owenlamont/uv-secure
-  rev: v0.17.2
-  hooks:
-  - id: uv-secure
-    always_run: true
+  # Source: 020_no_whitespace_in_filename.yaml [central]
+  - repo: local
+    hooks:
+      - id: no-spaces-in-filenames
+        name: Check for spaces in filenames
+        entry: Filenames must not contain spaces
+        language: fail
+        files: \s
 
-# Source: 100_standard_pre-commit_hooks.yaml [central]
-- repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v6.0.0
-  hooks:
-  - id: check-added-large-files
-  - id: check-ast
-  - id: check-case-conflict
-  - id: check-docstring-first
-  - id: check-executables-have-shebangs
-  - id: check-json
-  - id: check-merge-conflict
-  - id: check-symlinks
-  - id: check-toml
-  - id: check-vcs-permalinks
-  - id: check-xml
-  - id: check-yaml
-  - id: debug-statements
-  - id: detect-private-key
-  - id: end-of-file-fixer
-  - id: forbid-new-submodules
-  - id: mixed-line-ending
-    args: [--fix, lf]
-  - id: requirements-txt-fixer
-  - id: trailing-whitespace
+  # Source: 050_uv_audit.yaml [central]
+  - repo: local
+    hooks:
+      - id: uv-audit
+        name: uv audit
+        entry: uv audit
+        language: system
+        files: ^uv\.lock$
+        pass_filenames: false
 
-# Source: 200_pyupgrade.yaml [central]
-- repo: https://github.com/asottile/pyupgrade
-  rev: v3.21.2
-  hooks:
-  - id: pyupgrade
-    args: [--py312-plus]
+  # Source: 100_standard_pre-commit_hooks.yaml [central]
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: check-executables-have-shebangs
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-vcs-permalinks
+      - id: check-xml
+      - id: check-yaml
+      - id: debug-statements
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: forbid-new-submodules
+      - id: mixed-line-ending
+        args: [--fix, lf]
+      - id: requirements-txt-fixer
+      - id: trailing-whitespace
 
-# Source: 201_ruff.yaml [central]
-- repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.15.16
-  hooks:
+  # Source: 200_pyupgrade.yaml [central]
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.21.2
+    hooks:
+      - id: pyupgrade
+        args: [--py312-plus]
 
-  - id: ruff-check
-    name: ruff-check (tests)
-    files: ^tests/
-    args:
-    - --fix
+  # Source: 201_ruff.yaml [central]
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.22
+    hooks:
+      - id: ruff-check
+        name: ruff-check (tests)
+        files: ^tests/
+        args:
+          - --fix
+      - id: ruff-check
+        name: ruff-check (extended)
+        exclude: ^tests/
+        args:
+          - --fix
+          - --extend-select=ANN,YTT,ASYNC,C4,T20,RET,SIM,PTH,FLY,NPY,PD,N,UP,FURB,RUF,TID251,PLW,BLE,S,ARG,PERF,PIE
+          - --config
+          - |
+            [lint.flake8-tidy-imports.banned-api]
+            "osgeo".msg = "Use `rasterio` (preferred) or `geopandas`/`shapely` (if necessary) instead."
+            "os.path".msg = "Use the modern `pathlib` module instead of `os.path`."
+            "pyyaml".msg = "Use ruamel.yaml as a yaml parsing lib"
+            "ryaml".msg = "Use ruamel.yaml as a yaml parsing lib"
+            "pyaml".msg = "Use ruamel.yaml as a yaml parsing lib"
+      - id: ruff-format
 
-  - id: ruff-check
-    name: ruff-check (extended)
-    exclude: ^tests/
-    args:
-    - --fix
-    - --extend-select=ANN,YTT,ASYNC,C4,T20,RET,SIM,PTH,FLY,NPY,PD,N,UP,FURB,RUF,TID251,PLW,BLE,S,ARG,PERF,PIE
-    - --config
-    - |
-      [lint.flake8-tidy-imports.banned-api]
-      "osgeo".msg = "Use `rasterio` (preferred) or `geopandas`/`shapely` (if necessary) instead."
-      "os.path".msg = "Use the modern `pathlib` module instead of `os.path`."
-      "pyyaml".msg = "Use ruamel.yaml as a yaml parsing lib"
-      "ryaml".msg = "Use ruamel.yaml as a yaml parsing lib"
-      "pyaml".msg = "Use ruamel.yaml as a yaml parsing lib"
+  # Source: 205_autoflake.yaml [central]
+  - repo: https://github.com/PyCQA/autoflake
+    rev: v2.3.3 # Use the latest version available
+    hooks:
+      - id: autoflake
+        args:
+          - --in-place
+          - --imports=__future__
 
-  - id: ruff-format
+  # Source: 220_xenon.yaml [central]
+  - repo: https://github.com/yunojuno/pre-commit-xenon
+    rev: v0.1
+    hooks:
+      - id: xenon
+        args:
+          - --max-absolute=C
+          - --max-modules=B
+          - --max-average=B
 
-# Source: 202_refurb.yaml [central]
-- repo: local
-  hooks:
-  - id: refurb
-    name: Refurb
-    entry: uvx refurb . --ignore FURB184,FURB118,FURB113,FURB108,FURB123
-    language: system
-    types: [python]
-    pass_filenames: false
-    always_run: true
+  # Source: 230_py-review-rules.yaml [central]
+  - repo: https://github.com/dvolgyes/py-review-rules.git
+    rev: 0.2.1
+    hooks:
+      - id: py-review-rules
+        exclude: ^tests/
+        args: [--max-function-nesting-depth, '1', '--ignore=PRR010,PRR013']
 
-# Source: 220_xenon.yaml [central]
-- repo: https://github.com/yunojuno/pre-commit-xenon
-  rev: v0.1
-  hooks:
-  - id: xenon
-    args:
-    - --max-absolute=C
-    - --max-modules=B
-    - --max-average=B
+  # Source: 300_mdformat.yaml [central]
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 1.0.0
+    hooks:
+      - id: mdformat
+        args: [--number, --wrap, '120', --compact-tables]
+        additional_dependencies:
+          - mdformat-ruff
+          - ruff
+          - mdformat-frontmatter
+          - mdformat-obsidian[recommended]
 
-# Source: 250_semgrep.yaml [central]
-- repo: https://github.com/semgrep/pre-commit
-  rev: v1.165.0
-  hooks:
-  - id: semgrep
-    language_version: python3.12
-    additional_dependencies:
-          # Semgrep/OpenTelemetry may import pkg_resources; Python 3.12 venvs
-          # do not include setuptools by default.
-    - setuptools<82
-    args:
-          # General Python rules.
-    - --config
-    - p/python
+  # Source: 320_yaml_format.yaml [central]
+  - repo: https://github.com/google/yamlfmt
+    rev: v0.21.0
+    hooks:
+      - id: yamlfmt
+        args: [-formatter, 'indent=2,retain_line_breaks_single=true']
 
-          # Security-audit rules. Some overlap with Ruff S/Bandit-style checks,
-          # but useful as a second opinion if kept small.
-    - --config
-    - p/security-audit
+  # Source: 450_mypy.yaml [central]
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.3.0
+    hooks:
+      - id: mypy
+        exclude: ^tests/
+        args: [--ignore-missing-imports, --strict]
+        additional_dependencies: [types-requests, types-click, types-setuptools]
 
-    - --jobs
-    - "1"
+  # Source: 500_actionlint.yaml [central]
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
 
-          # Keep local pre-commit focused on actionable findings.
-    - --severity
-    - ERROR
+  # Source: 900_shfmt.yaml [central]
+  - repo: https://github.com/maxwinterstein/shfmt-py
+    rev: v4.0.0
+    hooks:
+      - id: shfmt
 
-# Source: 300_mdformat.yaml [central]
-- repo: https://github.com/executablebooks/mdformat
-  rev: 1.0.0
-  hooks:
-  - id: mdformat
-    additional_dependencies:
-    - mdformat-ruff
-    - ruff
-
-# Source: 450_mypy.yaml [central]
-- repo: https://github.com/pre-commit/mirrors-mypy
-  rev: v2.1.0
-  hooks:
-  - id: mypy
-    exclude: ^tests/
-    args: [--ignore-missing-imports, --strict]
-    additional_dependencies: [types-requests, types-click, types-setuptools]
-
-# Source: 900_shfmt.yaml [central]
-- repo: https://github.com/maxwinterstein/shfmt-py
-  rev: v4.0.0
-  hooks:
-  - id: shfmt
-
-# Source: 950_shellcheck.yaml [central]
-- repo: https://github.com/shellcheck-py/shellcheck-py
-  rev: v0.11.0.1
-  hooks:
-  - id: shellcheck
+  # Source: 950_shellcheck.yaml [central]
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck

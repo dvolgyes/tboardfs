@@ -47,9 +47,7 @@ class SingleEventTree:
         scalar_formats = (
             _Paths.normalize_formats(scalar_format) or DEFAULT_SCALAR_FORMATS
         )
-        self.tree = _build_run_virtual_tree(
-            run, scalar_formats, step_digits, include_sidecars=False
-        )
+        self.tree = _build_run_virtual_tree(run, scalar_formats, step_digits)
 
     def list_file_paths(self, *, prefix: str = "/") -> list[str]:
         """Return virtual file paths below a prefix."""
@@ -73,12 +71,16 @@ class SingleEventTree:
     ) -> tuple[int, list[str]]:
         """Copy every virtual file into a directory."""
         outdir_path = Path(outdir)
+        root = outdir_path.resolve()
         paths = self._iter_file_parts(self.tree, ())
         targets = [(path, outdir_path.joinpath(*path)) for path in paths]
         copied_paths: list[str] = []
         skipped_paths: list[str] = []
         for path, target in targets:
             virtual_path = _Paths.join_path(path)
+            if not target.resolve().is_relative_to(root):
+                msg = f"refusing to write {virtual_path} outside the output directory"
+                raise PermissionError(msg)
             if target.exists() and existing != "overwrite":
                 if existing == "skip":
                     skipped_paths.append(virtual_path)
