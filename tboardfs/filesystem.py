@@ -33,10 +33,7 @@ from tboardfs.model import (
     SidecarEntry,
 )
 from tboardfs.npy_export import array_to_npy
-from tboardfs.paths import (
-    _Paths,
-    find_tensorboard_files,
-)
+from tboardfs.paths import _Paths
 from tboardfs.plugin_files import add_typed_plugin_files
 from tboardfs.run_files import RunFiles
 from tboardfs.run_places import RunPlaces
@@ -217,8 +214,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     def virtual_tree(self) -> dict[str, Any]:
         """Return the current root node; nodes are not changed after creation."""
         with self._lock:
-            self._discover_runs()
-            self._refresh_runs()
+            self._refresh_runs(self._discover_runs())
             return self._cached_tree()
 
     def getattr(self, path: str, *file_handles: object) -> dict[str, Any]:
@@ -352,8 +348,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         """
         parts = _Paths.path_parts(path)
         with self._lock:
-            self._discover_runs()
-            self._refresh_runs()
+            self._refresh_runs(self._discover_runs())
             node = self._cached_tree()
             for part in parts:
                 if node["type"] != "dir" or part not in node["children"]:
@@ -415,15 +410,26 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             self._renders.put(key, data)
         return data
 
-    def _discover_runs(self, *, force: bool = False) -> None:
+    def _discover_runs(
+        self, *, force: bool = False
+    ) -> dict[Path, list[os.DirEntry[str]]]:
+        """Search for event files when due; return the listings of their directories.
+
+        Nothing is returned when no search is due.
+        """
         now = time.time()
         if (
             not force
             and self._state.last_event_files is not None
             and now - self._state.scan_times.discovered_at < self.refresh_age_seconds
         ):
-            return
-        files = find_tensorboard_files(self.source)
+            return {}
+        listings = _Paths.event_dirs(self.source)
+        files = sorted(
+            path
+            for directory, entries in listings.items()
+            for path in _Paths.event_files(directory, entries)
+        )
         file_set = set(files)
         should_log = file_set != self._state.last_event_files
         if should_log:
@@ -448,6 +454,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         self._state.scan_times.discovered_at = now
         if should_log:
             self._invalidate_tree()
+        return listings
 
     def _ensure_run(self, run_parts: tuple[str, ...]) -> RunCache:
         if run_parts not in self._state.known_run_parts:
@@ -462,12 +469,25 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         self._state.next_version += 1
         return version
 
-    def _refresh_run(self, run: RunCache, *, force: bool = False) -> bool:
+    def _refresh_run(
+        self,
+        run: RunCache,
+        listings: dict[Path, list[os.DirEntry[str]]],
+        *,
+        force: bool = False,
+    ) -> bool:
+        """Read new data of a due run; return true when it changed.
+
+        A listing of the run directory from the discovery just before is
+        used, so the directory is not listed twice.
+        """
         now = time.time()
         if not _RunData.should_refresh(run, now, self.refresh_age_seconds, force):
             return False
         run_dir = self.source.joinpath(*run.run_parts)
-        entries = _Paths.entries(run_dir)
+        entries = listings.get(run_dir)
+        if entries is None:
+            entries = _Paths.entries(run_dir)
         files = _Paths.event_files(run_dir, entries)
         log_parse = logger.info if self.log_to_screen else None
         changed = _RunData.refresh_event_files(run, files, force=force, log=log_parse)
@@ -486,7 +506,9 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         if self.log_to_screen:
             logger.info(message, *args)
 
-    def _refresh_runs(self, *, force: bool = False) -> None:
+    def _refresh_runs(
+        self, listings: dict[Path, list[os.DirEntry[str]]], *, force: bool = False
+    ) -> None:
         # Each operation calls this, so one check stands for all the runs.
         now = time.time()
         if not force and now < self._state.scan_times.next_refresh_at:
@@ -494,7 +516,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         refreshed = False
         runs = list(self._state.runs.values())
         for run in runs:
-            refreshed = self._refresh_run(run, force=force) or refreshed
+            refreshed = self._refresh_run(run, listings, force=force) or refreshed
         self._state.scan_times.next_refresh_at = (
             min((run.refreshed_at for run in runs), default=now)
             + self.refresh_age_seconds
@@ -686,13 +708,35 @@ class _RunData:
         force: bool,
         log: Callable[[str, object], None] | None,
     ) -> bool:
-        """Parse new records of one event file; return true when it changed."""
+        """Parse new records of one event file; return true when it changed.
+
+        A file whose status did not change since the last check is not
+        opened. Each write changes the ctime, which no program can set back,
+        so only a same-size rewrite within one timestamp tick of a coarse
+        filesystem goes unseen.
+        """
         old = run.files.get(source_path)
+        # Status before the identity read: a later write must look new.
+        status = source_path.stat()
+        checked_status = (
+            status.st_dev,
+            status.st_ino,
+            status.st_size,
+            status.st_mtime_ns,
+            status.st_ctime_ns,
+        )
+        if (
+            not force
+            and old is not None
+            and checked_status == old.progress.checked_status
+        ):
+            return False
         with source_path.open("rb", buffering=0) as handle:
             size, identity = _EventIndexer.file_identity(handle)
         if old is not None and not old.progress.continues_in(identity):
             old = None
         if not force and old is not None and size == old.progress.last_checked_size:
+            old.progress.checked_status = checked_status
             return False
         if log is not None:
             log("parsing {}", source_path)
@@ -707,6 +751,7 @@ class _RunData:
             run.files[source_path] = _EventIndexer.parse_event_file(
                 source_path, ignore_truncated=True
             )
+        run.files[source_path].progress.checked_status = checked_status
         return True
 
     @staticmethod

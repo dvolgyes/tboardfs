@@ -12,6 +12,9 @@ class ParseProgress:
     :ivar identity: device, inode and first bytes of the parsed file
     :ivar first_time: wall time that relative times count from
     :ivar epoch: last epoch scalar, carried into appended rows
+    :ivar checked_status: device, inode, size, mtime and ctime of the file
+        when it was last checked; while they stay the same, the file is not
+        opened again
     """
 
     processed_pos: int = 0
@@ -19,6 +22,7 @@ class ParseProgress:
     identity: tuple[int, int, bytes] = (0, 0, b"")
     first_time: float | None = None
     epoch: object = np.nan
+    checked_status: tuple[int, ...] = ()
 
     def continues_in(self, identity: tuple[int, int, bytes]) -> bool:
         """Return true when ``identity`` names this file, possibly grown.

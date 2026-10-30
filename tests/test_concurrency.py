@@ -114,7 +114,7 @@ def test_tree_built_during_a_change_is_not_kept(
         if not changed:
             changed.append(True)
             _append(path, 1)
-            self._refresh_runs()
+            self._refresh_runs({})
         return tree
 
     monkeypatch.setattr(TensorBoardFS, "_build_tree", build_while_training_writes)

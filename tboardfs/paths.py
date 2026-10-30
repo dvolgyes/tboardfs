@@ -18,31 +18,44 @@ def find_tensorboard_files(directory: str | Path) -> list[Path]:
 
     Symlinked directories are followed, so runs linked in from elsewhere are
     found. Each directory is walked once, by the first path in sorted order,
-    so link loops end. A directory is known by its device and inode, which
-    one stat gives, also on a network filesystem.
+    so link loops end.
     """
-    walked: set[tuple[int, int]] = set()
-    found: list[Path] = []
-    pending = [Path(directory)]
-    while pending:
-        current = pending.pop()
-        try:
-            status = current.stat()
-        except OSError:
-            continue  # removed since its parent was listed
-        if (status.st_dev, status.st_ino) in walked:
-            continue
-        walked.add((status.st_dev, status.st_ino))
-        entries = _Paths.entries(current)
-        found += _Paths.event_files(current, entries)
-        pending += reversed(
-            [current / entry.name for entry in entries if _Paths.is_dir(entry)]
-        )
-    return sorted(found)
+    return sorted(
+        path
+        for folder, entries in _Paths.event_dirs(Path(directory)).items()
+        for path in _Paths.event_files(folder, entries)
+    )
 
 
 class _Paths:
     """Virtual path helpers for TensorBoard run and tag names."""
+
+    @staticmethod
+    def event_dirs(directory: Path) -> dict[Path, list[os.DirEntry[str]]]:
+        """Return the listing of each directory below ``directory`` with event files.
+
+        A directory is known by its device and inode, which one stat gives,
+        also on a network filesystem.
+        """
+        walked: set[tuple[int, int]] = set()
+        listings: dict[Path, list[os.DirEntry[str]]] = {}
+        pending = [directory]
+        while pending:
+            current = pending.pop()
+            try:
+                status = current.stat()
+            except OSError:
+                continue  # removed since its parent was listed
+            if (status.st_dev, status.st_ino) in walked:
+                continue
+            walked.add((status.st_dev, status.st_ino))
+            entries = _Paths.entries(current)
+            if _Paths.event_files(current, entries):
+                listings[current] = entries
+            pending += reversed(
+                [current / entry.name for entry in entries if _Paths.is_dir(entry)]
+            )
+        return listings
 
     @staticmethod
     def entries(directory: Path) -> list[os.DirEntry[str]]:

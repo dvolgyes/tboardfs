@@ -63,6 +63,12 @@ Each open file keeps the version it had when it was opened, so reads stay whole 
 A new `open` shows the new data. Mounted files use direct I/O: shared memory maps (`mmap` with `MAP_SHARED`,
 `np.load(..., mmap_mode="r")`) fail with `ENODEV`; private maps (`mmap_mode="c"`) and plain reads work.
 
+`--refresh-age-seconds` (default 60) sets how old the data can get before the next file operation checks the source
+again. A check lists each directory once and opens only the event files whose device, inode, size, mtime or ctime
+changed. Every write changes the ctime, so a rewritten file is read again even when its mtime is set back. Only a
+rewrite to the same size within one timestamp tick of a filesystem with coarse timestamps is not seen until the next
+change. On a network filesystem, a larger value makes fewer round trips.
+
 Rendered files are kept in memory, so `ls -l` followed by `cat` renders a file once. `--cache-size-mb` sets the memory
 for this cache (default 1024; 0 turns it off). When the cache goes over the limit, the least recently used files are
 dropped until half the limit is left. New events in a run make only the files of that run render again.
