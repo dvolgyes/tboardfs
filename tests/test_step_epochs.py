@@ -13,6 +13,8 @@ from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _frame
 
+ROOT = Path(__file__).resolve().parent.parent
+
 
 def _scalar(step: int, tag: str, value: float) -> bytes:
     event = compat_pb2.Event(wall_time=100.0 + step, step=step)
@@ -81,7 +83,7 @@ def test_the_epoch_of_a_step_can_be_in_a_later_file(tmp_path: Path) -> None:
 
 def test_lightning_rows_have_the_epoch_of_their_step() -> None:
     """The fixture log trains 2 epochs of 2 batches."""
-    fs = TensorBoardFS(Path("test-logs/lightning/version_0"))
+    fs = TensorBoardFS(ROOT / "test-logs/lightning/version_0")
 
     assert _epochs(fs, "/scalars/train_loss.json") == [
         (0, 0.0),

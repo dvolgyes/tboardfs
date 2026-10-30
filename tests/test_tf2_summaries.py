@@ -11,6 +11,8 @@ from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _files, _frame
 
+ROOT = Path(__file__).resolve().parent.parent
+
 DT_FLOAT, DT_DOUBLE, DT_STRING = 1, 2, 7
 PNG = b"\x89PNG\r\n\x1a\n"
 
@@ -115,7 +117,7 @@ def test_a_non_scalar_scalars_record_keeps_its_json(tmp_path: Path) -> None:
 
 def test_tensorflow_2_summaries_are_unpacked() -> None:
     """The tf.summary fixture gives the TF1 files for each summary kind."""
-    fs = TensorBoardFS(Path("test-logs/tf2/summary"), step_digits=3)
+    fs = TensorBoardFS(ROOT / "test-logs/tf2/summary", step_digits=3)
     files = set(_files(fs))
 
     assert {f"/images/sample/002_{index}.png" for index in range(2)} <= files

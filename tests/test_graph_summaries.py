@@ -23,9 +23,11 @@ from tboardfs.proto import compat_pb2
 from test_incremental_parse import _files, _frame
 from test_restart_purge import _start, _version
 
+ROOT = Path(__file__).resolve().parent.parent
+
 DT_STRING = 7
-RUN = Path("test-logs/graphs")
-GOLDEN = Path("tests/golden/graphs")
+RUN = ROOT / "test-logs/graphs"
+GOLDEN = ROOT / "tests/golden/graphs"
 TAGS = sorted(path.stem for path in GOLDEN.iterdir())
 
 
@@ -148,7 +150,7 @@ def test_function_graphs_are_merged_with_prefixes(fs: TensorBoardFS) -> None:
 
 def test_tf2_fixture_graphs_leave_plugins_and_tensors() -> None:
     """Keras and trace graph records are graph files only."""
-    files = sorted(_files(TensorBoardFS(Path("test-logs/tf2"))))
+    files = sorted(_files(TensorBoardFS(ROOT / "test-logs/tf2")))
 
     assert [path for path in files if "/graphs/" in path] == [
         "/keras/train/graphs/keras/000000.conceptual.pb",

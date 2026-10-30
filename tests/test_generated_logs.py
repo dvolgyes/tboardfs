@@ -8,8 +8,8 @@ import numpy as np
 
 from tboardfs import TensorBoardFS, find_tensorboard_files
 
-
-FIXTURE_ROOT = Path("test-logs")
+ROOT = Path(__file__).resolve().parent.parent
+FIXTURE_ROOT = ROOT / "test-logs"
 
 
 def test_generated_logs_include_both_producers() -> None:
@@ -55,7 +55,7 @@ assert not any(
 
     subprocess.run(
         [sys.executable, "-c", script],
-        cwd=Path.cwd(),
+        cwd=ROOT,
         check=True,
         capture_output=True,
         text=True,

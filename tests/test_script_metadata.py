@@ -1,6 +1,8 @@
 import tomllib
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
+
 
 FIXTURE_SCRIPT_DEPENDENCIES = (
     "imageio>=2.37.3,<3.0",
@@ -17,7 +19,7 @@ FIXTURE_SCRIPT_DEPENDENCIES = (
 
 def test_fixture_generation_script_uses_uv_pep723_metadata() -> None:
     """Fixture packages are declared by uv-compatible script metadata."""
-    script_lines = Path("scripts/generate_test_logs.py").read_text().splitlines()
+    script_lines = (ROOT / "scripts/generate_test_logs.py").read_text().splitlines()
     metadata_end = script_lines.index("# ///", 2)
     metadata = tomllib.loads(
         "\n".join(line.removeprefix("# ") for line in script_lines[2:metadata_end])
@@ -31,7 +33,7 @@ def test_fixture_generation_script_uses_uv_pep723_metadata() -> None:
 
 def test_dev_dependencies_do_not_include_fixture_generation_stack() -> None:
     """The project dev group contains test tooling, not fixture tooling."""
-    pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     dev_dependencies = {
         dependency.split(">=", maxsplit=1)[0].lower()
         for dependency in pyproject["dependency-groups"]["dev"]
@@ -46,7 +48,7 @@ def test_dev_dependencies_do_not_include_fixture_generation_stack() -> None:
 
 def test_runtime_dependencies_do_not_include_forbidden_protobuf_stacks() -> None:
     """Runtime dependencies avoid TensorBoard and TensorFlow packages."""
-    pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     runtime_dependencies = {
         dependency.split(">=", maxsplit=1)[0].lower()
         for dependency in pyproject["project"]["dependencies"]

@@ -9,8 +9,10 @@ from tboardfs import TensorBoardFS, find_tensorboard_files
 from tboardfs.file_cli import main
 from tboardfs.file_tree import SingleEventTree
 
+ROOT = Path(__file__).resolve().parent.parent
 
-FIXTURE_EVENT = min(find_tensorboard_files(Path("test-logs") / "tensorboard"))
+
+FIXTURE_EVENT = min(find_tensorboard_files(ROOT / "test-logs" / "tensorboard"))
 
 
 def test_file_cli_list_prints_representative_virtual_files() -> None:
@@ -327,8 +329,8 @@ def test_single_file_tree_matches_filesystem_for_one_event_file(tmp_path: Path) 
 
 def test_metadata_and_readme_document_both_access_modes() -> None:
     """Packaging metadata and README mention both commands."""
-    project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
-    readme = Path("README.md").read_text()
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    readme = (ROOT / "README.md").read_text()
 
     assert project["version"] == "0.3.0"
     assert project["license"] == "MIT"

@@ -10,6 +10,8 @@ import pytest
 from tboardfs import cli
 from tboardfs.mounted import MountedTensorBoardFS
 
+ROOT = Path(__file__).resolve().parent.parent
+
 
 def test_mount_cli_defaults_to_background(tmp_path: Path, monkeypatch: Any) -> None:
     """The FUSE mount command runs in background mode by default."""
@@ -97,7 +99,14 @@ def test_mount_cli_foreground_logs_when_parsing_finishes(
     monkeypatch.setattr(cli, "FUSE", capture_fuse)
 
     result = CliRunner().invoke(
-        cli.main, ["test-logs", str(mountpoint), "--foreground", "--step-digits", "3"]
+        cli.main,
+        [
+            str(ROOT / "test-logs"),
+            str(mountpoint),
+            "--foreground",
+            "--step-digits",
+            "3",
+        ],
     )
 
     assert result.exit_code == 0

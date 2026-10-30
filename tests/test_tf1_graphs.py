@@ -21,8 +21,10 @@ from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _files, _frame
 
-LOGS = Path("test-logs/tf1_graphs")
-GOLDEN = Path("tests/golden/tf1_graphs")
+ROOT = Path(__file__).resolve().parent.parent
+
+LOGS = ROOT / "test-logs/tf1_graphs"
+GOLDEN = ROOT / "tests/golden/tf1_graphs"
 GOLDENS = sorted(
     (run.name, golden.name) for run in GOLDEN.iterdir() for golden in run.iterdir()
 )

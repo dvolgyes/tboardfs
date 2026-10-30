@@ -14,11 +14,13 @@ import pytest
 
 from tboardfs import TensorBoardFS
 
+ROOT = Path(__file__).resolve().parent.parent
+
 
 @pytest.fixture(scope="module")
 def fs() -> TensorBoardFS:
     """Return the fixture log directory with 3-digit step names."""
-    return TensorBoardFS(Path("test-logs"), step_digits=3)
+    return TensorBoardFS(ROOT / "test-logs", step_digits=3)
 
 
 def _json(fs: TensorBoardFS, path: str) -> Any:
