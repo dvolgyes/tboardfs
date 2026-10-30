@@ -67,15 +67,17 @@ class _SummaryParser:
         """Convert a SummaryValue protobuf message to the internal shape."""
         message = cast(Any, value_message)
         value: dict[str, Any] = {"tag": message.tag}
-        if message.HasField("simple_value"):
+        # The value fields are one oneof, so one call finds the field set.
+        kind = message.WhichOneof("value")
+        if kind == "simple_value":
             value["simple_value"] = message.simple_value
-        if message.HasField("image"):
+        elif kind == "image":
             value["image"] = _SummaryParser.parse_image(message.image)
-        if message.HasField("histo"):
+        elif kind == "histo":
             value["histo"] = _SummaryParser.parse_histogram(message.histo)
-        if message.HasField("audio"):
+        elif kind == "audio":
             value["audio"] = _SummaryParser.parse_audio(message.audio)
-        if message.HasField("tensor"):
+        elif kind == "tensor":
             value["tensor"] = _SummaryParser.parse_tensor(message.tensor)
         if message.HasField("metadata"):
             value.update(_SummaryParser.parse_summary_metadata(message.metadata))
