@@ -141,7 +141,10 @@ The virtual tree covers these TensorBoard objects:
 - Videos: encoded video/GIF outputs under `/videos`, including raw subpaths when present.
 - Histograms: per-step `json`, `tsv`, and `npz` exports under `/histograms`. TensorFlow 1 and TensorFlow 2 histogram
   summaries give the same tables.
-- Distributions: per-step distribution tables under `/distributions`.
+- Distributions: per-step distribution tables under `/distributions`, with the values that the TensorBoard Distributions
+  tab shows. The `percentile` column has 9 values: 0, 6.68, 15.87, 30.85, 50, 69.15, 84.13, 93.32 and 100, which are the
+  mean and ±1, 2 and 3 standard deviations of a normal distribution. Each value interpolates linearly inside its
+  histogram bucket.
 - Text summaries: UTF-8 text files under `/text`. A summary with one string is that text. A summary with many strings is
   a Markdown table, as TensorBoard shows it: a vector is one column, and a tensor with more than 2 dimensions shows its
   first 2-D slice after a warning. A `.json` file next to the table keeps the shape and the exact strings.

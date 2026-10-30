@@ -697,8 +697,21 @@ def test_distribution_without_epoch_scalar_has_one_group_per_event(
 
     rows = json.loads(fs.read("/distributions/w/1.json", 100_000, 0))
 
-    assert [row["percentile"] for row in rows] == [0.0, 25.0, 50.0, 75.0, 100.0]
-    assert [row["value"] for row in rows] == [1.0, 1.0, 2.0, 3.0, 4.0]
+    # TensorBoard interpolates in the bucket, so a uniform histogram is linear.
+    assert [row["percentile"] for row in rows] == [
+        0.0,
+        6.68,
+        15.87,
+        30.85,
+        50.0,
+        69.15,
+        84.13,
+        93.32,
+        100.0,
+    ]
+    assert [row["value"] for row in rows] == pytest.approx(
+        [0.0, 0.2672, 0.6348, 1.234, 2.0, 2.766, 3.3652, 3.7328, 4.0]
+    )
 
 
 def test_distribution_keeps_repeated_step_events_apart(tmp_path: Path) -> None:
@@ -712,8 +725,8 @@ def test_distribution_keeps_repeated_step_events_apart(tmp_path: Path) -> None:
 
     rows = json.loads(fs.read("/distributions/w/1.json", 100_000, 0))
 
-    assert [row["wall_time"] for row in rows] == [100.0] * 5 + [105.0] * 5
-    assert [row["value"] for row in rows if row["percentile"] == 100.0] == [1.0, 2.0]
+    assert [row["wall_time"] for row in rows] == [100.0] * 9 + [105.0] * 9
+    assert [row["value"] for row in rows if row["percentile"] == 50.0] == [0.5, 1.0]
 
 
 def test_histogram_with_missing_step_field_is_exported_once(tmp_path: Path) -> None:
@@ -734,7 +747,7 @@ def test_histogram_with_missing_step_field_is_exported_once(tmp_path: Path) -> N
     rows = json.loads(fs.read(f"/histograms/w/{names[0]}", 100_000, 0))
     dist = json.loads(fs.read(f"/distributions/w/{names[0]}", 100_000, 0))
     assert len(rows) == 4
-    assert len(dist) == 10
+    assert len(dist) == 2 * 9
 
 
 def test_masked_crc32c_matches_reference_vectors() -> None:

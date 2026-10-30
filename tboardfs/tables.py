@@ -10,6 +10,7 @@ import pandas as pd
 
 from tboardfs.constants import SCALAR_COLUMNS
 from tboardfs.decode import _Decode
+from tboardfs.histogram_compress import NORMAL_HISTOGRAM_BPS, compress_histogram
 
 
 def export_table(series: dict[str, np.ndarray], fmt: str) -> bytes:
@@ -270,29 +271,29 @@ class _TableMerge:
     def distribution_from_histogram(
         series: dict[str, np.ndarray],
     ) -> dict[str, np.ndarray]:
-        """Derive TensorBoard-style percentile rows from histogram buckets.
+        """Derive TensorBoard distribution rows from histogram buckets.
 
         Each histogram event is one contiguous run of bucket rows with the same
-        step and wall time, so repeated steps stay separate groups.
+        step and wall time, so repeated steps stay separate groups. The
+        percentile column holds the basis points in percent.
         """
         out = defaultdict(list)
-        percentiles = (0.0, 25.0, 50.0, 75.0, 100.0)
-        counts = np.asarray(series.get("count", []), dtype=np.float64)
-        rights = np.asarray(series.get("bucket_right", []), dtype=np.float64)
-        epochs = series.get("epoch", np.full(len(counts), np.nan))
+        buckets = np.column_stack(
+            [
+                np.asarray(series.get(column, []), dtype=np.float64)
+                for column in ("bucket_left", "bucket_right", "count")
+            ]
+        )
+        epochs = series.get("epoch", np.full(len(buckets), np.nan))
         for start, stop in _TableMerge.event_bounds(series):
-            cumulative = np.cumsum(counts[start:stop])
-            for percentile in percentiles:
-                target = cumulative[-1] * percentile / 100.0
-                index = int(np.searchsorted(cumulative, target, side="left"))
+            values = compress_histogram(buckets[start:stop])
+            for point, value in zip(NORMAL_HISTOGRAM_BPS, values, strict=True):
                 out["step"].append(series["step"][start])
                 out["epoch"].append(epochs[start])
                 out["wall_time"].append(series["wall_time"][start])
                 out["relative_time"].append(series["relative_time"][start])
-                out["percentile"].append(percentile)
-                out["value"].append(
-                    rights[start + index] if index < stop - start else np.nan
-                )
+                out["percentile"].append(point / 100)
+                out["value"].append(value)
         return {key: np.asarray(value) for key, value in out.items()}
 
     @staticmethod
