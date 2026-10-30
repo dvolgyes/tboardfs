@@ -1,4 +1,9 @@
-"""TSV and CSV tables have the bytes that pandas writes for the same columns."""
+"""TSV and CSV tables hold the values that pandas writes for the same columns.
+
+A float cell can be spelled in another way, such as 1e-5 for 1e-05, but it
+reads back as the same value. NaN, infinities and other cells are as pandas
+writes them.
+"""
 
 from io import BytesIO
 
@@ -16,6 +21,10 @@ def _pandas(series: dict[str, np.ndarray], fmt: str) -> bytes:
     handle = BytesIO()
     pd.DataFrame(series).to_csv(handle, sep=SEPARATORS[fmt], index=False, na_rep="nan")
     return handle.getvalue()
+
+
+def _cells(text: bytes, fmt: str) -> list[list[str]]:
+    return [line.split(SEPARATORS[fmt]) for line in text.decode().splitlines()]
 
 
 def _table(rows: int, dtype: str) -> dict[str, np.ndarray]:
@@ -39,7 +48,24 @@ def _table(rows: int, dtype: str) -> dict[str, np.ndarray]:
 def test_number_tables_match_pandas(fmt: str, dtype: str, rows: int) -> None:
     series = _table(rows, dtype)
 
-    assert export_table(series, fmt) == _pandas(series, fmt)
+    ours = _cells(export_table(series, fmt), fmt)
+    theirs = _cells(_pandas(series, fmt), fmt)
+
+    assert ours[0] == theirs[0]
+    assert len(ours) == len(theirs)
+    for index, values in enumerate(series.values()):
+        column = [row[index] for row in ours[1:]]
+        expected = [row[index] for row in theirs[1:]]
+        if values.dtype.kind != "f":
+            assert column == expected
+            continue
+        read = np.asarray(column).astype(values.dtype)
+        assert np.array_equal(read, values, equal_nan=True)
+        assert np.array_equal(np.signbit(read), np.signbit(values))
+        finite = np.isfinite(values)
+        assert [c for c, f in zip(column, finite) if not f] == [
+            c for c, f in zip(expected, finite) if not f
+        ]
 
 
 @pytest.mark.parametrize("fmt", ["tsv", "csv"])

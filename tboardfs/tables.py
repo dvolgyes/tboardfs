@@ -17,6 +17,23 @@ from tboardfs.histogram_compress import NORMAL_HISTOGRAM_BPS, compress_histogram
 _JSON_OPTIONS = (
     orjson.OPT_INDENT_2 | orjson.OPT_NON_STR_KEYS | orjson.OPT_APPEND_NEWLINE
 )
+# Native number types that orjson writes as the same value, much faster than
+# NumPy text. orjson writes float16 with float32 digits, and booleans as JSON.
+_ORJSON_NUMBERS = frozenset(
+    np.dtype(name)
+    for name in (
+        "float64",
+        "float32",
+        "int64",
+        "int32",
+        "int16",
+        "int8",
+        "uint64",
+        "uint32",
+        "uint16",
+        "uint8",
+    )
+)
 
 
 def export_table(series: dict[str, np.ndarray], fmt: str) -> bytes:
@@ -52,11 +69,11 @@ class _TableExport:
 
     @staticmethod
     def number_text(series: dict[str, np.ndarray], sep: str) -> bytes | None:
-        """Return a table of number columns as pandas writes it, or None.
+        """Return a table of number columns as text, or None.
 
-        A float64 cell is its shortest repr and another number cell its NumPy
-        text, as in pandas, without the cost of a dataframe. A table with
-        other columns, or with a column name that pandas quotes, gives None.
+        The table has the values that pandas writes, without the cost of a
+        dataframe. A table with other columns, or with a column name that
+        pandas quotes, gives None.
         """
         if not series or any(
             values.ndim != 1 or values.dtype.kind not in "biuf"
@@ -65,12 +82,7 @@ class _TableExport:
             return None
         if any(set(name) & {sep, '"', "\n", "\r"} for name in series):
             return None
-        columns = [
-            list(map(repr, values.tolist()))
-            if values.dtype == np.float64
-            else values.astype(str)
-            for values in series.values()
-        ]
+        columns = [_TableExport.number_cells(values) for values in series.values()]
         row = sep.join(["%s"] * len(columns))
         lines = [sep.join(series), *(row % cells for cells in zip(*columns))]
         return ("\n".join(lines) + "\n").encode()
@@ -91,6 +103,26 @@ class _TableExport:
         if values.dtype.kind == "f":
             for index in np.flatnonzero(~np.isfinite(values)):
                 cells[index] = _TableExport.json_safe(cells[index])
+        return cells
+
+    @staticmethod
+    def number_cells(values: np.ndarray) -> list[str]:
+        """Return the text of each number in a column.
+
+        A float can be spelled in another way than pandas spells it, such as
+        1e-5 for 1e-05, but it reads back as the same value. NaN and the
+        infinities are spelled as pandas spells them.
+        """
+        if values.dtype not in _ORJSON_NUMBERS:
+            return list(values.astype(str))
+        if not len(values):
+            return []
+        text = orjson.dumps(
+            np.ascontiguousarray(values), option=orjson.OPT_SERIALIZE_NUMPY
+        )
+        cells = text[1:-1].decode().split(",")
+        for index in np.flatnonzero(~np.isfinite(values)).tolist():
+            cells[index] = str(values[index])
         return cells
 
     @staticmethod
