@@ -73,3 +73,21 @@ def test_a_table_has_a_json_file_with_every_value(tmp_path: Path) -> None:
 
     assert data["shape"] == [2, 1, 2]
     assert data["values"] == [[["a", "b|c"]], [["x\ny", "d"]]]
+
+
+def test_one_string_fills_a_larger_shape(tmp_path: Path) -> None:
+    """TensorBoard repeats a single string to the shape size."""
+    fs = _text(tmp_path, [3], "a")
+
+    assert (
+        _read(fs, "/text/notes/000004.txt") == "|   |\n| --- |\n| a |\n| a |\n| a |\n"
+    )
+
+
+def test_strings_that_do_not_fill_the_shape_have_no_text_file(tmp_path: Path) -> None:
+    """TensorBoard cannot shape these strings, so only the raw record is left."""
+    fs = _text(tmp_path, [3], "a", "b")
+    record = json.loads(_read(fs, "/text/notes/000004.json"))
+
+    assert not [path for path in _files(fs) if path.endswith(".txt")]
+    assert record["tensor"]["string_val"] == ["a", "b"]

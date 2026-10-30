@@ -18,7 +18,8 @@ Runs:
     wall_time_zero: scalars written without a wall time.
     histogram_zero_edges: TF1 histograms whose minimum or maximum is 0, and
         TF2 histograms with a 0 edge or no buckets.
-    tensor_zero_dims: tensors with a dimension of size 0, and zero values.
+    tensor_zero_dims: tensors with a dimension of size 0, zero values, and
+        single values that fill a shape.
     empty_plugin_content: a text summary with empty plugin content.
 
 tests/golden/proto3/<run>.json is what the TensorBoard 2.21 multiplexer
@@ -92,6 +93,12 @@ def main() -> None:
                 _Events.tensor("empty", types_pb2.DT_FLOAT, [0]),
                 _Events.tensor("zero_int", types_pb2.DT_INT32, [], int_val=[0]),
                 _Events.tensor("zeros", types_pb2.DT_FLOAT, [2], float_val=[0.0, 0.0]),
+                _Events.tensor(
+                    "zero_filled", types_pb2.DT_FLOAT, [2, 2], float_val=[0.0]
+                ),
+                _Events.tensor(
+                    "filled_empty", types_pb2.DT_FLOAT, [0], float_val=[1.0]
+                ),
             )
         ],
         "empty_plugin_content": [

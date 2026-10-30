@@ -171,7 +171,7 @@ def test_malformed_tensors_are_left_out(
         ([3], [1.0, 2.0]),
         ([2], [1.0, 2.0, 3.0]),
         ([], [1.0, 2.0]),
-        ([0], [1.0]),
+        ([0], [1.0, 2.0]),
         ([-1, -2], [1.0, 2.0]),
     ],
 )
@@ -181,6 +181,66 @@ def test_values_that_do_not_fill_the_shape_are_left_out(
     """TensorBoard cannot shape these values, so they have no array file."""
     float_val = 5
     wire = _packed(float_val, np.array(values, "<f4").tobytes())
+    fs = _log(tmp_path, 1, shape, wire)
+
+    assert not [path for path in _files(fs) if path.endswith(".npy")]
+
+
+STRING_VAL = 8
+FILL_CASES = [
+    ("float", 1, [2, 2], _packed(5, np.array([1.5], "<f4").tobytes()), [1.5] * 4),
+    (
+        "complex",
+        8,
+        [3],
+        _packed(SCOMPLEX_VAL, np.array([1, 2], "<f4").tobytes()),
+        [1 + 2j] * 3,
+    ),
+    ("bfloat16", 14, [2], _packed(HALF_VAL, _varints([0x3FC0])), [1.5, 1.5]),
+    ("string", 7, [3], _varint(STRING_VAL << 3 | 2) + b"\x01a", ["a"] * 3),
+    ("no elements", 1, [0], _packed(5, np.array([1.0], "<f4").tobytes()), []),
+    (
+        "at the limit",
+        1,
+        [256],
+        _packed(5, np.array([2.0], "<f4").tobytes()),
+        [2.0] * 256,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("dtype", "shape", "wire", "expected"),
+    [case[1:] for case in FILL_CASES],
+    ids=[case[0] for case in FILL_CASES],
+)
+def test_a_single_value_fills_the_shape(
+    tmp_path: Path, dtype: int, shape: list[int], wire: bytes, expected: list[object]
+) -> None:
+    """As in TensorBoard's make_ndarray, one value is repeated to the shape size."""
+    data = _npy(_log(tmp_path, dtype, shape, wire))
+
+    assert list(data.shape) == shape
+    assert data.ravel().tolist() == expected
+
+
+@pytest.mark.parametrize(
+    ("shape", "wire"),
+    [
+        ([3], _content(np.array([1.0], "<f4"))),
+        ([257], _packed(5, np.array([1.0], "<f4").tobytes())),
+        ([1 << 40], _packed(5, np.array([1.0], "<f4").tobytes())),
+    ],
+    ids=["tensor_content", "over the limit", "huge shape"],
+)
+def test_a_single_value_that_cannot_fill_the_shape_is_left_out(
+    tmp_path: Path, shape: list[int], wire: bytes
+) -> None:
+    """tensor_content is never repeated, and the result has a memory limit.
+
+    TensorBoard has no limit; a record of a few bytes would otherwise claim
+    memory for any shape that it declares.
+    """
     fs = _log(tmp_path, 1, shape, wire)
 
     assert not [path for path in _files(fs) if path.endswith(".npy")]

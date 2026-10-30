@@ -27,13 +27,16 @@ class _TextTable:
     def nodes(entry: JsonEntry) -> list[tuple[str, dict[str, Any]]]:
         """Return (file suffix, node) pairs for one text entry.
 
-        The list is empty when the entry has no strings. A table also gets a
-        JSON file that keeps the shape and the exact strings.
+        The list is empty when the entry has no strings, or when they do not
+        fill the tensor shape. A table also gets a JSON file that keeps the
+        shape and the exact strings.
         """
         tensor = entry.payload.get("tensor") or {}
         if not tensor.get("string_val"):
             return []
-        cells = _TensorDType.strings(tensor)
+        cells = _TensorDType.shaped(_TensorDType.strings(tensor), tensor, fill=True)
+        if cells is None:
+            return []
         text = _TextTable.markdown(cells).encode()
         nodes = [("txt", {"type": "bytes", "data": text, "mtime": entry.wall_time})]
         if cells.size > 1:

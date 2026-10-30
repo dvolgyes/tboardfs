@@ -3,6 +3,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 
+from tboardfs.constants import MAX_REPEATED_TENSOR_BYTES
 from tboardfs.decode import _Decode
 
 BFLOAT16 = 14
@@ -12,11 +13,11 @@ def tensor_to_array(tensor: dict[str, Any]) -> np.ndarray | None:
     """Convert a parsed TensorProto dictionary to a NumPy array.
 
     Returns None when the tensor does not decode: an unsupported dtype,
-    malformed values, or a value count that is not the size of the shape.
+    malformed values, or values that do not fill the shape.
     """
     dtype = tensor.get("dtype")
     if dtype == 7:
-        return _TensorDType.shaped(_TensorDType.strings(tensor), tensor)
+        return _TensorDType.shaped(_TensorDType.strings(tensor), tensor, fill=True)
 
     spec = _TensorDType.spec(dtype)
     if spec is None:
@@ -36,17 +37,7 @@ def tensor_to_array(tensor: dict[str, Any]) -> np.ndarray | None:
         values = np.asarray(raw_values, dtype=field_dtype).view(storage)
     if dtype == BFLOAT16:
         values = _TensorDType.widen_bfloat16(values)
-    return _TensorDType.shaped(values, tensor)
-
-
-def _shape_array(values: np.ndarray, tensor: dict[str, Any]) -> np.ndarray:
-    shape = tensor.get("shape") or []
-    if not shape:
-        return values
-    size = int(np.prod(shape))
-    if size != values.size:
-        return values
-    return values.reshape(tuple(int(dim) for dim in shape))
+    return _TensorDType.shaped(values, tensor, fill=not content)
 
 
 class _TensorDType:
@@ -85,21 +76,32 @@ class _TensorDType:
 
     @staticmethod
     def strings(tensor: dict[str, Any]) -> np.ndarray:
-        """Return the string_val items of a TensorProto as a shaped text array."""
+        """Return the string_val items of a TensorProto as a flat text array."""
         values = [_Decode.text(value) for value in tensor.get("string_val", [])]
-        return _shape_array(np.asarray(values, dtype=np.str_), tensor)
+        return np.asarray(values, dtype=np.str_)
 
     @staticmethod
-    def shaped(values: np.ndarray, tensor: dict[str, Any]) -> np.ndarray | None:
-        """Return the values in the tensor shape, or None when they do not fit it.
+    def shaped(
+        values: np.ndarray, tensor: dict[str, Any], *, fill: bool
+    ) -> np.ndarray | None:
+        """Return the values in the tensor shape, or None when they do not fill it.
 
         A tensor without dimensions holds one value, a dimension of size 0
         holds none, and a negative size is invalid, as in TensorBoard's
-        make_ndarray. TensorBoard also
-        repeats a single value to fill a larger shape; that is not done here.
+        make_ndarray. With fill, a single value is repeated to the shape size,
+        as make_ndarray does for the repeated value fields; the result may
+        hold at most MAX_REPEATED_TENSOR_BYTES, so that a small record cannot
+        claim memory for any shape that it declares.
         """
         shape = tuple(int(dim) for dim in tensor.get("shape") or [])
-        if min(shape, default=0) < 0 or math.prod(shape) != values.size:
+        if min(shape, default=0) < 0:
+            return None
+        size = math.prod(shape)
+        if fill and values.size == 1 and size != 1:
+            if size * values.itemsize > MAX_REPEATED_TENSOR_BYTES:
+                return None
+            values = np.repeat(values, size)
+        if values.size != size:
             return None
         return values.reshape(shape)
 

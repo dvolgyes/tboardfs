@@ -21,6 +21,30 @@
         "values": []
       }
     },
+    "filled_empty": {
+      "1": {
+        "dtype": "float32",
+        "shape": [
+          0
+        ],
+        "values": []
+      }
+    },
+    "zero_filled": {
+      "1": {
+        "dtype": "float32",
+        "shape": [
+          2,
+          2
+        ],
+        "values": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
     "zero_int": {
       "1": {
         "dtype": "int32",

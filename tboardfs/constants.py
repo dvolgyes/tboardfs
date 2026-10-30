@@ -3,6 +3,8 @@ from types import MappingProxyType
 
 TENSORBOARD_EVENT_GLOB = "events.out.tfevents*"
 LARGE_TENSOR_THRESHOLD = 1024
+# A single tensor value is repeated to fill its shape up to this size.
+MAX_REPEATED_TENSOR_BYTES = 1024
 SCALAR_COLUMNS = ("epoch", "step", "wall_time", "relative_time", "value")
 SCALAR_FORMATS = ("json", "tsv", "csv", "npz")
 DEFAULT_SCALAR_FORMATS = ("json", "tsv", "npz")
