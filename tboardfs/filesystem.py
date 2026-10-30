@@ -113,13 +113,25 @@ def _build_run_virtual_tree(
 
 
 @dataclass
+class _ScanTimes:
+    """When the mount searches for event files and reads the runs again.
+
+    :ivar discovered_at: time of the last search for event files
+    :ivar next_refresh_at: time before which no run is due for a refresh
+    """
+
+    discovered_at: float = 0.0
+    next_refresh_at: float = 0.0
+
+
+@dataclass
 class _FsState:
     """Mutable TensorBoardFS cache state.
 
     :ivar runs: run caches by virtual run path
     :ivar known_run_parts: discovered run path parts
     :ivar last_event_files: event files seen during last discovery
-    :ivar last_discovery_at: timestamp of the last discovery pass
+    :ivar scan_times: when to search for event files and read runs again
     :ivar tree_cache: generation and virtual tree put together from run trees
     :ivar tree_generation: current virtual tree generation
     :ivar run_trees: run version and virtual tree by run path
@@ -131,7 +143,7 @@ class _FsState:
     runs: dict[tuple[str, ...], RunCache] = field(default_factory=dict)
     known_run_parts: set[tuple[str, ...]] = field(default_factory=set)
     last_event_files: set[Path] | None = None
-    last_discovery_at: float = 0.0
+    scan_times: _ScanTimes = field(default_factory=_ScanTimes)
     tree_cache: tuple[int, dict[str, Any]] | None = None
     tree_generation: int = 0
     run_trees: dict[tuple[str, ...], tuple[int, dict[str, Any]]] = field(
@@ -401,7 +413,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         if (
             not force
             and self._state.last_event_files is not None
-            and now - self._state.last_discovery_at < self.refresh_age_seconds
+            and now - self._state.scan_times.discovered_at < self.refresh_age_seconds
         ):
             return
         files = find_tensorboard_files(self.source)
@@ -426,7 +438,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
                 len(self._state.known_run_parts),
             )
         self._state.last_event_files = file_set
-        self._state.last_discovery_at = now
+        self._state.scan_times.discovered_at = now
         if should_log:
             self._invalidate_tree()
 
@@ -435,6 +447,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             raise fuse_error(ENOENT)
         if run_parts not in self._state.runs:
             self._state.runs[run_parts] = RunCache(run_parts, version=self._version())
+            self._state.scan_times.next_refresh_at = 0.0
         return self._state.runs[run_parts]
 
     def _version(self) -> int:
@@ -470,9 +483,18 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             logger.info(message, *args)
 
     def _refresh_runs(self, *, force: bool = False) -> None:
+        # Each operation calls this, so one check stands for all the runs.
+        now = time.time()
+        if not force and now < self._state.scan_times.next_refresh_at:
+            return
         refreshed = False
-        for run in list(self._state.runs.values()):
+        runs = list(self._state.runs.values())
+        for run in runs:
             refreshed = self._refresh_run(run, force=force) or refreshed
+        self._state.scan_times.next_refresh_at = (
+            min((run.refreshed_at for run in runs), default=now)
+            + self.refresh_age_seconds
+        )
         if refreshed:
             self._log("finished parsing TensorBoard files")
 
