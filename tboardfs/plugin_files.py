@@ -11,6 +11,16 @@ from tboardfs.model import JsonEntry
 from tboardfs.paths import _Paths
 from tboardfs.tensor import tensor_to_array
 
+# Row order of the pr_curves tensor, from the TensorBoard pr_curve plugin.
+PR_CURVE_ROWS = (
+    "true_positives",
+    "false_positives",
+    "true_negatives",
+    "false_negatives",
+    "precision",
+    "recall",
+)
+
 
 def add_typed_plugin_files(
     run_node: dict[str, Any],
@@ -91,7 +101,7 @@ class _TypedPluginFiles:
         if data.size == 0:
             return set()
         step = _Paths.step_name(entry.step, step_digits)
-        table = _TypedPluginFiles.array_table(data)
+        table = _TypedPluginFiles.pr_curve_table(data)
         rel = ("pr_curves", *_Paths.tag_dir_parts(entry.tag))
         for fmt in ("json", "tsv"):
             _TypedPluginFiles.add_file(
@@ -154,6 +164,19 @@ class _TypedPluginFiles:
         parent = _Paths.mkdirs(root, rel_parts[:-1])
         node.setdefault("mtime", time.time())
         parent["children"][rel_parts[-1]] = node
+
+    @staticmethod
+    def pr_curve_table(data: np.ndarray) -> dict[str, np.ndarray]:
+        """Return one row per threshold, or generic columns for another shape.
+
+        A [6, N] tensor has the rows of PR_CURVE_ROWS. TensorBoard spaces the
+        N thresholds evenly in [0, 1].
+        """
+        if data.ndim != 2 or data.shape[0] != len(PR_CURVE_ROWS):
+            return _TypedPluginFiles.array_table(data)
+        table = {"threshold": np.linspace(0.0, 1.0, data.shape[1])}
+        table.update(zip(PR_CURVE_ROWS, data, strict=True))
+        return table
 
     @staticmethod
     def array_table(data: np.ndarray) -> dict[str, np.ndarray]:

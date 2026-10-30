@@ -220,15 +220,16 @@ def main() -> None:
             duration=0.25,
         )
         counts, edges = np.histogram(histograms[index], bins=4)
+        # The pr_curve plugin stores [6, thresholds]: TP, FP, TN, FN, precision, recall.
         pr = np.asarray(
             [[3, 0, 3, 0, 1.0, 1.0], [2, 1, 3, 0, 0.67, 1.0], [1, 0, 4, 1, 1.0, 0.5]],
             dtype="<f4",
-        )
+        ).T.copy()
         tensor = (np.arange(12, dtype=np.float32).reshape(3, 4) + step).astype("<f4")
         pr_shape = tensor_shape_pb2.TensorShapeProto(
             dim=[
-                tensor_shape_pb2.TensorShapeProto.Dim(size=3),
                 tensor_shape_pb2.TensorShapeProto.Dim(size=6),
+                tensor_shape_pb2.TensorShapeProto.Dim(size=3),
             ]
         )
         tensor_shape = tensor_shape_pb2.TensorShapeProto(

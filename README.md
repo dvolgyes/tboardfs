@@ -132,7 +132,10 @@ The virtual tree covers these TensorBoard objects:
   a Markdown table, as TensorBoard shows it: a vector is one column, and a tensor with more than 2 dimensions shows its
   first 2-D slice after a warning. A `.json` file next to the table keeps the shape and the exact strings.
 - Meshes: per-step `json`, `npz`, and Wavefront `obj` exports under `/meshes`.
-- PR curves: per-step `json`, `tsv`, and `npy` exports under `/pr_curves`.
+- PR curves: per-step `json`, `tsv`, and `npy` exports under `/pr_curves`. The tables have one row per threshold, with
+  the columns `threshold`, `true_positives`, `false_positives`, `true_negatives`, `false_negatives`, `precision`, and
+  `recall`. The thresholds are evenly spaced in [0, 1], as in TensorBoard. The `.npy` file keeps the raw `[6, N]`
+  tensor. A tensor of another shape keeps generic `value_<i>` columns.
 - HParams: merged experiment/session/metric JSON under `/hparams`. The metrics are the declared metric tags, or all
   scalar tags when the run declares no experiment, as in TensorBoard. Each metric has its last value, or `null` without
   data. Metrics in a sub-run group (for example Keras `validation`) have no value here; read them from the scalars of

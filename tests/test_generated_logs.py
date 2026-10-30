@@ -78,6 +78,11 @@ def test_tensorboardx_scalars_and_tables_expose_clean_representations() -> None:
     assert [row["epoch"] for row in loss_rows] == [0.0, 1.0, 2.0]
     assert "001.npz" not in fs.readdir("/tensorboardx/pr_curves/quality/pr")
     assert "001.npy" in fs.readdir("/tensorboardx/pr_curves/quality/pr")
+    pr_rows = json.loads(
+        fs.read("/tensorboardx/pr_curves/quality/pr/001.json", 1 << 20, 0)
+    )
+    assert len(pr_rows) == 127
+    assert pr_rows[-1]["threshold"] == 1.0
     assert "001.npy" in fs.readdir("/tensorboardx/tensors/activations")
 
 
