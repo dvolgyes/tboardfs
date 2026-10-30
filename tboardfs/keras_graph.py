@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from google.protobuf.message import Message
 
-from tboardfs.proto import graph_pb2
+from tboardfs.proto import compat_pb2
 
 _BASE_DTYPES = MappingProxyType(
     {
@@ -62,7 +62,7 @@ def keras_model_to_graph_def(model: object) -> Message:
     Raises:
         ValueError: TensorBoard fails on the config.
     """
-    graph = cast(Any, getattr(graph_pb2, "GraphDef")())
+    graph = cast(Any, getattr(compat_pb2, "GraphDef")())
     state = _Links()
     for scope, layer in _KerasConfig.walk(model):
         config = _KerasConfig.config(layer)

@@ -18,7 +18,7 @@ import pytest
 
 from tboardfs import TensorBoardFS
 from tboardfs.file_cli import main
-from tboardfs.proto import compat_pb2, graph_pb2
+from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _files, _frame
 from test_restart_purge import _start, _version
@@ -60,7 +60,7 @@ def test_graphs_are_the_graphs_of_tensorboard(fs: TensorBoardFS, tag: str) -> No
         assert "class_name" in json.loads(fs.read(native, 1 << 20, 0))
     else:
         assert native.endswith(".run_metadata.pb")
-        assert graph_pb2.RunMetadata.FromString(
+        assert compat_pb2.RunMetadata.FromString(
             fs.read(native, 1 << 20, 0)
         ).function_graphs
     if not golden.exists():
@@ -73,7 +73,7 @@ def test_graphs_are_the_graphs_of_tensorboard(fs: TensorBoardFS, tag: str) -> No
     )
 
 
-def _comparable(data: bytes) -> tuple[graph_pb2.GraphDef, list[object]]:
+def _comparable(data: bytes) -> tuple[compat_pb2.GraphDef, list[object]]:
     """Return a GraphDef without unknown fields, and its unknown fields.
 
     tboardfs keeps the fields that the vendored descriptor does not name, such
@@ -81,7 +81,7 @@ def _comparable(data: bytes) -> tuple[graph_pb2.GraphDef, list[object]]:
     in field order and sorts the maps inside them, so an unknown field is
     compared by number, wire type and the multiset of its bytes.
     """
-    graph = graph_pb2.GraphDef.FromString(data)
+    graph = compat_pb2.GraphDef.FromString(data)
     unknown: list[object] = []
     _collect_unknown(graph, "", unknown)
     graph.DiscardUnknownFields()
@@ -119,7 +119,7 @@ def _collect_unknown(message: Message, path: str, unknown: list[object]) -> None
 
 def test_conceptual_graph_has_layers_classes_and_dtypes(fs: TensorBoardFS) -> None:
     """Each layer is a node with its Keras class, dtype and inbound layers."""
-    graph = graph_pb2.GraphDef.FromString(
+    graph = compat_pb2.GraphDef.FromString(
         fs.read("/graphs/functional/000000.conceptual.pb", 1 << 20, 0)
     )
     nodes = {node.name: node for node in graph.node}
@@ -132,7 +132,7 @@ def test_conceptual_graph_has_layers_classes_and_dtypes(fs: TensorBoardFS) -> No
 
 def test_function_graphs_are_merged_with_prefixes(fs: TensorBoardFS) -> None:
     """Several function graphs are graph_<i>/ scopes; called functions follow."""
-    graph = graph_pb2.GraphDef.FromString(
+    graph = compat_pb2.GraphDef.FromString(
         fs.read("/graphs/calls/000001.pb", 1 << 20, 0)
     )
     call = next(node for node in graph.node if node.op == "PartitionedCall")
@@ -177,7 +177,7 @@ def _graph_event(
 
 
 def _run_metadata(*producers: int) -> bytes:
-    run_metadata = graph_pb2.RunMetadata()
+    run_metadata = compat_pb2.RunMetadata()
     for producer in producers:
         graph = run_metadata.function_graphs.add().pre_optimization_graph
         graph.versions.producer = producer
@@ -285,13 +285,13 @@ def test_copy_all_copies_a_run_with_an_unconvertible_graph(tmp_path: Path) -> No
 
 def test_merged_gradients_name_the_prefixed_functions(tmp_path: Path) -> None:
     """A gradient of a function graph refers to the prefixed function names."""
-    run_metadata = graph_pb2.RunMetadata.FromString(_run_metadata(1, 1))
+    run_metadata = compat_pb2.RunMetadata.FromString(_run_metadata(1, 1))
     library = run_metadata.function_graphs[1].pre_optimization_graph.library
     library.function.add().signature.name = "f"
     library.gradient.add(function_name="f", gradient_func="f_grad")
     fs = _log(tmp_path, _graph_event(run_metadata.SerializeToString()))
 
-    graph = graph_pb2.GraphDef.FromString(fs.read("/graphs/g/000000.pb", 1 << 20, 0))
+    graph = compat_pb2.GraphDef.FromString(fs.read("/graphs/g/000000.pb", 1 << 20, 0))
 
     assert [node.name for node in graph.node] == ["graph_1/a", "graph_2/a"]
     assert [f.signature.name for f in graph.library.function] == ["graph_2_f"]

@@ -8,7 +8,6 @@ from google.protobuf import descriptor_pb2, descriptor_pool
 
 import tboardfs.proto.compat_pb2
 import tboardfs.proto.custom_scalar_layout_pb2
-import tboardfs.proto.graph_pb2
 import tboardfs.proto.hparams_api_pb2
 import tboardfs.proto.hparams_plugin_data_pb2
 import tboardfs.proto.mesh_plugin_data_pb2

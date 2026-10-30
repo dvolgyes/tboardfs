@@ -8,7 +8,7 @@ from loguru import logger
 
 from tboardfs.keras_graph import keras_model_to_graph_def
 from tboardfs.model import BinaryEntry
-from tboardfs.proto import graph_pb2
+from tboardfs.proto import compat_pb2
 
 
 def summary_graph_def(entry: BinaryEntry, blob: bytes) -> bytes | None:
@@ -43,7 +43,7 @@ def _graph_def(blob: bytes, extension: str) -> bytes:
     if extension == "json":
         graph = keras_model_to_graph_def(json.loads(blob))
     else:
-        run_metadata = cast(Any, getattr(graph_pb2, "RunMetadata")())
+        run_metadata = cast(Any, getattr(compat_pb2, "RunMetadata")())
         run_metadata.ParseFromString(blob)
         graph = _OpGraph.merge(
             [
@@ -67,7 +67,7 @@ class _OpGraph:
         """
         if len(graphs) == 1:
             return cast(Message, graphs[0])
-        merged = cast(Any, getattr(graph_pb2, "GraphDef")())
+        merged = cast(Any, getattr(compat_pb2, "GraphDef")())
         if graphs and graphs[0].versions.producer:
             merged.versions.CopyFrom(graphs[0].versions)
         for index, graph in enumerate(graphs, start=1):
