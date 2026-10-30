@@ -58,3 +58,15 @@ def test_unchanged_sidecars_keep_the_run_version(tmp_path: Path) -> None:
     fs.readdir("/scalars")
 
     assert fs._state.runs[()].version == version
+
+
+def test_hparams_yaml_of_a_run_is_in_the_hparams_tab(tmp_path: Path) -> None:
+    """PyTorch Lightning writes hparams.yaml next to the event files of a run."""
+    _append(tmp_path / EVENTS, 0)
+    (tmp_path / "hparams.yaml").write_text("lr: 0.1\n")
+    (tmp_path / "extra").mkdir()
+    (tmp_path / "extra" / "hparams.yaml").write_text("lr: 0.2\n")
+    fs = TensorBoardFS(tmp_path)
+
+    assert fs.readdir("/hparams")[2:] == ["hparams.yaml"]
+    assert fs.read("/hparams/hparams.yaml", 100, 0) == b"lr: 0.1\n"

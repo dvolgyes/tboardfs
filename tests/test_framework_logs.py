@@ -60,6 +60,7 @@ def test_lightning_metrics_hparams_and_media(fs: TensorBoardFS) -> None:
     assert [row["step"] for row in _json(fs, f"{run}/scalars/val_loss.json")] == [1, 3]
     assert hparams["session_start"]["hparams"] == {"lr": 0.1}
     assert hparams["metrics"] == {"hp_metric": -1.0}
+    assert fs.read(f"{run}/hparams/hparams.yaml", 100, 0) == b"lr: 0.1\n"
     assert fs.readdir(f"{run}/images/pattern")[2:] == ["000.png", "001.png"]
     assert fs.read(f"{run}/images/pattern/000.png", 8, 0) == b"\x89PNG\r\n\x1a\n"
     assert fs.read(f"{run}/audio/tone/001.wav", 4, 0) == b"RIFF"

@@ -162,7 +162,7 @@ The virtual tree covers these TensorBoard objects:
   scalar tags when the run declares no experiment, as in TensorBoard. Each metric has its last value, or `null` without
   data. Metrics in a sub-run group (for example Keras `validation`) have no value here; read them from the scalars of
   that run. `sessions` lists every session of the run; `session_start` and `session_end` are the first ones, as in
-  TensorBoard.
+  TensorBoard. The `hparams.yaml` file that PyTorch Lightning writes in the run directory is also in `/hparams`.
 - Tensors: tensor arrays as `npy` plus compact JSON or native blob files under `/tensors`. Every numeric TensorFlow
   dtype that NumPy has keeps its dtype, including float16, int8, int16, uint16 and complex. NumPy has no bfloat16, so
   bfloat16 tensors are widened to float32; this is exact. Float8 and 4-bit tensors are not decoded. String tensors are

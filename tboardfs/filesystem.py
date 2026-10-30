@@ -500,9 +500,8 @@ class _RunTree:
         """Populate one run directory with indexed virtual files."""
         scalars = _RunTree.merged_scalars(run)
         _RunTree.add_scalar_files(run_node, run, scalars, scalar_formats)
-        _HistogramFiles.add_files(
-            run_node, run, scalars.get("epoch"), scalar_formats, step_digits
-        )
+        epochs = scalars.get("epoch")
+        _HistogramFiles.add_files(run_node, run, epochs, scalar_formats, step_digits)
         _RunTree.add_binary_files(run_node, run, step_digits)
         consumed = add_typed_plugin_files(
             run_node, _RunData.run_json_entries(run), scalars, step_digits
@@ -609,7 +608,7 @@ class _RunTree:
 
     @staticmethod
     def add_sidecar_files(run_node: dict[str, Any], run: RunCache) -> None:
-        """Add projector/profile sidecar files for one run."""
+        """Add projector, profile and hparams sidecar files for one run."""
         for sidecar in run.sidecars:
             _FsNode.add_file(
                 run_node,
@@ -812,7 +811,7 @@ class _RunData:
 
     @staticmethod
     def run_sidecars(source: Path, run: RunCache) -> list[SidecarEntry]:
-        """Return projector/profile sidecar entries discovered under a run."""
+        """Return projector, profile and hparams sidecar entries under a run."""
         if not run.files:
             return []
         run_dir = source.joinpath(*run.run_parts)
@@ -871,8 +870,10 @@ class _RunData:
 
     @staticmethod
     def sidecar_tab(rel_parts: tuple[str, ...]) -> str | None:
-        """Return the virtual tab for supported sidecar files."""
+        """Return the tab of a sidecar file, such as the Lightning hparams.yaml."""
         lowered = tuple(part.lower() for part in rel_parts)
+        if rel_parts == ("hparams.yaml",):
+            return "hparams"
         if "profile" in lowered:
             return "profile"
         if "projector" in lowered or lowered[-1] == "projector_config.pbtxt":

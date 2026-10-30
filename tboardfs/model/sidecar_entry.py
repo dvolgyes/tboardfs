@@ -4,7 +4,7 @@ from pathlib import Path
 
 @dataclass
 class SidecarEntry:
-    """Index entry for a projector/profile sidecar file.
+    """Index entry for a projector, profile or hparams sidecar file.
 
     :ivar source_path: source sidecar file
     :ivar tab: virtual tab name
