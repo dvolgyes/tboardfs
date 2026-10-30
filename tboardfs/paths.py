@@ -80,12 +80,6 @@ class _Paths:
         return node
 
     @staticmethod
-    def tag_parts(tag: str, fmt: str) -> tuple[str, ...]:
-        """Return virtual path parts for a tagged file with an extension."""
-        stem_parts = _Paths.tag_dir_parts(tag)
-        return (*stem_parts[:-1], f"{stem_parts[-1]}.{fmt}")
-
-    @staticmethod
     def tag_dir_parts(tag: str) -> tuple[str, ...]:
         """Preserve TensorBoard slash hierarchy in a virtual path."""
         parts = tuple(_Paths.safe_component(part) for part in tag.split("/") if part)

@@ -14,6 +14,8 @@ class RunCache:
     :ivar refreshed_at: last refresh timestamp
     :ivar version: data version, unique among all runs; changes with the data
     :ivar sidecars: projector/profile files found at the last refresh
+    :ivar renamed_tags: tag paths with a suffix at the last tree build, so a
+        collision is logged once
     """
 
     run_parts: tuple[str, ...]
@@ -21,3 +23,4 @@ class RunCache:
     refreshed_at: float = 0.0
     version: int = 0
     sidecars: tuple[SidecarEntry, ...] = ()
+    renamed_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)

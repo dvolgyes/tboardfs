@@ -9,6 +9,7 @@ from tboardfs.hparams import hparams_json
 from tboardfs.mesh import mesh_nodes
 from tboardfs.model import JsonEntry
 from tboardfs.paths import _Paths
+from tboardfs.tag_paths import TagPaths
 from tboardfs.tensor import tensor_to_array
 
 # Row order of the pr_curves tensor, from the TensorBoard pr_curve plugin.
@@ -27,6 +28,7 @@ def add_typed_plugin_files(
     entries: list[JsonEntry],
     scalars: dict[str, dict[str, np.ndarray]],
     step_digits: int,
+    tags: TagPaths,
 ) -> set[int]:
     """Add typed plugin files and return consumed entry identities."""
     consumed: set[int] = set()
@@ -39,10 +41,12 @@ def add_typed_plugin_files(
             continue
         if entry.tab == "pr_curves":
             consumed.update(
-                _TypedPluginFiles.add_tensor_table(run_node, entry, step_digits)
+                _TypedPluginFiles.add_tensor_table(run_node, entry, step_digits, tags)
             )
         elif entry.tab == "tensors":
-            consumed.update(_TypedPluginFiles.add_tensor(run_node, entry, step_digits))
+            consumed.update(
+                _TypedPluginFiles.add_tensor(run_node, entry, step_digits, tags)
+            )
         elif entry.tab == "meshes" or entry.tab == "videos":
             consumed.add(marker)
     return consumed
@@ -94,7 +98,7 @@ class _TypedPluginFiles:
 
     @staticmethod
     def add_tensor_table(
-        run_node: dict[str, Any], entry: JsonEntry, step_digits: int
+        run_node: dict[str, Any], entry: JsonEntry, step_digits: int, tags: TagPaths
     ) -> set[int]:
         """Add table, JSON, and NPY views for tensor-backed plugin records."""
         data = tensor_to_array(entry.payload.get("tensor") or {})
@@ -102,7 +106,7 @@ class _TypedPluginFiles:
             return set()
         step = _Paths.step_name(entry.step, step_digits)
         table = _TypedPluginFiles.pr_curve_table(data)
-        rel = ("pr_curves", *_Paths.tag_dir_parts(entry.tag))
+        rel = ("pr_curves", *tags.dir_parts(entry.tag))
         for fmt in ("json", "tsv"):
             _TypedPluginFiles.add_file(
                 run_node,
@@ -123,14 +127,14 @@ class _TypedPluginFiles:
 
     @staticmethod
     def add_tensor(
-        run_node: dict[str, Any], entry: JsonEntry, step_digits: int
+        run_node: dict[str, Any], entry: JsonEntry, step_digits: int, tags: TagPaths
     ) -> set[int]:
         """Add JSON and NPY views for one tensor record."""
         data = tensor_to_array(entry.payload.get("tensor") or {})
         if data is None:
             return set()
         step = _Paths.step_name(entry.step, step_digits)
-        rel = ("tensors", *_Paths.tag_dir_parts(entry.tag))
+        rel = ("tensors", *tags.dir_parts(entry.tag))
         _TypedPluginFiles.add_file(
             run_node,
             (*rel, f"{step}.json"),

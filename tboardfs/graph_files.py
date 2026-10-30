@@ -4,10 +4,14 @@ from typing import Any
 
 from tboardfs.model import EventFileCache, GraphSummaryEntry, MetaGraphEntry
 from tboardfs.paths import _Paths
+from tboardfs.tag_paths import TagPaths
 
 
 def add_graph_files(
-    run_node: dict[str, Any], caches: list[EventFileCache], step_digits: int
+    run_node: dict[str, Any],
+    caches: list[EventFileCache],
+    step_digits: int,
+    tags: TagPaths,
 ) -> None:
     """Add graph protobuf files for one run.
 
@@ -48,14 +52,17 @@ def add_graph_files(
     for cache in caches:
         for entry in cache.binaries:
             if isinstance(entry, GraphSummaryEntry):
-                _add_summary_files(run_node, entry, step_digits)
+                _add_summary_files(run_node, entry, step_digits, tags)
 
 
 def _add_summary_files(
-    run_node: dict[str, Any], entry: GraphSummaryEntry, step_digits: int
+    run_node: dict[str, Any],
+    entry: GraphSummaryEntry,
+    step_digits: int,
+    tags: TagPaths,
 ) -> None:
     """Add the GraphDef and profile files of one TF2 graph summary."""
-    tag_parts = _Paths.tag_dir_parts(entry.tag)
+    tag_parts = tags.dir_parts(entry.tag)
     step = _Paths.step_name(entry.step, step_digits)
     if entry.converts:
         name = "conceptual.pb" if entry.extension == "json" else "pb"
