@@ -1,6 +1,6 @@
 [project]
 name = "tboardfs"
-version = "0.2.3"
+version = "0.3.0"
 description = "Read TensorBoard event logs as files through a FUSE filesystem."
 readme = "README.md"
 authors = [
@@ -36,8 +36,9 @@ tboardfs = "tboardfs:main"
 tboardfs-file = "tboardfs.file_cli:main"
 
 [build-system]
-requires = ["uv_build>=0.11.18,<0.12.0"]
+requires = ["uv_build>=0.13"]
 build-backend = "uv_build"
+
 [tool.uv.build-backend]
 module-name = "tboardfs"
 module-root = ""
