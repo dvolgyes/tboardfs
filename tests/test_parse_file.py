@@ -598,6 +598,25 @@ def test_filesystem_accepts_mfusepy_positional_file_handles(tmp_path: Path) -> N
         fs.truncate("/scalars/loss.json", 0, None)
 
 
+@pytest.mark.parametrize("owner", [(0, 0), (1234, 5678)])
+def test_filesystem_gives_every_stat_the_owner(
+    tmp_path: Path, owner: tuple[int, int]
+) -> None:
+    """Directories, files and open handles all report the configured owner."""
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(_record(_event(100.0, 1, [_simple_value("loss", 2.0)])))
+    fs = TensorBoardFS(tmp_path, owner=owner)
+    handle = fs.open("/scalars/loss.json", os.O_RDONLY)
+
+    stats = [
+        fs.getattr("/scalars"),
+        fs.getattr("/scalars/loss.json"),
+        fs.getattr("/scalars/loss.json", handle),
+    ]
+
+    assert [(st["st_uid"], st["st_gid"]) for st in stats] == [owner] * 3
+
+
 @pytest.mark.parametrize(
     "tag",
     ["../../ESCAPED", "a/../b", "./x", "back\\slash", "nul\0byte", "ctl\x1fchar"],

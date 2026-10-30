@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import re
 from typing import Any
@@ -6,6 +7,7 @@ from click.testing import CliRunner
 import pytest
 
 from tboardfs import cli
+from tboardfs.mounted import MountedTensorBoardFS
 
 
 def test_mount_cli_defaults_to_background(tmp_path: Path, monkeypatch: Any) -> None:
@@ -158,3 +160,37 @@ def test_mount_cli_refuses_a_negative_cache_size(
     assert result.exit_code == 2
     assert "--cache-size-mb" in result.stderr
     assert "not in the range" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("option", "owner"),
+    [
+        ([], (0, 0)),
+        (["--root-owner"], (0, 0)),
+        (["--user-owner"], (os.getuid(), os.getgid())),
+    ],
+)
+def test_mount_cli_sets_the_owner(
+    tmp_path: Path, monkeypatch: Any, option: list[str], owner: tuple[int, int]
+) -> None:
+    """Files and directories belong to root unless --user-owner gives them to the user."""
+    (tmp_path / "runs").mkdir()
+    (tmp_path / "runs" / "events.out.tfevents.1").write_bytes(b"")
+    (tmp_path / "mnt").mkdir()
+    monkeypatch.chdir(tmp_path)
+    owners: list[tuple[int, int]] = []
+
+    def capture_owners(
+        fs: MountedTensorBoardFS, *args: object, **kwargs: object
+    ) -> None:
+        del args, kwargs
+        for path in ("/", "/scalars"):
+            status = fs.getattr(path, None)
+            owners.append((status["st_uid"], status["st_gid"]))
+
+    monkeypatch.setattr(cli, "FUSE", capture_owners)
+
+    result = CliRunner().invoke(cli.main, ["runs", "mnt", *option])
+
+    assert result.exit_code == 0, result.output
+    assert owners == [owner, owner]

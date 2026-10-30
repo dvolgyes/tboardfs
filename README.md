@@ -61,6 +61,10 @@ Rendered files are kept in memory, so `ls -l` followed by `cat` renders a file o
 for this cache (default 1024; 0 turns it off). When the cache goes over the limit, the least recently used files are
 dropped until half the limit is left. New events in a run make only the files of that run render again.
 
+Files and directories belong to root (uid and gid 0) by default. `--user-owner` gives them to the user and group that
+mount the filesystem; `--root-owner` is the default. The permissions stay read-only for everyone (`0444` files, `0555`
+directories).
+
 `--scalar-format` selects the scalar and histogram table formats, as a comma-separated list of `json`, `tsv`, `csv`, and
 `npz` (default `json,tsv,npz`). `--step-digits` sets the zero-padding width of step file names, from 1 to 20 (default
 6). `--loglevel` takes a loguru level name in any case. Both commands refuse other values with a usage error.

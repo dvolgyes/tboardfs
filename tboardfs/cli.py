@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import sys
 from typing import cast
@@ -25,6 +26,12 @@ from tboardfs.mounted import MountedTensorBoardFS
     help="Memory for rendered files; 0 turns the cache off.",
 )
 @click.option("--foreground/--background", default=False, show_default=True)
+@click.option(
+    "--root-owner/--user-owner",
+    default=True,
+    show_default=True,
+    help="Owner of every file and directory: root, or the user who mounts.",
+)
 @click.option("--logfile", type=click.Path(dir_okay=False))
 @LOGLEVEL
 def main(
@@ -58,6 +65,7 @@ def main(
         scalar_formats=cast(str, params["scalar_format"]),
         log_to_screen=foreground,
         cache_size_mb=cast(int, params["cache_size_mb"]),
+        owner=(0, 0) if params["root_owner"] else (os.getuid(), os.getgid()),
     )
     # attr_timeout=0 makes fstat and SEEK_END ask for the size of the open
     # handle; a cached size from an older version would cut its data.

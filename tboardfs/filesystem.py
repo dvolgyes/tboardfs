@@ -151,6 +151,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     :ivar refresh_age_seconds: minimum age before cache refresh
     :ivar scalar_formats: enabled scalar export formats
     :ivar log_to_screen: whether operations log status messages
+    :ivar owner: user and group ids that own every file and directory
     :ivar _renders: rendered file bytes by run versions and path
     :ivar _state: mutable run discovery and tree state
     :ivar _lock: serializes every change and read of ``_state``
@@ -161,6 +162,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     refresh_age_seconds: float
     scalar_formats: tuple[str, ...]
     log_to_screen: bool
+    owner: tuple[int, int]
     _renders: RenderCache
     _state: "_FsState"
     _lock: RLock
@@ -174,6 +176,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         scalar_formats: str | list[str] | tuple[str, ...] = DEFAULT_SCALAR_FORMATS,
         log_to_screen: bool = False,
         cache_size_mb: int = DEFAULT_CACHE_SIZE_MB,
+        owner: tuple[int, int] = (0, 0),
     ) -> None:
         self.source = Path(source)
         self.step_digits = step_digits
@@ -182,6 +185,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             _Paths.normalize_formats(scalar_formats) or DEFAULT_SCALAR_FORMATS
         )
         self.log_to_screen = log_to_screen
+        self.owner = owner
         self._renders = RenderCache(cache_size_mb * 1024 * 1024)
         self._state = _FsState()
         self._lock = RLock()
@@ -197,24 +201,31 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     def getattr(self, path: str, *file_handles: object) -> dict[str, Any]:
         """Return stat data for a virtual path, or for an open handle."""
         opened = self._open_file(file_handles)
+        now = time.time()
+        mode, nlink = stat.S_IFREG | 0o444, 1
         if opened is not None:
             data, mtime = opened
-            return _FsNode.stat_dict(
-                stat.S_IFREG | 0o444, 1, len(data), time.time(), mtime
-            )
-        try:
-            node, key = self._locate(path)
-        except FileNotFoundError:
-            raise fuse_error(ENOENT)
-        now = time.time()
-        if node["type"] == "dir":
-            return _FsNode.stat_dict(
-                stat.S_IFDIR | 0o555, 2, 0, now, node.get("mtime", now)
-            )
-        data = self._node_bytes(node, key)
-        return _FsNode.stat_dict(
-            stat.S_IFREG | 0o444, 1, len(data), now, node.get("mtime", now)
-        )
+        else:
+            try:
+                node, key = self._locate(path)
+            except FileNotFoundError:
+                raise fuse_error(ENOENT)
+            mtime = node.get("mtime", now)
+            if node["type"] == "dir":
+                mode, nlink, data = stat.S_IFDIR | 0o555, 2, b""
+            else:
+                data = self._node_bytes(node, key)
+        uid, gid = self.owner
+        return {
+            "st_mode": mode,
+            "st_nlink": nlink,
+            "st_size": len(data),
+            "st_ctime": now,
+            "st_mtime": mtime,
+            "st_atime": now,
+            "st_uid": uid,
+            "st_gid": gid,
+        }
 
     def readdir(self, path: str, *file_handles: object) -> list[str]:
         """Return virtual directory entries."""
@@ -479,20 +490,6 @@ class TensorBoardFS:  # pcr: noqa: PCR010
 
 class _FsNode:
     """Create virtual filesystem nodes."""
-
-    @staticmethod
-    def stat_dict(
-        mode: int, nlink: int, size: int, now: float, mtime: float
-    ) -> dict[str, Any]:
-        """Return a FUSE stat dictionary."""
-        return {
-            "st_mode": mode,
-            "st_nlink": nlink,
-            "st_size": size,
-            "st_ctime": now,
-            "st_mtime": mtime,
-            "st_atime": now,
-        }
 
     @staticmethod
     def add_file(
