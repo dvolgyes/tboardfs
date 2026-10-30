@@ -21,7 +21,7 @@ def summary_graph_def(entry: BinaryEntry, blob: bytes) -> bytes | None:
     """
     try:
         return _graph_def(blob, entry.extension)
-    except (DecodeError, ValueError) as error:
+    except (DecodeError, RecursionError, ValueError) as error:
         logger.warning(
             "graph {} at step {} in {} has no GraphDef file: {}",
             entry.tag,
@@ -37,6 +37,7 @@ def _graph_def(blob: bytes, extension: str) -> bytes:
 
     Raises:
         DecodeError: The RunMetadata is malformed.
+        RecursionError: The Keras config nests too deep to parse.
         ValueError: The Keras config is malformed, or TensorBoard cannot
             merge the function graphs.
     """

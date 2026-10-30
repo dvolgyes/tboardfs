@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import partial
 from io import BytesIO
 from typing import Any, cast
 
@@ -7,6 +8,7 @@ import numpy as np
 from tboardfs.model import JsonEntry
 from tboardfs.paths import _Paths
 from tboardfs.proto_schema import _ProtoParser
+from tboardfs.skip_failure import skip_failure
 from tboardfs.tensor import tensor_to_array
 
 _MESH_COLOR = 3
@@ -47,7 +49,13 @@ def mesh_nodes(
         if _MESH_VERTEX not in group.components:
             continue
         step = _Paths.step_name(step_number, step_digits)
-        nodes.extend((tag, *file) for file in _MeshFiles.files(step, group))
+        group_files = skip_failure(
+            f"mesh {tag!r} at step {step_number}",
+            partial(_MeshFiles.files, step, group),
+        )
+        if group_files is None:
+            continue
+        nodes.extend((tag, *file) for file in group_files)
         consumed.update(id(entry) for entry in group.entries)
     return nodes, consumed
 
@@ -160,9 +168,13 @@ class _MeshFiles:
         vertices = _MeshFiles.batched(mesh["vertices"])
         if vertices is None:
             return None
-        faces = _MeshFiles.batched(mesh.get("faces"))
+        faces = _MeshFiles.indices(
+            _MeshFiles.batched(mesh.get("faces")), vertices.shape[1]
+        )
         colors = _MeshFiles.batched(mesh.get("colors"))
-        if colors is not None and colors.shape != vertices.shape:
+        if colors is not None and (
+            colors.shape != vertices.shape or not _MeshFiles.finite(colors)
+        ):
             colors = None
         lines = ["# TensorBoard mesh export"]
         offset = 0
@@ -191,6 +203,25 @@ class _MeshFiles:
         if array is None or array.ndim not in (2, 3) or array.shape[-1] != 3:
             return None
         return array[None] if array.ndim == 2 else array
+
+    @staticmethod
+    def finite(array: np.ndarray) -> bool:
+        """Return whether an array holds only finite real numbers."""
+        return array.dtype.kind in "biuf" and bool(np.isfinite(array).all())
+
+    @staticmethod
+    def indices(faces: np.ndarray | None, count: int) -> np.ndarray | None:
+        """Return the faces as vertex indices, or None when one is not valid.
+
+        A valid index is a whole number from 0 to the vertex count less one.
+        """
+        if faces is None or not _MeshFiles.finite(faces):
+            return None
+        if faces.size and (
+            (faces != np.round(faces)).any() or faces.min() < 0 or faces.max() >= count
+        ):
+            return None
+        return faces.astype(np.int64)
 
     @staticmethod
     def color(rgb: np.ndarray) -> str:

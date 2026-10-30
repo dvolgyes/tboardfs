@@ -1,5 +1,6 @@
 from collections import defaultdict
 from dataclasses import replace
+from functools import partial
 import os
 from pathlib import Path
 import struct
@@ -28,6 +29,7 @@ from tboardfs.proto_schema import _ProtoParser
 from tboardfs.restarts import _RestartPurge
 from tboardfs.run_metadata_text import run_metadata_text
 from tboardfs.summary import parse_event
+from tboardfs.skip_failure import skip_failure
 from tboardfs.summary_graph import summary_graph_def
 from tboardfs.tensor_summary import _TensorSummary
 from tboardfs.tables import (
@@ -115,7 +117,11 @@ class _EventIndexer:
                     processed_pos = record.record_offset + record.total_size
                     try:
                         first_time, epoch = _EventIndexer.index_record(
-                            cache, record, rows, (first_time, epoch)
+                            cache,
+                            record,
+                            rows,
+                            (first_time, epoch),
+                            strict=not ignore_truncated,
                         )
                     except _MALFORMED_RECORD_ERRORS as error:
                         if not ignore_truncated:
@@ -191,8 +197,13 @@ class _EventIndexer:
             dict[str, dict[str, list[Any]]],
         ],
         clock: tuple[float | None, object],
+        *,
+        strict: bool,
     ) -> tuple[float | None, object]:
-        """Index one framed record and return the updated (first_time, epoch)."""
+        """Index one framed record and return the updated (first_time, epoch).
+
+        A summary value that fails to index is skipped, unless strict.
+        """
         first_time, epoch = clock
         path = cache.source_path
         event = parse_event(record.payload)
@@ -205,9 +216,20 @@ class _EventIndexer:
         _EventIndexer.add_restart(cache, event, rows)
         _EventIndexer.add_graph(cache, path, event, record, wall_time)
         for value in values:
-            epoch = _EventIndexer.add_summary(
-                cache, path, record, value, rows, (epoch, *timing)
+            indexed = skip_failure(
+                f"value {value['tag']!r} at step {event['step']} in {path}",
+                partial(
+                    _EventIndexer.add_summary,
+                    cache,
+                    path,
+                    record,
+                    value,
+                    rows,
+                    (epoch, *timing),
+                ),
+                strict=strict,
             )
+            epoch = epoch if indexed is None else indexed
         return first_time, epoch
 
     @staticmethod

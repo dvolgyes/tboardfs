@@ -1,3 +1,5 @@
+from functools import partial
+
 import numpy as np
 
 from tboardfs.array_json import array_to_json
@@ -7,6 +9,7 @@ from tboardfs.mesh import mesh_nodes
 from tboardfs.model import JsonEntry
 from tboardfs.paths import _Paths
 from tboardfs.run_files import RunFiles
+from tboardfs.skip_failure import skip_failure
 from tboardfs.tensor import tensor_to_array
 
 # Row order of the pr_curves tensor, from the TensorBoard pr_curve plugin.
@@ -28,19 +31,34 @@ def add_typed_plugin_files(
 ) -> set[int]:
     """Add typed plugin files and return consumed entry identities."""
     consumed: set[int] = set()
-    _TypedPluginFiles.add_hparams(files, entries, scalars, consumed)
-    _TypedPluginFiles.add_custom_scalars(files, entries, consumed)
-    _TypedPluginFiles.add_meshes(files, entries, step_digits, consumed)
+    skip_failure(
+        "the hparams file",
+        partial(_TypedPluginFiles.add_hparams, files, entries, scalars, consumed),
+    )
+    skip_failure(
+        "the custom scalars layout",
+        partial(_TypedPluginFiles.add_custom_scalars, files, entries, consumed),
+    )
+    skip_failure(
+        "the mesh files",
+        partial(_TypedPluginFiles.add_meshes, files, entries, step_digits, consumed),
+    )
     for entry in entries:
         marker = id(entry)
         if marker in consumed:
             continue
-        if entry.tab == "pr_curves":
+        builder = {
+            "pr_curves": _TypedPluginFiles.add_tensor_table,
+            "tensors": _TypedPluginFiles.add_tensor,
+        }.get(entry.tab)
+        if builder is not None:
             consumed.update(
-                _TypedPluginFiles.add_tensor_table(files, entry, step_digits)
+                skip_failure(
+                    f"{entry.tab} record {entry.tag!r} at step {entry.step}",
+                    partial(builder, files, entry, step_digits),
+                )
+                or set()
             )
-        elif entry.tab == "tensors":
-            consumed.update(_TypedPluginFiles.add_tensor(files, entry, step_digits))
         elif entry.tab == "meshes" or entry.tab == "videos":
             consumed.add(marker)
     return consumed

@@ -1,6 +1,8 @@
+import math
 from typing import Any, cast
 
 from google.protobuf.json_format import MessageToDict
+from google.protobuf.message import Message
 from google.protobuf.struct_pb2 import Value
 import numpy as np
 
@@ -82,12 +84,42 @@ class _HparamsRecords:
         }
 
     @staticmethod
+    def spell_non_finite(message: Message) -> None:
+        """Replace each NaN or infinite struct Value number by its JSON spelling.
+
+        MessageToDict cannot write such a google.protobuf.Value, because the
+        JSON text would parse as a string; the hparams JSON files spell them
+        "NaN", "Infinity" and "-Infinity" as strings.
+        """
+        for field, value in message.ListFields():
+            if field.message_type is None:
+                continue
+            if field.message_type.GetOptions().map_entry:
+                items = list(value.values())
+            elif field.is_repeated:
+                items = list(value)
+            else:
+                items = [value]
+            for item in items:
+                if (
+                    isinstance(item, Value)
+                    and item.WhichOneof("kind") == "number_value"
+                    and not math.isfinite(item.number_value)
+                ):
+                    item.string_value = cast(
+                        str, _TableExport.json_value(item.number_value, "NaN")
+                    )
+                elif isinstance(item, Message):
+                    _HparamsRecords.spell_non_finite(item)
+
+    @staticmethod
     def parse(entry: JsonEntry) -> dict[str, Any]:
         """Return one parsed hparams plugin record."""
         content = entry.payload.get("plugin_content")
         if not isinstance(content, bytes):
             return {}
         data = cast(Any, _ProtoParser.hparams_plugin_data(content))
+        _HparamsRecords.spell_non_finite(data)
         out: dict[str, Any] = {}
         if data.HasField("experiment"):
             out["experiment"] = cast(

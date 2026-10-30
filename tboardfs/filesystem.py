@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from errno import EIO, EISDIR, ENOENT, ENOTDIR, EOPNOTSUPP, EROFS
 from fnmatch import fnmatchcase
+from functools import partial
+import math
 import os
 from pathlib import Path
 import stat
@@ -20,6 +22,7 @@ from tboardfs.constants import (
 from tboardfs.errors import fuse_error
 from tboardfs.extract import _extract_graph_blob, extract_binary_blob
 from tboardfs.graph_files import add_graph_files
+from tboardfs.histogram_files import add_histogram_files
 from tboardfs.indexer import _EventIndexer
 from tboardfs.meta_graph import meta_graph_graph_def
 from tboardfs.model import (
@@ -37,6 +40,7 @@ from tboardfs.paths import (
 from tboardfs.plugin_files import add_typed_plugin_files
 from tboardfs.run_files import RunFiles
 from tboardfs.run_places import RunPlaces
+from tboardfs.skip_failure import skip_failure
 from tboardfs.projector import _ProjectorConfig
 from tboardfs.render_cache import RenderCache
 from tboardfs.restarts import _RestartPurge
@@ -216,7 +220,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
                 node, key = self._locate(path)
             except FileNotFoundError:
                 raise fuse_error(ENOENT)
-            mtime = node.get("mtime", now)
+            mtime = _FsNode.mtime(node, now)
             if node["type"] == "dir":
                 mode, nlink, data = stat.S_IFDIR | 0o555, 2, b""
             else:
@@ -250,7 +254,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             raise fuse_error(ENOENT)
         if node["type"] == "dir":
             raise fuse_error(EISDIR)
-        opened = (self._node_bytes(node, key), node.get("mtime", time.time()))
+        opened = (self._node_bytes(node, key), _FsNode.mtime(node, time.time()))
         with self._lock:
             handle = self._state.next_handle
             self._state.next_handle += 1
@@ -492,9 +496,14 @@ class _FsNode:
     """Create virtual filesystem nodes."""
 
     @staticmethod
-    def table_node(series: dict[str, Any], fmt: str, mtime: float) -> dict[str, Any]:
-        """Return a virtual table node."""
-        return {"type": "table", "series": series, "format": fmt, "mtime": mtime}
+    def mtime(node: dict[str, Any], fallback: float) -> float:
+        """Return the file time of a node, or 0 for an event time that is not valid.
+
+        An event wall time can be NaN, infinite, negative, or after the year
+        2242, which a file time cannot hold.
+        """
+        value = float(node.get("mtime", fallback))
+        return value if math.isfinite(value) and 0 <= value < 1 << 33 else 0.0
 
 
 class _RunTree:
@@ -512,7 +521,9 @@ class _RunTree:
         files = RunFiles()
         _RunTree.add_scalar_files(files, run, scalars, scalar_formats)
         epochs = scalars.get("epoch")
-        _HistogramFiles.add_files(files, run, epochs, scalar_formats, step_digits)
+        add_histogram_files(
+            files, _RunData.sorted_file_caches(run), epochs, scalar_formats, step_digits
+        )
         _RunTree.add_binary_files(files, run, step_digits)
         consumed = add_typed_plugin_files(
             files, _RunData.run_json_entries(run), scalars, step_digits
@@ -571,7 +582,14 @@ class _RunTree:
             if id(entry) in consumed:
                 continue
             tab = entry.tab if entry.tab in FIXED_TABS else "plugins"
-            text_nodes = tab == "text" and _TextTable.nodes(entry)
+            text_nodes = (
+                skip_failure(
+                    f"text {entry.tag!r} at step {entry.step}",
+                    partial(_TextTable.nodes, entry),
+                )
+                if tab == "text"
+                else None
+            )
             step = _Paths.step_name(entry.step, step_digits)
             if text_nodes:
                 for suffix, node in text_nodes:
@@ -614,69 +632,6 @@ class _RunTree:
             )
             return (tab, plugin)
         return (tab,)
-
-
-class _HistogramFiles:
-    """Add per-step histogram and distribution files."""
-
-    @staticmethod
-    def add_files(
-        files: RunFiles,
-        run: RunCache,
-        epochs: dict[str, Any] | None,
-        scalar_formats: tuple[str, ...],
-        step_digits: int,
-    ) -> None:
-        """Add the histogram and distribution tables of one run, with its epochs."""
-        histograms = _TableMerge.merge_series(
-            cache.histograms for cache in _RunData.sorted_file_caches(run)
-        )
-        histograms = _TableMerge.step_epochs(histograms, epochs)
-        mtimes = _TableMerge.merge_mtimes(
-            cache.histogram_mtimes for cache in _RunData.sorted_file_caches(run)
-        )
-        for tag, series in histograms.items():
-            steps = _TableMerge.unique_steps(series)
-            for fmt in scalar_formats:
-                if fmt not in {"json", "tsv", "npz"}:
-                    continue
-                for step in steps:
-                    step_series = _TableMerge.series_for_step(series, step)
-                    _HistogramFiles.add_step_table(
-                        files,
-                        {
-                            "tab": "histograms",
-                            "tag": tag,
-                            "step": step,
-                            "series": step_series,
-                            "fmt": fmt,
-                            "mtime": mtimes.get(tag, time.time()),
-                        },
-                        step_digits,
-                    )
-                    distribution = _TableMerge.distribution_from_histogram(step_series)
-                    _HistogramFiles.add_step_table(
-                        files,
-                        {
-                            "tab": "distributions",
-                            "tag": tag,
-                            "step": step,
-                            "series": distribution,
-                            "fmt": fmt,
-                            "mtime": mtimes.get(tag, time.time()),
-                        },
-                        step_digits,
-                    )
-
-    @staticmethod
-    def add_step_table(files: RunFiles, item: dict[str, Any], step_digits: int) -> None:
-        """Add one per-step tabular file."""
-        files.add(
-            (item["tab"],),
-            item["tag"],
-            f"{_Paths.step_name(item['step'], step_digits)}.{item['fmt']}",
-            _FsNode.table_node(item["series"], item["fmt"], item["mtime"]),
-        )
 
 
 class _RunData:

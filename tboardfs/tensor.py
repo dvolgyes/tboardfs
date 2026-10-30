@@ -7,6 +7,7 @@ from tboardfs.constants import MAX_REPEATED_TENSOR_BYTES
 from tboardfs.decode import _Decode
 
 BFLOAT16 = 14
+_MAX_NUMPY_DIMS = 64
 
 
 def tensor_to_array(tensor: dict[str, Any]) -> np.ndarray | None:
@@ -94,7 +95,7 @@ class _TensorDType:
         claim memory for any shape that it declares.
         """
         shape = tuple(int(dim) for dim in tensor.get("shape") or [])
-        if min(shape, default=0) < 0:
+        if min(shape, default=0) < 0 or not _TensorDType.fits_numpy(shape, values):
             return None
         size = math.prod(shape)
         if fill and values.size == 1 and size != 1:
@@ -104,6 +105,19 @@ class _TensorDType:
         if values.size != size:
             return None
         return values.reshape(shape)
+
+    @staticmethod
+    def fits_numpy(shape: tuple[int, ...], values: np.ndarray) -> bool:
+        """Return whether NumPy can make an array of this shape and item size.
+
+        NumPy limits an array to 64 dimensions, and the bytes of its nonzero
+        dimensions to the largest index, also when another dimension is 0.
+        """
+        nonzero = math.prod(dim for dim in shape if dim)
+        return (
+            len(shape) <= _MAX_NUMPY_DIMS
+            and nonzero * max(values.itemsize, 1) <= np.iinfo(np.intp).max
+        )
 
     @staticmethod
     def spec(dtype: object) -> tuple[str, int, str] | None:
