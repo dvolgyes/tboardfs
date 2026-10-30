@@ -3,6 +3,8 @@
 import os
 from pathlib import Path
 
+import pytest
+
 from tboardfs import TensorBoardFS
 
 from test_open_handles import _append
@@ -70,3 +72,44 @@ def test_hparams_yaml_of_a_run_is_in_the_hparams_tab(tmp_path: Path) -> None:
 
     assert fs.readdir("/hparams")[2:] == ["hparams.yaml"]
     assert fs.read("/hparams/hparams.yaml", 100, 0) == b"lr: 0.1\n"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can search any folder")
+@pytest.mark.parametrize(
+    "name", ["hparams.yaml", "readme.txt", "events.out.tfevents.2.host"]
+)
+def test_a_folder_that_cannot_be_searched_does_not_break_the_mount(
+    tmp_path: Path, name: str
+) -> None:
+    """Its files are not shown; the files of the run beside it are."""
+    for run in ("good", "other"):
+        (tmp_path / run).mkdir()
+    _append(tmp_path / "good" / EVENTS, 0)
+    _append(tmp_path / "other" / EVENTS, 0)
+    notes = tmp_path / "other" / "notes"
+    notes.mkdir()
+    (notes / name).write_bytes(b"x")
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    notes.chmod(0o644)
+    try:
+        listing = fs.readdir("/")
+        good = fs.readdir("/good/scalars")
+    finally:
+        notes.chmod(0o755)
+
+    assert {"good", "other"} <= set(listing)
+    assert good[2:]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read mode-000 files")
+def test_a_projector_config_that_cannot_be_read_does_not_break_the_mount(
+    tmp_path: Path,
+) -> None:
+    fs, projector = _fs_with_projector(tmp_path)
+    projector.chmod(0)
+    try:
+        listing = fs.readdir("/")
+    finally:
+        projector.chmod(0o644)
+
+    assert "scalars" in listing

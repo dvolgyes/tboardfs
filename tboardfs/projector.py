@@ -45,8 +45,8 @@ class _ProjectorConfig:
         try:
             with config.open("rb") as handle:
                 text = handle.read(MAX_CONFIG_BYTES)
-        except FileNotFoundError:
-            return []  # removed since the directory walk
+        except OSError:
+            return []  # removed since the directory walk, or not readable
         named = []
         for match in _PATH_FIELD.finditer(text):
             path = PurePosixPath(os.fsdecode(match.group(1)))

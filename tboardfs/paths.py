@@ -34,11 +34,23 @@ def find_tensorboard_files(directory: str | Path) -> list[Path]:
             for name in file_names
             if fnmatchcase(name, TENSORBOARD_EVENT_GLOB)
         )
-    return sorted(path for path in found if path.is_file())
+    return sorted(path for path in found if _Paths.is_file(path))
 
 
 class _Paths:
     """Virtual path helpers for TensorBoard run and tag names."""
+
+    @staticmethod
+    def is_file(path: Path) -> bool:
+        """Return whether a path is a regular file that tboardfs can check.
+
+        A file in a folder that cannot be searched has no status, so it is
+        not shown, as a removed file is not.
+        """
+        try:
+            return path.is_file()
+        except OSError:
+            return False
 
     @staticmethod
     def run_parts_for(root: Path, path: Path) -> tuple[str, ...]:

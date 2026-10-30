@@ -450,7 +450,9 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             return False
         run_dir = self.source.joinpath(*run.run_parts)
         files = sorted(
-            path for path in run_dir.glob(TENSORBOARD_EVENT_GLOB) if path.is_file()
+            path
+            for path in run_dir.glob(TENSORBOARD_EVENT_GLOB)
+            if _Paths.is_file(path)
         )
         log_parse = logger.info if self.log_to_screen else None
         changed = _RunData.refresh_event_files(run, files, force=force, log=log_parse)
@@ -751,8 +753,8 @@ class _RunData:
                 continue
             try:
                 status = path.stat()
-            except FileNotFoundError:
-                continue  # removed since the directory walk
+            except OSError:
+                continue  # removed since the directory walk, or not readable
             sidecars.append(
                 SidecarEntry(
                     path,
@@ -776,7 +778,9 @@ class _RunData:
         roots = (source.resolve(), run_dir.resolve())
         for dir_name, dir_names, file_names in os.walk(run_dir):
             directory = Path(dir_name)
-            files = sorted(name for name in file_names if (directory / name).is_file())
+            files = sorted(
+                name for name in file_names if _Paths.is_file(directory / name)
+            )
             events = [
                 name for name in files if fnmatchcase(name, TENSORBOARD_EVENT_GLOB)
             ]
