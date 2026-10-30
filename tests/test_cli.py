@@ -120,6 +120,22 @@ def test_mount_cli_refuses_mountpoint_inside_source(
     assert fuse_calls == []
 
 
+def test_mount_cli_refuses_source_inside_mountpoint(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The mount hides the source, so each read of it would call the mount."""
+    (tmp_path / "mnt" / "runs").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    fuse_calls: list[object] = []
+    monkeypatch.setattr(cli, "FUSE", lambda *args, **kwargs: fuse_calls.append(args))
+
+    result = CliRunner().invoke(cli.main, ["mnt/runs", "mnt"])
+
+    assert result.exit_code == 2
+    assert "inside the mountpoint" in result.stderr
+    assert fuse_calls == []
+
+
 @pytest.mark.parametrize(
     ("option", "limit_bytes"),
     [

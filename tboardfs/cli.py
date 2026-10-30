@@ -46,6 +46,12 @@ def main(
             f"{mountpoint_path} is inside the source {source_path}",
             param_hint="MOUNTPOINT",
         )
+    if source_path.is_relative_to(mountpoint_path):
+        # The mount hides the source, so each read of it would call the mount.
+        raise click.BadParameter(
+            f"{source_path} is inside the mountpoint {mountpoint_path}",
+            param_hint="SOURCE",
+        )
     logfile = cast(str | None, params["logfile"])
     logfile_path = Path(logfile).resolve() if logfile is not None else None
     loglevel = cast(str, params["loglevel"])
