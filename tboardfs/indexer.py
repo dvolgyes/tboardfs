@@ -1,5 +1,5 @@
 from collections import defaultdict
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from functools import partial
 import os
 from pathlib import Path
@@ -68,6 +68,30 @@ def parse_file(filename: str | Path) -> dict[str, Any]:
     }
 
 
+@dataclass
+class _ParseState:
+    """The table rows and the clock of one event file parse.
+
+    :ivar scalar_rows: scalar columns by tag
+    :ivar scalar_dtypes: dtype of each scalar row by tag
+    :ivar histogram_rows: histogram bucket columns by tag
+    :ivar first_time: wall time of the first event with values
+    :ivar epoch: the newest value of the epoch scalar
+    """
+
+    scalar_rows: dict[str, dict[str, list[Any]]] = field(
+        default_factory=lambda: defaultdict(_TableRows.empty_scalar_rows)
+    )
+    scalar_dtypes: dict[str, list[np.dtype]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
+    histogram_rows: dict[str, dict[str, list[Any]]] = field(
+        default_factory=lambda: defaultdict(_TableRows.empty_histogram_rows)
+    )
+    first_time: float | None = None
+    epoch: object = np.nan
+
+
 class _EventIndexer:
     """Build event-file indexes from parsed TensorBoard records."""
 
@@ -85,28 +109,17 @@ class _EventIndexer:
         their rows are appended, so the result equals a parse of the whole file.
         """
         cache = EventFileCache(source_path=path)
-        scalar_rows: dict[str, dict[str, list[Any]]] = defaultdict(
-            _TableRows.empty_scalar_rows
-        )
-        scalar_dtypes: dict[str, list[np.dtype]] = defaultdict(list)
-        histogram_rows: dict[str, dict[str, list[Any]]] = defaultdict(
-            _TableRows.empty_histogram_rows
-        )
-        first_time: float | None = None
-        epoch: object = np.nan
+        state = _ParseState()
         processed_pos = start_pos
         if base_cache is not None:
-            first_time, epoch = (
-                base_cache.progress.first_time,
-                base_cache.progress.epoch,
-            )
+            state.first_time = base_cache.progress.first_time
+            state.epoch = base_cache.progress.epoch
             cache.binaries = list(base_cache.binaries)
             cache.graphs = list(base_cache.graphs)
             cache.json_entries = list(base_cache.json_entries)
             cache.scalar_mtimes = dict(base_cache.scalar_mtimes)
             cache.histogram_mtimes = dict(base_cache.histogram_mtimes)
 
-        rows = (scalar_rows, scalar_dtypes, histogram_rows)
         with path.open("rb") as handle:
             # Size before reading: records appended during the parse must
             # look unread to the next refresh.
@@ -116,12 +129,8 @@ class _EventIndexer:
                 for record in iter_tfrecords(handle):
                     processed_pos = record.record_offset + record.total_size
                     try:
-                        first_time, epoch = _EventIndexer.index_record(
-                            cache,
-                            record,
-                            rows,
-                            (first_time, epoch),
-                            strict=not ignore_truncated,
+                        _EventIndexer.index_record(
+                            cache, record, state, strict=not ignore_truncated
                         )
                     except _MALFORMED_RECORD_ERRORS as error:
                         if not ignore_truncated:
@@ -139,10 +148,12 @@ class _EventIndexer:
                     logger.warning("stopped reading {}: {}", path, error)
 
         cache.progress = ParseProgress(
-            processed_pos, checked_size, identity, first_time, epoch
+            processed_pos, checked_size, identity, state.first_time, state.epoch
         )
-        cache.scalars = _TableRows.arrays_from_scalar_rows(scalar_rows, scalar_dtypes)
-        cache.histograms = _TableRows.arrays_from_histogram_rows(histogram_rows)
+        cache.scalars = _TableRows.arrays_from_scalar_rows(
+            state.scalar_rows, state.scalar_dtypes
+        )
+        cache.histograms = _TableRows.arrays_from_histogram_rows(state.histogram_rows)
         if base_cache is not None:
             cache.scalars = _TableMerge.append_series(base_cache.scalars, cache.scalars)
             cache.histograms = _TableMerge.append_series(
@@ -191,20 +202,15 @@ class _EventIndexer:
     def index_record(
         cache: EventFileCache,
         record: Record,
-        rows: tuple[
-            dict[str, dict[str, list[Any]]],
-            dict[str, list[np.dtype]],
-            dict[str, dict[str, list[Any]]],
-        ],
-        clock: tuple[float | None, object],
+        state: _ParseState,
         *,
         strict: bool,
-    ) -> tuple[float | None, object]:
-        """Index one framed record and return the updated (first_time, epoch).
+    ) -> None:
+        """Index one framed record, and update the clock when it is indexed.
 
         A summary value that fails to index is skipped, unless strict.
         """
-        first_time, epoch = clock
+        first_time, epoch = state.first_time, state.epoch
         path = cache.source_path
         event = parse_event(record.payload)
         wall_time = float(event["wall_time"])
@@ -213,7 +219,7 @@ class _EventIndexer:
             first_time = wall_time
         relative_time = np.nan if first_time is None else wall_time - first_time
         timing = (event["step"], wall_time, relative_time)
-        _EventIndexer.add_restart(cache, event, rows)
+        _EventIndexer.add_restart(cache, event, state)
         _EventIndexer.add_graph(cache, path, event, record, wall_time)
         for value in values:
             indexed = skip_failure(
@@ -224,23 +230,19 @@ class _EventIndexer:
                     path,
                     record,
                     value,
-                    rows,
+                    state,
                     (epoch, *timing),
                 ),
                 strict=strict,
             )
             epoch = epoch if indexed is None else indexed
-        return first_time, epoch
+        state.first_time, state.epoch = first_time, epoch
 
     @staticmethod
     def add_restart(
         cache: EventFileCache,
         event: dict[str, Any],
-        rows: tuple[
-            dict[str, dict[str, list[Any]]],
-            dict[str, list[np.dtype]],
-            dict[str, dict[str, list[Any]]],
-        ],
+        state: _ParseState,
     ) -> None:
         """Record a file version or SessionLog.START before the event's values.
 
@@ -252,12 +254,11 @@ class _EventIndexer:
             cache.restarts.append(RestartMark("version", version))
         if not event.get("session_start"):
             return
-        scalar_rows, _, histogram_rows = rows
         counts = {
             (table, tag): len(columns["step"])
             for table, rows_by_tag in (
-                ("scalars", scalar_rows),
-                ("histograms", histogram_rows),
+                ("scalars", state.scalar_rows),
+                ("histograms", state.histogram_rows),
             )
             for tag, columns in rows_by_tag.items()
         }
@@ -301,11 +302,7 @@ class _EventIndexer:
         path: Path,
         record: Record,
         value: dict[str, Any],
-        rows: tuple[
-            dict[str, dict[str, list[Any]]],
-            dict[str, list[np.dtype]],
-            dict[str, dict[str, list[Any]]],
-        ],
+        state: _ParseState,
         timing: tuple[Any, Any, float, float],
     ) -> object:
         """Index one TensorBoard summary value.
@@ -314,20 +311,19 @@ class _EventIndexer:
         named "untagged".
         """
         tag = value["tag"]
-        scalar_rows, scalar_dtypes, histogram_rows = rows
         epoch, step, wall_time, relative_time = timing
         epoch = _EventIndexer.add_scalar(
             cache,
             value,
-            scalar_rows,
-            scalar_dtypes,
+            state.scalar_rows,
+            state.scalar_dtypes,
             (epoch, step, wall_time, relative_time),
         )
         # A TF1 or PyTorch scalar without metadata holds nothing else.
         if value.keys() == {"tag", "simple_value"}:
             return epoch
         _EventIndexer.add_histogram(
-            cache, value, histogram_rows, (epoch, step, wall_time, relative_time)
+            cache, value, state.histogram_rows, (epoch, step, wall_time, relative_time)
         )
         _EventIndexer.add_binary(cache, path, record, value, (tag, step, wall_time))
         _EventIndexer.add_plugin(cache, value, (tag, step, wall_time))
