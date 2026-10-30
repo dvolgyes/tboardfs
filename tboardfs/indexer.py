@@ -24,6 +24,7 @@ from tboardfs.model import (
     TFRecordError,
 )
 from tboardfs.meta_graph import meta_graph_graph_def
+from tboardfs.proto_schema import _ProtoParser
 from tboardfs.restarts import _RestartPurge
 from tboardfs.run_metadata_text import run_metadata_text
 from tboardfs.summary import parse_event
@@ -429,12 +430,48 @@ class _EventIndexer:
             return
         tag, step, wall_time = identity
         plugin_name = str(payload.get("plugin_name") or "unknown").lower()
-        cache.json_entries.append(
-            JsonEntry(
-                tag=tag,
-                tab=PLUGIN_TAB.get(plugin_name, "plugins"),
-                step=step,
-                wall_time=wall_time,
-                payload=payload,
+        tab = PLUGIN_TAB.get(plugin_name, "plugins")
+        error = _EventIndexer.plugin_error(tab, payload)
+        if error is not None:
+            logger.warning(
+                "skipping {} record {} at step {} in {}: {}",
+                plugin_name,
+                tag,
+                step,
+                cache.source_path,
+                error,
             )
+            return
+        cache.json_entries.append(
+            JsonEntry(tag=tag, tab=tab, step=step, wall_time=wall_time, payload=payload)
         )
+
+    @staticmethod
+    def plugin_error(tab: str, payload: dict[str, Any]) -> str | None:
+        """Return why the files of a plugin record cannot be made, or None.
+
+        The hparams and mesh files decode the plugin content, and the custom
+        scalar layout decodes a string of the tensor. A record that gives no
+        message is not indexed, so it has no file.
+        """
+        parsers = {
+            "hparams": _ProtoParser.hparams_plugin_data,
+            "meshes": _ProtoParser.mesh_plugin_data,
+        }
+        content = payload.get("plugin_content")
+        if tab in parsers and isinstance(content, bytes):
+            blobs, parse = [content], parsers[tab]
+        elif tab == "custom_scalars":
+            blobs = list((payload.get("tensor") or {}).get("string_val") or [])
+            parse = _ProtoParser.custom_scalar_layout
+        else:
+            return None
+        error = "the tensor has no layout"
+        for blob in blobs:
+            try:
+                parse(bytes(blob))
+            except DecodeError as decode_error:
+                error = str(decode_error)
+            else:
+                return None
+        return error

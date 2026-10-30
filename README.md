@@ -192,6 +192,11 @@ The virtual tree covers these TensorBoard objects:
   relative paths. Only relative paths to files of the run are followed, and only the first MiB of the config is read.
 - Other plugin JSON payloads: exposed under `/plugins` when no typed tab handles them.
 
+A record that tboardfs cannot convert has no file. Such records are an hparams or mesh record whose plugin content does
+not decode, a custom scalar summary whose tensor has no layout that decodes, and the malformed graph data above.
+tboardfs logs one warning for each, when it reads the event. The other values of the same event stay. A native file,
+which holds the stored bytes, always stays.
+
 ## Output Rules
 
 All `.json` files are strict JSON (RFC 8259). Infinities are written as the strings `"Infinity"` and `"-Infinity"`. In
