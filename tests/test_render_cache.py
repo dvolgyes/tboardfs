@@ -25,14 +25,14 @@ def _entry(size: int) -> bytes:
 
 def _count_renders(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Record the node type of each render of a virtual file."""
-    original = tboardfs.filesystem._materialize_node_bytes
+    original = tboardfs.filesystem.render_node
     renders: list[str] = []
 
     def counting(node: dict[str, Any]) -> bytes:
         renders.append(node["type"])
         return original(node)
 
-    monkeypatch.setattr(tboardfs.filesystem, "_materialize_node_bytes", counting)
+    monkeypatch.setattr(tboardfs.filesystem, "render_node", counting)
     return renders
 
 

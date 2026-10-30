@@ -41,14 +41,14 @@ def test_growing_run_rebuilds_only_its_own_tree(
     run_a, _ = _two_runs(tmp_path)
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
     fs.readdir("/")
-    original = tboardfs.filesystem._build_run_virtual_tree
+    original = tboardfs.filesystem.build_run_tree
     built: list[tuple[str, ...]] = []
 
     def counting_build(run: RunCache, *args: Any, **kwargs: Any) -> dict[str, Any]:
         built.append(run.run_parts)
         return original(run, *args, **kwargs)
 
-    monkeypatch.setattr(tboardfs.filesystem, "_build_run_virtual_tree", counting_build)
+    monkeypatch.setattr(tboardfs.filesystem, "build_run_tree", counting_build)
     _append(run_a, 1)
 
     fs.readdir("/run_b/scalars")

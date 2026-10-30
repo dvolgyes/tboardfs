@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
-from errno import EIO, EISDIR, ENOENT, ENOTDIR, EOPNOTSUPP, EROFS
+from errno import EISDIR, ENOENT, ENOTDIR, EROFS
 from fnmatch import fnmatchcase
-from functools import partial
 import os
 from pathlib import Path
 import stat
@@ -15,98 +14,18 @@ from loguru import logger
 from tboardfs.constants import (
     DEFAULT_CACHE_SIZE_MB,
     DEFAULT_SCALAR_FORMATS,
-    FIXED_TABS,
     TENSORBOARD_EVENT_GLOB,
 )
 from tboardfs.errors import fuse_error
 from tboardfs.file_times import FileTimes
-from tboardfs.extract import _extract_graph_blob, extract_binary_blob
-from tboardfs.graph_files import add_graph_files
-from tboardfs.histogram_files import add_histogram_files
 from tboardfs.indexer import _EventIndexer
-from tboardfs.meta_graph import meta_graph_graph_def
-from tboardfs.model import (
-    BinaryEntry,
-    EventFileCache,
-    JsonEntry,
-    RunCache,
-    SidecarEntry,
-)
-from tboardfs.npy_export import array_to_npy
+from tboardfs.model import RunCache, SidecarEntry
 from tboardfs.paths import _Paths
-from tboardfs.plugin_files import add_typed_plugin_files
-from tboardfs.run_files import RunFiles
 from tboardfs.run_places import RunPlaces
-from tboardfs.skip_failure import skip_failure
+from tboardfs.run_tree import build_run_tree
 from tboardfs.projector import _ProjectorConfig
 from tboardfs.render_cache import RenderCache
-from tboardfs.restarts import _RestartPurge
-from tboardfs.run_metadata_text import run_metadata_text
-from tboardfs.summary_graph import summary_graph_def
-from tboardfs.tables import (
-    _TableExport,
-    _TableMerge,
-    export_table,
-)
-from tboardfs.text_table import _TextTable
-
-
-def _materialize_node_bytes(node: dict[str, Any]) -> bytes:
-    """Return the byte representation for one virtual file node."""
-    node_type = node["type"]
-    if node_type == "bytes":
-        return bytes(node["data"])
-    if node_type == "obj":
-        return str(node["data"]).encode()
-    if node_type == "npy":
-        return array_to_npy(node["data"])
-    if node_type == "json":
-        return _TableExport.json_document(node["data"])
-    if node_type in {"scalar", "table"}:
-        return export_table(node["series"], node["format"])
-    if node_type == "binary":
-        return extract_binary_blob(node["entry"])
-    if node_type == "graph":
-        return _extract_graph_blob(node["entry"])
-    if node_type == "graph_def":
-        entry = node["entry"]
-        graph_def = summary_graph_def(entry, extract_binary_blob(entry))
-        if graph_def is None:  # the event file changed after indexing
-            raise fuse_error(EIO)
-        return graph_def
-    if node_type == "meta_graph_graph":
-        entry = node["entry"]
-        meta_graph = meta_graph_graph_def(entry, _extract_graph_blob(entry))
-        if meta_graph is None:  # the event file changed after indexing
-            raise fuse_error(EIO)
-        return meta_graph
-    if node_type == "run_metadata_text":
-        entry = node["entry"]
-        text = run_metadata_text(entry, extract_binary_blob(entry))
-        if text is None:  # the event file changed after indexing
-            raise fuse_error(EIO)
-        return text
-    if node_type == "sidecar":
-        return bytes(node["entry"].source_path.read_bytes())
-    raise fuse_error(EOPNOTSUPP)
-
-
-def _build_run_virtual_tree(
-    run: RunCache,
-    scalar_formats: tuple[str, ...],
-    step_digits: int,
-) -> dict[str, Any]:
-    """Return virtual tab directories and files for one TensorBoard run.
-
-    Projector/profile sidecars come from ``run.sidecars``, which only a
-    mounted log directory fills.
-    """
-    run_node: dict[str, Any] = {"type": "dir", "children": {}}
-    for tab in FIXED_TABS:
-        run_node["children"].setdefault(tab, {"type": "dir", "children": {}})
-    _RunTree.add_run_files(run_node, run, scalar_formats, step_digits)
-    FileTimes.stamp_dirs(run_node)
-    return run_node
+from tboardfs.render_node import render_node
 
 
 @dataclass
@@ -379,7 +298,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         cached = self._state.run_trees.get(run.run_parts)
         if cached is not None and cached[0] == run.version:
             return cached[1]
-        tree = _build_run_virtual_tree(run, self.scalar_formats, self.step_digits)
+        tree = build_run_tree(run, self.scalar_formats, self.step_digits)
         self._state.run_trees[run.run_parts] = (run.version, tree)
         return tree
 
@@ -403,10 +322,10 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         # Sidecars are files on disk that can change without a new run
         # version, so they are read each time.
         if node["type"] == "sidecar":
-            return _materialize_node_bytes(node)
+            return render_node(node)
         data = self._renders.get(key)
         if data is None:
-            data = _materialize_node_bytes(node)
+            data = render_node(node)
             self._renders.put(key, data)
         return data
 
@@ -540,134 +459,6 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         self._state.tree_cache = None
 
 
-class _RunTree:
-    """Populate virtual run directories from run caches."""
-
-    @staticmethod
-    def add_run_files(
-        run_node: dict[str, Any],
-        run: RunCache,
-        scalar_formats: tuple[str, ...],
-        step_digits: int,
-    ) -> None:
-        """Populate one run directory with indexed virtual files."""
-        scalars = _RunTree.merged_scalars(run)
-        files = RunFiles()
-        _RunTree.add_scalar_files(files, run, scalars, scalar_formats)
-        epochs = scalars.get("epoch")
-        add_histogram_files(
-            files, _RunData.sorted_file_caches(run), epochs, scalar_formats, step_digits
-        )
-        _RunTree.add_binary_files(files, run, step_digits)
-        consumed = add_typed_plugin_files(
-            files, _RunData.run_json_entries(run), scalars, step_digits
-        )
-        _RunTree.add_json_files(files, run, step_digits, consumed)
-        add_graph_files(files, _RunData.sorted_file_caches(run), step_digits)
-        _RunTree.add_sidecar_files(files, run)
-        files.fill(run_node, run)
-
-    @staticmethod
-    def add_scalar_files(
-        files: RunFiles,
-        run: RunCache,
-        scalars: dict[str, dict[str, Any]],
-        scalar_formats: tuple[str, ...],
-    ) -> None:
-        """Add the merged scalar tables of one run as export files."""
-        mtimes = _TableMerge.merge_mtimes(
-            cache.scalar_mtimes for cache in _RunData.sorted_file_caches(run)
-        )
-        for tag, series in scalars.items():
-            for fmt in scalar_formats:
-                files.add_named(
-                    ("scalars",),
-                    tag,
-                    fmt,
-                    {
-                        "type": "scalar",
-                        "series": series,
-                        "format": fmt,
-                        "mtime": mtimes.get(tag, 0.0),
-                    },
-                )
-
-    @staticmethod
-    def add_binary_files(files: RunFiles, run: RunCache, step_digits: int) -> None:
-        """Add lazily extracted binary files for one run."""
-        for entry in _RunData.run_binaries(run):
-            files.add(
-                (entry.kind,),
-                entry.tag,
-                f"{_Paths.step_name(entry.step, step_digits)}{entry.suffix}"
-                f".{entry.extension}",
-                {"type": "binary", "entry": entry, "mtime": entry.wall_time},
-            )
-
-    @staticmethod
-    def add_json_files(
-        files: RunFiles,
-        run: RunCache,
-        step_digits: int,
-        consumed: set[int],
-    ) -> None:
-        """Add plugin JSON and text files for one run."""
-        for entry in _RunData.run_json_entries(run):
-            if id(entry) in consumed:
-                continue
-            tab = entry.tab if entry.tab in FIXED_TABS else "plugins"
-            text_nodes = (
-                skip_failure(
-                    f"text {entry.tag!r} at step {entry.step}",
-                    partial(_TextTable.nodes, entry),
-                )
-                if tab == "text"
-                else None
-            )
-            step = _Paths.step_name(entry.step, step_digits)
-            if text_nodes:
-                for suffix, node in text_nodes:
-                    files.add((tab,), entry.tag, f"{step}.{suffix}", node)
-                continue
-            files.add(
-                _RunTree.json_entry_root(tab, entry),
-                entry.tag,
-                f"{step}.json",
-                {"type": "json", "data": entry.payload, "mtime": entry.wall_time},
-            )
-
-    @staticmethod
-    def merged_scalars(run: RunCache) -> dict[str, dict[str, Any]]:
-        """Return merged scalar series for one run, with the epoch of each step."""
-        scalars = _TableMerge.merge_series(
-            cache.scalars for cache in _RunData.sorted_file_caches(run)
-        )
-        return _TableMerge.step_epochs(scalars, scalars.get("epoch"))
-
-    @staticmethod
-    def add_sidecar_files(files: RunFiles, run: RunCache) -> None:
-        """Add projector, profile and hparams sidecar files for one run."""
-        for sidecar in run.sidecars:
-            files.add_fixed(
-                (sidecar.tab, *sidecar.rel_parts),
-                {
-                    "type": "sidecar",
-                    "entry": sidecar,
-                    "mtime": sidecar.mtime_ns / 1e9,
-                },
-            )
-
-    @staticmethod
-    def json_entry_root(tab: str, entry: JsonEntry) -> tuple[str, ...]:
-        """Return the directory of the tag directories of a plugin JSON entry."""
-        if tab == "plugins":
-            plugin = _Paths.safe_component(
-                str(entry.payload.get("plugin_name") or "unknown")
-            )
-            return (tab, plugin)
-        return (tab,)
-
-
 class _RunData:
     """Refresh event-file caches and collect run entries."""
 
@@ -755,11 +546,6 @@ class _RunData:
         return True
 
     @staticmethod
-    def sorted_file_caches(run: RunCache) -> list[EventFileCache]:
-        """Return run file caches in source-file order, after restart purges."""
-        return _RestartPurge.purge([run.files[path] for path in sorted(run.files)])
-
-    @staticmethod
     def should_refresh(
         run: RunCache, now: float, refresh_age_seconds: float, force: bool
     ) -> bool:
@@ -769,24 +555,6 @@ class _RunData:
             or not run.refreshed_at
             or now - run.refreshed_at >= refresh_age_seconds
         )
-
-    @staticmethod
-    def run_binaries(run: RunCache) -> list[BinaryEntry]:
-        """Return binary entries from all event-file caches."""
-        return [
-            entry
-            for cache in _RunData.sorted_file_caches(run)
-            for entry in cache.binaries
-        ]
-
-    @staticmethod
-    def run_json_entries(run: RunCache) -> list[JsonEntry]:
-        """Return plugin JSON entries from all event-file caches."""
-        return [
-            entry
-            for cache in _RunData.sorted_file_caches(run)
-            for entry in cache.json_entries
-        ]
 
     @staticmethod
     def run_sidecars(

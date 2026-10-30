@@ -4,14 +4,12 @@ from pathlib import Path
 from typing import Any, cast
 
 from tboardfs.constants import DEFAULT_SCALAR_FORMATS
-from tboardfs.filesystem import (
-    TensorBoardFS,
-    _build_run_virtual_tree,
-    _materialize_node_bytes,
-)
+from tboardfs.filesystem import TensorBoardFS
 from tboardfs.indexer import _EventIndexer
 from tboardfs.model import RunCache
 from tboardfs.paths import _Paths
+from tboardfs.render_node import render_node
+from tboardfs.run_tree import build_run_tree
 
 
 class _CopyConflictError(FileExistsError):
@@ -73,7 +71,7 @@ class SingleEventTree:
         if cache.progress.processed_pos == 0:
             raise _NoEventError(source_path)
         run.files[source_path] = cache
-        self.tree = _build_run_virtual_tree(run, scalar_formats, step_digits)
+        self.tree = build_run_tree(run, scalar_formats, step_digits)
 
     def list_file_paths(self, *, prefix: str = "/") -> list[str]:
         """Return virtual file paths below a prefix."""
@@ -90,7 +88,7 @@ class SingleEventTree:
         node = self._lookup_path(path)
         if node["type"] == "dir":
             raise IsADirectoryError(path)
-        return _materialize_node_bytes(node)
+        return render_node(node)
 
     def copy_all(
         self, outdir: str | Path, *, existing: str = "fail"
@@ -113,7 +111,7 @@ class SingleEventTree:
                     continue
                 raise _CopyConflictError(target, copied_paths)
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(_materialize_node_bytes(self._lookup_parts(path)))
+            target.write_bytes(render_node(self._lookup_parts(path)))
             copied_paths.append(virtual_path)
         return len(copied_paths), skipped_paths
 
