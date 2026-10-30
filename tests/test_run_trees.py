@@ -89,7 +89,7 @@ def test_removed_nested_run_leaves_no_entries_in_its_parent_run(
     nested = tmp_path / "a" / "scalars" / EVENTS
     _append(nested, 0)
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
-    assert "images" in fs.readdir("/a/scalars")
+    assert "images" in fs.readdir("/a/scalars~2")
 
     nested.unlink()
 

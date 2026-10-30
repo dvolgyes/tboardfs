@@ -36,6 +36,7 @@ from tboardfs.paths import (
 )
 from tboardfs.plugin_files import add_typed_plugin_files
 from tboardfs.run_files import RunFiles
+from tboardfs.run_places import RunPlaces
 from tboardfs.projector import _ProjectorConfig
 from tboardfs.render_cache import RenderCache
 from tboardfs.restarts import _RestartPurge
@@ -156,6 +157,8 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     :ivar _renders: rendered file bytes by run versions and path
     :ivar _state: mutable run discovery and tree state
     :ivar _lock: serializes every change and read of ``_state``
+    :ivar _run_places: places the run trees in one tree, and keeps the run
+        folders with a suffix so each is logged once
     """
 
     source: Path
@@ -167,6 +170,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     _renders: RenderCache
     _state: "_FsState"
     _lock: RLock
+    _run_places: RunPlaces
 
     def __init__(
         self,
@@ -190,6 +194,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         self._renders = RenderCache(cache_size_mb * 1024 * 1024)
         self._state = _FsState()
         self._lock = RLock()
+        self._run_places = RunPlaces()
         self._discover_runs(force=True)
 
     def virtual_tree(self) -> dict[str, Any]:
@@ -352,20 +357,12 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             return node, (versions, parts)
 
     def _build_tree(self) -> dict[str, Any]:
-        root: dict[str, Any] = {"type": "dir", "children": {}}
-        for run_parts in sorted(self._state.known_run_parts):
-            run_tree = self._run_tree(self._ensure_run(run_parts))
-            # Copy each directory on the way: a nested run must not add its
-            # entries to the cached tree of its parent run.
-            node = root
-            for part in run_parts:
-                child = node["children"].get(part, {"type": "dir", "children": {}})
-                node["children"][part] = node = {
-                    **child,
-                    "children": dict(child["children"]),
-                }
-            node["children"].update(run_tree["children"])
-        return root
+        return self._run_places.build(
+            {
+                run_parts: self._run_tree(self._ensure_run(run_parts))
+                for run_parts in self._state.known_run_parts
+            }
+        )
 
     def _run_tree(self, run: RunCache) -> dict[str, Any]:
         cached = self._state.run_trees.get(run.run_parts)

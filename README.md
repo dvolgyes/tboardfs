@@ -47,6 +47,12 @@ cat mnt/tboardfs/train/scalars/loss.json
 Mount mode is the primary workflow for browsing full log directories. It exposes run directories and supported sidecars
 such as projector/profile files.
 
+A run directory inside another run is a directory beside the tabs of that run. When its name is also an entry of that
+run, such as the run `exp/scalars` below the run `exp`, which has the tab `scalars`, it gets `~2` (then `~3`, and so on)
+and tboardfs logs a warning once. The run `exp/scalars` is then under `/exp/scalars~2/`, and `/exp/scalars/` has only
+the scalars of `exp`. The runs below a renamed directory follow it. A directory that has the name `scalars~2` on disk
+keeps that name; the renamed directory then gets `~3`.
+
 Symlinked directories in the source are followed, so a run kept elsewhere and linked into the log directory is a run
 under the link name. A directory that several links reach is shown once, under the first path in sorted order, and link
 loops end. Sidecar files of a linked run may resolve inside its real run directory; other links out of the source stay
