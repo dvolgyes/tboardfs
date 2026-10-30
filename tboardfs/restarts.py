@@ -17,7 +17,7 @@ class _Stepped(Protocol):
 
     @property
     def step(self) -> int | float:
-        """Return the step; NaN when the event has none."""
+        """Return the step; 0 when the event has none."""
         ...
 
 
@@ -129,7 +129,7 @@ class _RestartPurge:
         starts: list[_Start],
     ) -> np.ndarray:
         """Return a mask of the rows that no START drops."""
-        steps = np.nan_to_num(np.asarray(steps, dtype=np.float64), nan=0.0)
+        steps = np.asarray(steps, dtype=np.float64)
         index = np.arange(len(steps))
         keep = np.ones(len(steps), dtype=bool)
         for step, counts in starts:
