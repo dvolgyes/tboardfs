@@ -34,13 +34,41 @@ class _TableExport:
             np.savez(handle, **series)
             return handle.getvalue()
 
-        frame = _TableExport.dataframe(series)
-        handle = BytesIO()
         separators = {"tsv": "\t", "csv": ","}
         if fmt not in separators:
             raise ValueError(f"unsupported tabular export format: {fmt}")
+        text = _TableExport.number_text(series, separators[fmt])
+        if text is not None:
+            return text
+        frame = _TableExport.dataframe(series)
+        handle = BytesIO()
         frame.to_csv(handle, sep=separators[fmt], index=False, na_rep="nan")
         return handle.getvalue()
+
+    @staticmethod
+    def number_text(series: dict[str, np.ndarray], sep: str) -> bytes | None:
+        """Return a table of number columns as pandas writes it, or None.
+
+        A float64 cell is its shortest repr and another number cell its NumPy
+        text, as in pandas, without the cost of a dataframe. A table with
+        other columns, or with a column name that pandas quotes, gives None.
+        """
+        if not series or any(
+            values.ndim != 1 or values.dtype.kind not in "biuf"
+            for values in series.values()
+        ):
+            return None
+        if any(set(name) & {sep, '"', "\n", "\r"} for name in series):
+            return None
+        columns = [
+            list(map(repr, values.tolist()))
+            if values.dtype == np.float64
+            else values.astype(str)
+            for values in series.values()
+        ]
+        row = sep.join(["%s"] * len(columns))
+        lines = [sep.join(series), *(row % cells for cells in zip(*columns))]
+        return ("\n".join(lines) + "\n").encode()
 
     @staticmethod
     def json(series: dict[str, np.ndarray]) -> bytes:
