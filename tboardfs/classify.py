@@ -5,7 +5,7 @@ from typing import Any
 import magic
 import numpy as np
 
-from tboardfs.constants import DT_STRING, LARGE_TENSOR_THRESHOLD
+from tboardfs.constants import DT_STRING, LARGE_TENSOR_THRESHOLD, PLUGIN_TAB
 from tboardfs.model import Scalar
 from tboardfs.tensor import tensor_to_array
 
@@ -117,9 +117,25 @@ class _Classifier:
             return "videos"
 
         tensor = value.get("tensor")
-        if tensor and _Classifier.large_tensor_like(tensor):
+        if (
+            tensor
+            and _Classifier.raw_tensor_summary(value)
+            and _Classifier.large_tensor_like(tensor)
+        ):
             return "tensors"
         return None
+
+    @staticmethod
+    def raw_tensor_summary(value: dict[str, Any]) -> bool:
+        """Return whether a tensor has no tab of its own to show it.
+
+        Histograms, PR curves, meshes and text have their own tabs; a raw
+        copy under /tensors would be a duplicate in the wrong tab. A tensor
+        without a plugin name keeps it: its strings can be a native file,
+        such as a PNG, which the raw file shows with its extension.
+        """
+        plugin = _Classifier.plugin_name(value)
+        return PLUGIN_TAB.get(plugin, "plugins") in {"tensors", "plugins"}
 
     @staticmethod
     def large_tensor_like(tensor: dict[str, Any]) -> bool:

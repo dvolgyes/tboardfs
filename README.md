@@ -193,7 +193,9 @@ The virtual tree covers these TensorBoard objects:
   dtype that NumPy has keeps its dtype, including float16, int8, int16, uint16 and complex. NumPy has no bfloat16, so
   bfloat16 tensors are widened to float32; this is exact. Float8 and 4-bit tensors are not decoded. String tensors are
   NumPy text arrays (dtype `U`), so `np.load` reads them without `allow_pickle`. A numeric tensor written without a
-  plugin name is also a tensor here. A tensor with one value is a scalar instead.
+  plugin name is also a tensor here. A tensor with one value is a scalar instead. A tensor of 1 KiB or more also has its
+  raw bytes as a native blob file, unless its plugin has its own tab: a large histogram, PR curve, mesh or text summary
+  is only in that tab.
 - Graphs: graph protobuf files under `/graphs`. `graph.pb` is the graph that TensorBoard shows: the newest graph that
   the event files hold as a `graph_def`, which TensorFlow 1 and PyTorch `add_graph` write, or without one, the graph of
   the newest TensorFlow 1 meta graph. A run with several `graph_def` graphs also has `graph_<i>.pb` for each one, in
