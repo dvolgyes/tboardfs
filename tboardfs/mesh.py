@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any, cast
@@ -40,20 +39,15 @@ class _MeshGroup:
 def mesh_nodes(
     entries: list[JsonEntry],
     step_digits: int,
-    dir_parts: Callable[[str], tuple[str, ...]],
-) -> tuple[list[tuple[tuple[str, ...], dict[str, Any]]], set[int]]:
-    """Return virtual files for grouped TensorBoard mesh components.
-
-    ``dir_parts`` gives the virtual directory of a mesh tag.
-    """
-    nodes: list[tuple[tuple[str, ...], dict[str, Any]]] = []
+) -> tuple[list[tuple[str, str, dict[str, Any]]], set[int]]:
+    """Return the mesh tag, file name and node of each mesh file."""
+    nodes: list[tuple[str, str, dict[str, Any]]] = []
     consumed: set[int] = set()
-    for (name, step_number), group in sorted(_MeshFiles.groups(entries).items()):
+    for (tag, step_number), group in sorted(_MeshFiles.groups(entries).items()):
         if _MESH_VERTEX not in group.components:
             continue
         step = _Paths.step_name(step_number, step_digits)
-        rel = ("meshes", *dir_parts(name))
-        nodes.extend(_MeshFiles.files(rel, step, group))
+        nodes.extend((tag, *file) for file in _MeshFiles.files(step, group))
         consumed.update(id(entry) for entry in group.entries)
     return nodes, consumed
 
@@ -109,10 +103,8 @@ class _MeshFiles:
         return groups
 
     @staticmethod
-    def files(
-        rel: tuple[str, ...], step: str, group: _MeshGroup
-    ) -> list[tuple[tuple[str, ...], dict[str, Any]]]:
-        """Return OBJ, NPZ, and metadata files for one mesh group."""
+    def files(step: str, group: _MeshGroup) -> list[tuple[str, dict[str, Any]]]:
+        """Return the names and nodes of the OBJ, NPZ, and metadata files."""
         mesh = {
             label: group.components[key]
             for key, label in _MESH_COMPONENTS
@@ -122,22 +114,19 @@ class _MeshFiles:
         obj = _MeshFiles.obj_text(mesh)
         if obj is not None:
             nodes.append(
-                (
-                    (*rel, f"{step}.obj"),
-                    {"type": "obj", "data": obj, "mtime": group.mtime},
-                )
+                (f"{step}.obj", {"type": "obj", "data": obj, "mtime": group.mtime})
             )
         handle = BytesIO()
         np.savez(handle, **mesh)
         nodes.append(
             (
-                (*rel, f"{step}.npz"),
+                f"{step}.npz",
                 {"type": "bytes", "data": handle.getvalue(), "mtime": group.mtime},
             )
         )
         nodes.append(
             (
-                (*rel, f"{step}.json"),
+                f"{step}.json",
                 {
                     "type": "json",
                     "data": _MeshFiles.metadata(group),

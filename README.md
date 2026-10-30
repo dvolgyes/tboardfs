@@ -138,7 +138,10 @@ Each skipped virtual path is reported as a warning on stderr. `--force` and `--s
 A tag is a path below its tab, so `train/loss` is `/scalars/train/loss.json`. Empty parts of a tag are left out, and a
 tag without a name is `untagged`. When two tags of a run get the same path, such as `a/b` and `a//b`, the tag that the
 path spells keeps it. The other tag gets `~2` (then `~3`, and so on) on its last part in every tab, and tboardfs logs a
-warning once.
+warning once. A tag directory can also have the name of a file, such as the tag `a/000001.npy` beside the step file
+`000001.npy` of the tag `a`, or the tag `loss.json/x` beside `/scalars/loss.json`. Then the directory gets `~2` in every
+tab, such as `/tensors/a/000001.npy~2/`, and the file keeps its name. When two files without a tag meet at one path,
+such as two profile sidecars `a` and `a/c`, the first file stays, and tboardfs logs a warning.
 
 The virtual tree covers these TensorBoard objects:
 

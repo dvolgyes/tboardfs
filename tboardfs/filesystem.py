@@ -35,12 +35,12 @@ from tboardfs.paths import (
     find_tensorboard_files,
 )
 from tboardfs.plugin_files import add_typed_plugin_files
+from tboardfs.run_files import RunFiles
 from tboardfs.projector import _ProjectorConfig
 from tboardfs.render_cache import RenderCache
 from tboardfs.restarts import _RestartPurge
 from tboardfs.run_metadata_text import run_metadata_text
 from tboardfs.summary_graph import summary_graph_def
-from tboardfs.tag_paths import TagPaths
 from tboardfs.tables import (
     _TableExport,
     _TableMerge,
@@ -493,14 +493,6 @@ class _FsNode:
     """Create virtual filesystem nodes."""
 
     @staticmethod
-    def add_file(
-        root: dict[str, Any], rel_parts: tuple[str, ...], node: dict[str, Any]
-    ) -> None:
-        """Add one virtual file to a directory tree."""
-        parent = _Paths.mkdirs(root, rel_parts[:-1])
-        parent["children"][rel_parts[-1]] = node
-
-    @staticmethod
     def table_node(series: dict[str, Any], fmt: str, mtime: float) -> dict[str, Any]:
         """Return a virtual table node."""
         return {"type": "table", "series": series, "format": fmt, "mtime": mtime}
@@ -518,27 +510,25 @@ class _RunTree:
     ) -> None:
         """Populate one run directory with indexed virtual files."""
         scalars = _RunTree.merged_scalars(run)
-        tags = TagPaths.for_run(run, scalars)
-        _RunTree.add_scalar_files(run_node, run, scalars, scalar_formats, tags)
+        files = RunFiles()
+        _RunTree.add_scalar_files(files, run, scalars, scalar_formats)
         epochs = scalars.get("epoch")
-        _HistogramFiles.add_files(
-            run_node, run, epochs, scalar_formats, step_digits, tags
-        )
-        _RunTree.add_binary_files(run_node, run, step_digits, tags)
+        _HistogramFiles.add_files(files, run, epochs, scalar_formats, step_digits)
+        _RunTree.add_binary_files(files, run, step_digits)
         consumed = add_typed_plugin_files(
-            run_node, _RunData.run_json_entries(run), scalars, step_digits, tags
+            files, _RunData.run_json_entries(run), scalars, step_digits
         )
-        _RunTree.add_json_files(run_node, run, step_digits, tags, consumed)
-        add_graph_files(run_node, _RunData.sorted_file_caches(run), step_digits, tags)
-        _RunTree.add_sidecar_files(run_node, run)
+        _RunTree.add_json_files(files, run, step_digits, consumed)
+        add_graph_files(files, _RunData.sorted_file_caches(run), step_digits)
+        _RunTree.add_sidecar_files(files, run)
+        files.fill(run_node, run)
 
     @staticmethod
     def add_scalar_files(
-        run_node: dict[str, Any],
+        files: RunFiles,
         run: RunCache,
         scalars: dict[str, dict[str, Any]],
         scalar_formats: tuple[str, ...],
-        tags: TagPaths,
     ) -> None:
         """Add the merged scalar tables of one run as export files."""
         mtimes = _TableMerge.merge_mtimes(
@@ -546,9 +536,10 @@ class _RunTree:
         )
         for tag, series in scalars.items():
             for fmt in scalar_formats:
-                _FsNode.add_file(
-                    run_node,
-                    ("scalars", *tags.file_parts(tag, fmt)),
+                files.add_named(
+                    ("scalars",),
+                    tag,
+                    fmt,
                     {
                         "type": "scalar",
                         "series": series,
@@ -558,28 +549,22 @@ class _RunTree:
                 )
 
     @staticmethod
-    def add_binary_files(
-        run_node: dict[str, Any], run: RunCache, step_digits: int, tags: TagPaths
-    ) -> None:
+    def add_binary_files(files: RunFiles, run: RunCache, step_digits: int) -> None:
         """Add lazily extracted binary files for one run."""
         for entry in _RunData.run_binaries(run):
-            rel = (
-                *tags.dir_parts(entry.tag),
+            files.add(
+                (entry.kind,),
+                entry.tag,
                 f"{_Paths.step_name(entry.step, step_digits)}{entry.suffix}"
                 f".{entry.extension}",
-            )
-            _FsNode.add_file(
-                run_node,
-                (entry.kind, *rel),
                 {"type": "binary", "entry": entry, "mtime": entry.wall_time},
             )
 
     @staticmethod
     def add_json_files(
-        run_node: dict[str, Any],
+        files: RunFiles,
         run: RunCache,
         step_digits: int,
-        tags: TagPaths,
         consumed: set[int],
     ) -> None:
         """Add plugin JSON and text files for one run."""
@@ -588,15 +573,15 @@ class _RunTree:
                 continue
             tab = entry.tab if entry.tab in FIXED_TABS else "plugins"
             text_nodes = tab == "text" and _TextTable.nodes(entry)
+            step = _Paths.step_name(entry.step, step_digits)
             if text_nodes:
-                step = _Paths.step_name(entry.step, step_digits)
                 for suffix, node in text_nodes:
-                    parts = (tab, *tags.dir_parts(entry.tag), f"{step}.{suffix}")
-                    _FsNode.add_file(run_node, parts, node)
+                    files.add((tab,), entry.tag, f"{step}.{suffix}", node)
                 continue
-            _FsNode.add_file(
-                run_node,
-                _RunTree.json_entry_parts(tab, entry, step_digits, tags),
+            files.add(
+                _RunTree.json_entry_root(tab, entry),
+                entry.tag,
+                f"{step}.json",
                 {"type": "json", "data": entry.payload, "mtime": entry.wall_time},
             )
 
@@ -609,11 +594,10 @@ class _RunTree:
         return _TableMerge.step_epochs(scalars, scalars.get("epoch"))
 
     @staticmethod
-    def add_sidecar_files(run_node: dict[str, Any], run: RunCache) -> None:
+    def add_sidecar_files(files: RunFiles, run: RunCache) -> None:
         """Add projector, profile and hparams sidecar files for one run."""
         for sidecar in run.sidecars:
-            _FsNode.add_file(
-                run_node,
+            files.add_fixed(
                 (sidecar.tab, *sidecar.rel_parts),
                 {
                     "type": "sidecar",
@@ -623,17 +607,14 @@ class _RunTree:
             )
 
     @staticmethod
-    def json_entry_parts(
-        tab: str, entry: JsonEntry, step_digits: int, tags: TagPaths
-    ) -> tuple[str, ...]:
-        """Return virtual path parts for a plugin JSON entry."""
-        filename = f"{_Paths.step_name(entry.step, step_digits)}.json"
+    def json_entry_root(tab: str, entry: JsonEntry) -> tuple[str, ...]:
+        """Return the directory of the tag directories of a plugin JSON entry."""
         if tab == "plugins":
             plugin = _Paths.safe_component(
                 str(entry.payload.get("plugin_name") or "unknown")
             )
-            return (tab, plugin, *tags.dir_parts(entry.tag), filename)
-        return (tab, *tags.dir_parts(entry.tag), filename)
+            return (tab, plugin)
+        return (tab,)
 
 
 class _HistogramFiles:
@@ -641,12 +622,11 @@ class _HistogramFiles:
 
     @staticmethod
     def add_files(
-        run_node: dict[str, Any],
+        files: RunFiles,
         run: RunCache,
         epochs: dict[str, Any] | None,
         scalar_formats: tuple[str, ...],
         step_digits: int,
-        tags: TagPaths,
     ) -> None:
         """Add the histogram and distribution tables of one run, with its epochs."""
         histograms = _TableMerge.merge_series(
@@ -657,7 +637,6 @@ class _HistogramFiles:
             cache.histogram_mtimes for cache in _RunData.sorted_file_caches(run)
         )
         for tag, series in histograms.items():
-            tag_parts = tags.dir_parts(tag)
             steps = _TableMerge.unique_steps(series)
             for fmt in scalar_formats:
                 if fmt not in {"json", "tsv", "npz"}:
@@ -665,10 +644,10 @@ class _HistogramFiles:
                 for step in steps:
                     step_series = _TableMerge.series_for_step(series, step)
                     _HistogramFiles.add_step_table(
-                        run_node,
+                        files,
                         {
                             "tab": "histograms",
-                            "tag_parts": tag_parts,
+                            "tag": tag,
                             "step": step,
                             "series": step_series,
                             "fmt": fmt,
@@ -678,10 +657,10 @@ class _HistogramFiles:
                     )
                     distribution = _TableMerge.distribution_from_histogram(step_series)
                     _HistogramFiles.add_step_table(
-                        run_node,
+                        files,
                         {
                             "tab": "distributions",
-                            "tag_parts": tag_parts,
+                            "tag": tag,
                             "step": step,
                             "series": distribution,
                             "fmt": fmt,
@@ -691,18 +670,12 @@ class _HistogramFiles:
                     )
 
     @staticmethod
-    def add_step_table(
-        run_node: dict[str, Any], item: dict[str, Any], step_digits: int
-    ) -> None:
+    def add_step_table(files: RunFiles, item: dict[str, Any], step_digits: int) -> None:
         """Add one per-step tabular file."""
-        rel = (
-            item["tab"],
-            *item["tag_parts"],
+        files.add(
+            (item["tab"],),
+            item["tag"],
             f"{_Paths.step_name(item['step'], step_digits)}.{item['fmt']}",
-        )
-        _FsNode.add_file(
-            run_node,
-            rel,
             _FsNode.table_node(item["series"], item["fmt"], item["mtime"]),
         )
 

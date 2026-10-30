@@ -1,6 +1,3 @@
-import time
-from typing import Any
-
 import numpy as np
 
 from tboardfs.array_json import array_to_json
@@ -9,7 +6,7 @@ from tboardfs.hparams import hparams_json
 from tboardfs.mesh import mesh_nodes
 from tboardfs.model import JsonEntry
 from tboardfs.paths import _Paths
-from tboardfs.tag_paths import TagPaths
+from tboardfs.run_files import RunFiles
 from tboardfs.tensor import tensor_to_array
 
 # Row order of the pr_curves tensor, from the TensorBoard pr_curve plugin.
@@ -24,29 +21,26 @@ PR_CURVE_ROWS = (
 
 
 def add_typed_plugin_files(
-    run_node: dict[str, Any],
+    files: RunFiles,
     entries: list[JsonEntry],
     scalars: dict[str, dict[str, np.ndarray]],
     step_digits: int,
-    tags: TagPaths,
 ) -> set[int]:
     """Add typed plugin files and return consumed entry identities."""
     consumed: set[int] = set()
-    _TypedPluginFiles.add_hparams(run_node, entries, scalars, consumed)
-    _TypedPluginFiles.add_custom_scalars(run_node, entries, consumed)
-    _TypedPluginFiles.add_meshes(run_node, entries, step_digits, tags, consumed)
+    _TypedPluginFiles.add_hparams(files, entries, scalars, consumed)
+    _TypedPluginFiles.add_custom_scalars(files, entries, consumed)
+    _TypedPluginFiles.add_meshes(files, entries, step_digits, consumed)
     for entry in entries:
         marker = id(entry)
         if marker in consumed:
             continue
         if entry.tab == "pr_curves":
             consumed.update(
-                _TypedPluginFiles.add_tensor_table(run_node, entry, step_digits, tags)
+                _TypedPluginFiles.add_tensor_table(files, entry, step_digits)
             )
         elif entry.tab == "tensors":
-            consumed.update(
-                _TypedPluginFiles.add_tensor(run_node, entry, step_digits, tags)
-            )
+            consumed.update(_TypedPluginFiles.add_tensor(files, entry, step_digits))
         elif entry.tab == "meshes" or entry.tab == "videos":
             consumed.add(marker)
     return consumed
@@ -57,7 +51,7 @@ class _TypedPluginFiles:
 
     @staticmethod
     def add_hparams(
-        run_node: dict[str, Any],
+        files: RunFiles,
         entries: list[JsonEntry],
         scalars: dict[str, dict[str, np.ndarray]],
         consumed: set[int],
@@ -66,8 +60,7 @@ class _TypedPluginFiles:
         hparams = [entry for entry in entries if entry.tab == "hparams"]
         if not hparams:
             return
-        _TypedPluginFiles.add_file(
-            run_node,
+        files.add_fixed(
             ("hparams", "hparams.json"),
             {
                 "type": "json",
@@ -79,14 +72,13 @@ class _TypedPluginFiles:
 
     @staticmethod
     def add_custom_scalars(
-        run_node: dict[str, Any], entries: list[JsonEntry], consumed: set[int]
+        files: RunFiles, entries: list[JsonEntry], consumed: set[int]
     ) -> None:
         """Add a merged custom scalar layout file."""
         layouts = [entry for entry in entries if entry.tab == "custom_scalars"]
         if not layouts:
             return
-        _TypedPluginFiles.add_file(
-            run_node,
+        files.add_fixed(
             ("custom_scalars", "layout.json"),
             {
                 "type": "json",
@@ -98,7 +90,7 @@ class _TypedPluginFiles:
 
     @staticmethod
     def add_tensor_table(
-        run_node: dict[str, Any], entry: JsonEntry, step_digits: int, tags: TagPaths
+        files: RunFiles, entry: JsonEntry, step_digits: int
     ) -> set[int]:
         """Add table, JSON, and NPY views for tensor-backed plugin records."""
         data = tensor_to_array(entry.payload.get("tensor") or {})
@@ -106,11 +98,11 @@ class _TypedPluginFiles:
             return set()
         step = _Paths.step_name(entry.step, step_digits)
         table = _TypedPluginFiles.pr_curve_table(data)
-        rel = ("pr_curves", *tags.dir_parts(entry.tag))
         for fmt in ("json", "tsv"):
-            _TypedPluginFiles.add_file(
-                run_node,
-                (*rel, f"{step}.{fmt}"),
+            files.add(
+                ("pr_curves",),
+                entry.tag,
+                f"{step}.{fmt}",
                 {
                     "type": "table",
                     "series": table,
@@ -118,57 +110,47 @@ class _TypedPluginFiles:
                     "mtime": entry.wall_time,
                 },
             )
-        _TypedPluginFiles.add_file(
-            run_node,
-            (*rel, f"{step}.npy"),
+        files.add(
+            ("pr_curves",),
+            entry.tag,
+            f"{step}.npy",
             {"type": "npy", "data": data, "mtime": entry.wall_time},
         )
         return {id(entry)}
 
     @staticmethod
-    def add_tensor(
-        run_node: dict[str, Any], entry: JsonEntry, step_digits: int, tags: TagPaths
-    ) -> set[int]:
+    def add_tensor(files: RunFiles, entry: JsonEntry, step_digits: int) -> set[int]:
         """Add JSON and NPY views for one tensor record."""
         data = tensor_to_array(entry.payload.get("tensor") or {})
         if data is None:
             return set()
         step = _Paths.step_name(entry.step, step_digits)
-        rel = ("tensors", *tags.dir_parts(entry.tag))
-        _TypedPluginFiles.add_file(
-            run_node,
-            (*rel, f"{step}.json"),
+        files.add(
+            ("tensors",),
+            entry.tag,
+            f"{step}.json",
             {"type": "json", "data": array_to_json(data), "mtime": entry.wall_time},
         )
-        _TypedPluginFiles.add_file(
-            run_node,
-            (*rel, f"{step}.npy"),
+        files.add(
+            ("tensors",),
+            entry.tag,
+            f"{step}.npy",
             {"type": "npy", "data": data, "mtime": entry.wall_time},
         )
         return {id(entry)}
 
     @staticmethod
     def add_meshes(
-        run_node: dict[str, Any],
+        files: RunFiles,
         entries: list[JsonEntry],
         step_digits: int,
-        tags: TagPaths,
         consumed: set[int],
     ) -> None:
         """Add grouped mesh component archives."""
-        nodes, used = mesh_nodes(entries, step_digits, tags.dir_parts)
-        for rel, node in nodes:
-            _TypedPluginFiles.add_file(run_node, rel, node)
+        nodes, used = mesh_nodes(entries, step_digits)
+        for tag, name, node in nodes:
+            files.add(("meshes",), tag, name, node)
         consumed.update(used)
-
-    @staticmethod
-    def add_file(
-        root: dict[str, Any], rel_parts: tuple[str, ...], node: dict[str, Any]
-    ) -> None:
-        """Add one virtual file to a directory tree."""
-        parent = _Paths.mkdirs(root, rel_parts[:-1])
-        node.setdefault("mtime", time.time())
-        parent["children"][rel_parts[-1]] = node
 
     @staticmethod
     def pr_curve_table(data: np.ndarray) -> dict[str, np.ndarray]:
