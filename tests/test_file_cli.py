@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -388,3 +390,19 @@ def test_file_cli_reports_an_output_that_cannot_be_written(tmp_path: Path) -> No
         assert result.exit_code == 1
         assert "Error: " in result.stderr
         assert isinstance(result.exception, SystemExit)
+
+
+def test_file_cli_and_library_work_without_libfuse() -> None:
+    """Importing mfusepy needs libfuse, which a machine without FUSE has not."""
+    code = (
+        "import sys; sys.modules['mfusepy'] = None\n"
+        "from tboardfs import TensorBoardFS\n"
+        "from tboardfs.file_cli import main\n"
+        f"main(['list', {str(FIXTURE_EVENT)!r}])\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "/scalars/loss.json\n" in result.stdout

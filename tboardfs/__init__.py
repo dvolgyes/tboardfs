@@ -1,4 +1,5 @@
-from tboardfs.cli import main
+import importlib
+
 from tboardfs.constants import FIXED_TABS
 from tboardfs.filesystem import TensorBoardFS
 from tboardfs.indexer import parse_file
@@ -11,3 +12,11 @@ __all__ = (
     "main",
     "parse_file",
 )
+
+
+def __getattr__(name: str) -> object:
+    """Import the mount command when it is used: mfusepy needs libfuse."""
+    if name != "main":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    main: object = importlib.import_module("tboardfs.cli").main
+    return main

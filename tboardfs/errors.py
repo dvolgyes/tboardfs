@@ -1,7 +1,6 @@
-from mfusepy import FuseOSError
+import os
 
 
-def fuse_error(errno: int) -> Exception:
-    """Create the FUSE-compatible exception for an errno value."""
-    error: Exception = FuseOSError(errno)
-    return error
+def fuse_error(errno: int) -> OSError:
+    """Create the exception for an errno value; mfusepy returns it as -errno."""
+    return OSError(errno, os.strerror(errno))
