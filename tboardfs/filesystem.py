@@ -226,20 +226,20 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         opened = self._open_file(file_handles)
         mode, nlink = stat.S_IFREG | 0o444, 1
         if opened is not None:
-            data, mtime = opened
+            size, mtime = len(opened[0]), opened[1]
         else:
             node, key = self._locate(path)
             mtime = FileTimes.of(node)
             if node["type"] == "dir":
-                mode, nlink, data = stat.S_IFDIR | 0o555, 2, b""
+                mode, nlink, size = stat.S_IFDIR | 0o555, 2, 0
             else:
-                data = self._node_bytes(node, key)
+                size = self._node_size(node, key)
         uid, gid = self.owner
         return {
             "st_mode": mode,
             "st_nlink": nlink,
-            "st_size": len(data),
-            "st_blocks": (len(data) + 511) // 512,
+            "st_size": size,
+            "st_blocks": (size + 511) // 512,
             "st_ctime": mtime,
             "st_mtime": mtime,
             "st_atime": mtime,
@@ -396,6 +396,13 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             return None
         with self._lock:
             return self._state.open_files.get(handle)
+
+    def _node_size(self, node: dict[str, Any], key: Hashable) -> int:
+        # A sidecar can be large, so its size comes from the disk.
+        if node["type"] == "sidecar":
+            entry: SidecarEntry = node["entry"]
+            return entry.source_path.stat().st_size
+        return len(self._node_bytes(node, key))
 
     def _node_bytes(self, node: dict[str, Any], key: Hashable) -> bytes:
         # Sidecars are files on disk that can change without a new run

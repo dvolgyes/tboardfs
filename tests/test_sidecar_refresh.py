@@ -1,5 +1,6 @@
 """Sidecar files that appear, change or go away show at the next refresh."""
 
+import errno
 import os
 from pathlib import Path
 
@@ -113,3 +114,22 @@ def test_a_projector_config_that_cannot_be_read_does_not_break_the_mount(
         projector.chmod(0o644)
 
     assert "scalars" in listing
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read mode-000 files")
+def test_a_sidecar_that_cannot_be_read_has_a_size_but_no_bytes(
+    tmp_path: Path,
+) -> None:
+    """As on disk, ls -l shows the file and only a read of it fails."""
+    fs, projector = _fs_with_projector(tmp_path)
+    projector.write_text("a longer config")
+    projector.chmod(0)
+    try:
+        size = fs.getattr("/projector/projector_config.pbtxt")["st_size"]
+        with pytest.raises(OSError) as raised:
+            fs.open("/projector/projector_config.pbtxt", os.O_RDONLY)
+    finally:
+        projector.chmod(0o644)
+
+    assert size == len("a longer config")
+    assert raised.value.errno == errno.EACCES
