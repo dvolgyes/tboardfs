@@ -62,7 +62,7 @@ def test_fixtures_leave_out_the_default_fields() -> None:
     """The reference holds only if the writer left the zero values out.
 
     The numbers are the upstream field numbers: Event.step 2 and wall_time 1,
-    Value.histo 5 with min 1 and max 2, Value.tensor 8 with tensor_shape 2,
+    Value.tag 1, Value.histo 5 with min 1 and max 2, Value.tensor 8 with tensor_shape 2,
     dim 2 and size 1, and Value.metadata 9 with plugin_data 1 and content 2.
     """
     step_zero = _events("step_zero")
@@ -87,6 +87,9 @@ def test_fixtures_leave_out_the_default_fields() -> None:
         (metadata,) = _fields(_values(event)["note"], 9)
         (plugin_data,) = _fields(metadata, 1)
         assert _fields(plugin_data, 2) == []
+    for event in _events("empty_tag"):
+        (summary,) = _fields(event, 5)
+        assert [_fields(value, 1) for value in _fields(summary, 1)] == [[]]
 
 
 @pytest.mark.parametrize(("run", "kind", "tag", "expected"), _cases())
@@ -95,10 +98,11 @@ def test_proto3_defaults_read_as_tensorboard(
 ) -> None:
     """Each scalar, histogram and tensor has TensorBoard's values.
 
-    A tensor with one number is a scalar in tboardfs, and a string tensor
-    of the text plugin is a text file.
+    A tensor with one number is a scalar in tboardfs, a string tensor of the
+    text plugin is a text file, and a value without a tag is "untagged".
     """
     fs = TensorBoardFS(LOGS / run)
+    tag = tag or "untagged"
 
     if kind == "scalars":
         rows = _json(fs, f"/scalars/{tag}.json")

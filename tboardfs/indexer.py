@@ -288,10 +288,12 @@ class _EventIndexer:
         ],
         timing: tuple[Any, Any, float, float],
     ) -> object:
-        """Index one TensorBoard summary value."""
-        tag = value.get("tag")
-        if not tag:
-            return timing[0]
+        """Index one TensorBoard summary value.
+
+        A value without a tag is kept, as TensorBoard keeps it; its files are
+        named "untagged".
+        """
+        tag = value["tag"]
         scalar_rows, scalar_dtypes, histogram_rows = rows
         epoch, step, wall_time, relative_time = timing
         epoch = _EventIndexer.add_scalar(

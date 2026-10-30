@@ -21,6 +21,7 @@ Runs:
     tensor_zero_dims: tensors with a dimension of size 0, zero values, and
         single values that fill a shape.
     empty_plugin_content: a text summary with empty plugin content.
+    empty_tag: TF1 scalars without a tag.
 
 tests/golden/proto3/<run>.json is what the TensorBoard 2.21 multiplexer
 reads from the run, after data_compat and dataclass_compat: scalar rows as
@@ -104,6 +105,10 @@ def main() -> None:
         "empty_plugin_content": [
             _Events.event(1, 10.0, _Events.text("note", b"hello")),
             _Events.event(2, 11.0, _Events.text("note", b"")),
+        ],
+        "empty_tag": [
+            _Events.event(1, 10.0, _Events.simple("", 1.0)),
+            _Events.event(2, 11.0, _Events.simple("", 2.0)),
         ],
     }
     for name, events in runs.items():
