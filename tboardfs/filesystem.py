@@ -577,11 +577,23 @@ class _RunTree:
 
     @staticmethod
     def add_graph_files(run_node: dict[str, Any], run: RunCache) -> None:
-        """Add graph protobuf files for one run."""
-        for graph in _RunData.run_graphs(run):
+        """Add graph protobuf files for one run.
+
+        graph.pb is the newest graph, as in TensorBoard. A run with several
+        graphs also lists each one as graph_<i>.pb in write order.
+        """
+        graphs = _RunData.run_graphs(run)
+        if not graphs:
+            return
+        named = [(graphs[-1].name, graphs[-1])]
+        if len(graphs) > 1:
+            named += [
+                (f"graph_{index}.pb", graph) for index, graph in enumerate(graphs)
+            ]
+        for name, graph in named:
             _FsNode.add_file(
                 run_node,
-                ("graphs", graph.name),
+                ("graphs", name),
                 {"type": "graph", "entry": graph, "mtime": graph.wall_time},
             )
 
