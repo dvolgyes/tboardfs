@@ -89,3 +89,23 @@ def test_numpy_values_in_a_document_are_converted() -> None:
         "array": ["NaN", 1.0],
         "scalar": "-Infinity",
     }
+
+
+def test_text_in_a_document_is_utf8() -> None:
+    """Non-ASCII text is UTF-8, as RFC 8259 asks, not escaped."""
+    data = _TableExport.json_document({"name": "épsilon δ"})
+
+    assert "épsilon δ".encode() in data
+    assert _strict(data) == {"name": "épsilon δ"}
+
+
+def test_table_json_numbers_read_back_exactly() -> None:
+    """Each number of a table reads back as the value of its column."""
+    rng = np.random.default_rng(0)
+    values = rng.normal(size=200) * 10.0 ** rng.integers(-320, 300, size=200)
+    series = {"step": np.arange(200, dtype=np.int64) * 2**40, "value": values}
+
+    rows = _strict(_TableExport.json(series))
+
+    assert [row["step"] for row in rows] == series["step"].tolist()
+    assert [row["value"] for row in rows] == values.tolist()

@@ -1,17 +1,22 @@
 import base64
 from collections import defaultdict
 from io import BytesIO
-import json
 import math
 from collections.abc import Iterable, Mapping
 from typing import Any
 
 import numpy as np
+import orjson
 import pandas as pd
 
 from tboardfs.constants import SCALAR_COLUMNS
 from tboardfs.decode import _Decode
 from tboardfs.histogram_compress import NORMAL_HISTOGRAM_BPS, compress_histogram
+
+# Two-space indents, keys such as numbers as text, and a final newline.
+_JSON_OPTIONS = (
+    orjson.OPT_INDENT_2 | orjson.OPT_NON_STR_KEYS | orjson.OPT_APPEND_NEWLINE
+)
 
 
 def export_table(series: dict[str, np.ndarray], fmt: str) -> bytes:
@@ -75,7 +80,7 @@ class _TableExport:
         """Render a table as strict JSON rows."""
         columns = [_TableExport.json_column(values) for values in series.values()]
         rows = [dict(zip(series, cells, strict=True)) for cells in zip(*columns)]
-        return (json.dumps(rows, allow_nan=False, indent=2) + "\n").encode()
+        return orjson.dumps(rows, option=_JSON_OPTIONS)
 
     @staticmethod
     def json_column(values: np.ndarray) -> list[object]:
@@ -99,10 +104,10 @@ class _TableExport:
 
         NaN and infinities use the protobuf JSON spelling ("NaN", "Infinity",
         "-Infinity"). Bytes that are UTF-8 become text; other bytes become
-        ``{"base64": ...}``.
+        ``{"base64": ...}``. Text is UTF-8.
         """
         value = _TableExport.json_value(data, "NaN")
-        return (json.dumps(value, allow_nan=False, indent=2) + "\n").encode()
+        return orjson.dumps(value, option=_JSON_OPTIONS)
 
     @staticmethod
     def json_value(value: object, nan: str | None) -> object:
