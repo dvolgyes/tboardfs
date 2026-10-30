@@ -131,7 +131,9 @@ The virtual tree covers these TensorBoard objects:
 - Text summaries: UTF-8 text files under `/text`. A summary with one string is that text. A summary with many strings is
   a Markdown table, as TensorBoard shows it: a vector is one column, and a tensor with more than 2 dimensions shows its
   first 2-D slice after a warning. A `.json` file next to the table keeps the shape and the exact strings.
-- Meshes: per-step `json`, `npz`, and Wavefront `obj` exports under `/meshes`.
+- Meshes: per-step `json`, `npz`, and Wavefront `obj` exports under `/meshes`. The OBJ file has one object
+  (`o mesh_<i>`) per batch element when the batch has more than one mesh. Vertex colors follow the coordinates as
+  `r g b` values in [0, 1], which MeshLab and Blender read. A mesh without faces is an OBJ point cloud.
 - PR curves: per-step `json`, `tsv`, and `npy` exports under `/pr_curves`. The tables have one row per threshold, with
   the columns `threshold`, `true_positives`, `false_positives`, `true_negatives`, `false_negatives`, `precision`, and
   `recall`. The thresholds are evenly spaced in [0, 1], as in TensorBoard. The `.npy` file keeps the raw `[6, N]`
