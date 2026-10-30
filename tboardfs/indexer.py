@@ -17,12 +17,15 @@ from tboardfs.model import (
     GraphSummaryEntry,
     GraphEntry,
     JsonEntry,
+    MetaGraphEntry,
     ParseProgress,
     Record,
     RestartMark,
     TFRecordError,
 )
+from tboardfs.meta_graph import meta_graph_graph_def
 from tboardfs.restarts import _RestartPurge
+from tboardfs.run_metadata_text import run_metadata_text
 from tboardfs.summary import parse_event
 from tboardfs.summary_graph import summary_graph_def
 from tboardfs.tensor_summary import _TensorSummary
@@ -252,18 +255,29 @@ class _EventIndexer:
         record: Record,
         wall_time: float,
     ) -> None:
-        """Index graph payloads found in an event record."""
-        if event.get("graph_def") is None:
-            return
-        cache.graphs.append(
-            GraphEntry(
-                source_path=path,
-                name="graph.pb",
-                wall_time=wall_time,
-                payload_offset=record.payload_offset,
-                payload_size=record.payload_size,
+        """Index graph and meta graph payloads found in an event record."""
+        if event.get("graph_def") is not None:
+            cache.graphs.append(
+                GraphEntry(
+                    source_path=path,
+                    name="graph.pb",
+                    wall_time=wall_time,
+                    payload_offset=record.payload_offset,
+                    payload_size=record.payload_size,
+                )
             )
+        meta_graph = event.get("meta_graph_def")
+        if meta_graph is None:
+            return
+        entry = MetaGraphEntry(
+            source_path=path,
+            name="meta_graph.pb",
+            wall_time=wall_time,
+            payload_offset=record.payload_offset,
+            payload_size=record.payload_size,
         )
+        entry.readable = meta_graph_graph_def(entry, bytes(meta_graph)) is not None
+        cache.graphs.append(entry)
 
     @staticmethod
     def add_summary(
@@ -376,8 +390,12 @@ class _EventIndexer:
                     suffix=suffix,
                 )
                 if part_kind == "graphs":
-                    converts = summary_graph_def(entry, data) is not None
-                    entry = GraphSummaryEntry(**vars(entry), converts=converts)
+                    graph, profile = _TensorSummary.graph_views(value)
+                    entry = GraphSummaryEntry(
+                        **vars(entry),
+                        converts=graph and summary_graph_def(entry, data) is not None,
+                        profiles=profile and run_metadata_text(entry, data) is not None,
+                    )
                 cache.binaries.append(entry)
             return
         kind = _Classifier.binary_kind(value)

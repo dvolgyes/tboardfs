@@ -41,7 +41,11 @@ def _graph_files(fs: TensorBoardFS, tag: str) -> tuple[str, str | None]:
     native = next(
         name for name in names if name.endswith((".json", ".run_metadata.pb"))
     )
-    converted = [f"/graphs/{tag}/{name}" for name in names if name != native]
+    converted = [
+        f"/graphs/{tag}/{name}"
+        for name in names
+        if name != native and not name.endswith(".pbtxt")
+    ]
     return f"/graphs/{tag}/{native}", converted[0] if converted else None
 
 
@@ -194,18 +198,26 @@ def test_graph_without_plugin_content_1_is_not_a_graph(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("blob", "plugin", "native"),
+    ("blob", "plugin", "native", "profile"),
     [
-        (b"{not json", "graph_keras_model", "000000.json"),
-        (b'{"config": []}', "graph_keras_model", "000000.json"),
-        (b"\xff\xff", "graph_run_metadata_graph", "000000.run_metadata.pb"),
-        (_run_metadata(1, 2), "graph_run_metadata", "000000.run_metadata.pb"),
+        (b"{not json", "graph_keras_model", "000000.json", []),
+        (b'{"config": []}', "graph_keras_model", "000000.json", []),
+        (b"\xff\xff", "graph_run_metadata_graph", "000000.run_metadata.pb", []),
+        (
+            _run_metadata(1, 2),
+            "graph_run_metadata",
+            "000000.run_metadata.pb",
+            ["000000.run_metadata.pbtxt"],
+        ),
     ],
 )
 def test_unconvertible_graph_has_only_its_native_file(
-    tmp_path: Path, blob: bytes, plugin: str, native: str
+    tmp_path: Path, blob: bytes, plugin: str, native: str, profile: list[str]
 ) -> None:
-    """A malformed config or graphs of different versions have no GraphDef file."""
+    """A malformed config or graphs of different versions have no GraphDef file.
+
+    A RunMetadata that parses keeps its profile text.
+    """
     warnings: list[str] = []
     sink = logger.add(warnings.append, level="WARNING", format="{message}")
     try:
@@ -215,7 +227,7 @@ def test_unconvertible_graph_has_only_its_native_file(
     finally:
         logger.remove(sink)
 
-    assert files == [native]
+    assert files == [native, *profile]
     assert data == blob
     assert len(warnings) == 1
     assert warnings[0].startswith("graph g at step 0 in ")

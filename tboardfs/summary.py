@@ -1,6 +1,7 @@
 from typing import Any, cast
 
 from tboardfs.proto_schema import _ProtoParser
+from tboardfs.tensor_summary import DT_STRING, TAGGED_RUN_METADATA
 
 # SessionLog.SessionStatus.START in the vendored event proto.
 START = 1
@@ -34,7 +35,33 @@ class _SummaryParser:
                 _SummaryParser.parse_summary_value(value)
                 for value in event_message.summary.value
             ]
+        if event_message.HasField("tagged_run_metadata"):
+            event.setdefault("values", []).append(
+                _SummaryParser.tagged_run_metadata_value(
+                    event_message.tagged_run_metadata
+                )
+            )
+        if event_message.HasField("meta_graph_def"):
+            event["meta_graph_def"] = event_message.meta_graph_def
         return event
+
+    @staticmethod
+    def tagged_run_metadata_value(tagged_message: object) -> dict[str, Any]:
+        """Return a TF1 tagged RunMetadata as the summary value TensorBoard reads.
+
+        TensorBoard's dataclass_compat migrates it to a string tensor that
+        holds the serialized RunMetadata, with plugin graph_tagged_run_metadata.
+        """
+        message = cast(Any, tagged_message)
+        return {
+            "tag": message.tag,
+            "tensor": {
+                "dtype": DT_STRING,
+                "shape": [1],
+                "string_val": [message.run_metadata],
+            },
+            "plugin_name": TAGGED_RUN_METADATA,
+        }
 
     @staticmethod
     def parse_summary_value(value_message: object) -> dict[str, Any]:

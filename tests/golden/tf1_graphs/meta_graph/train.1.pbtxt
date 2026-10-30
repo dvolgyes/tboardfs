@@ -1,0 +1,161 @@
+step_stats {
+  dev_stats {
+    device: "/job:localhost/device:CPU:0"
+    node_stats {
+      node_name: "x"
+      all_start_micros: 5
+      op_end_rel_micros: 2
+    }
+  }
+}
+cost_graph {
+}
+partition_graphs {
+  node {
+    name: "Const"
+    op: "Const"
+    device: "/job:localhost/replica:0/task:0/device:CPU:0"
+    attr {
+      key: "value"
+      value {
+        tensor {
+          dtype: DT_FLOAT
+          tensor_shape {
+            dim {
+              size: 2
+            }
+            dim {
+              size: 2
+            }
+          }
+          tensor_content: "\000\000\200?\000\000\200\277\000\000\000?\000\000\000@"
+        }
+      }
+    }
+    attr {
+      key: "dtype"
+      value {
+        type: DT_FLOAT
+      }
+    }
+    attr {
+      key: "_XlaHasReferenceVars"
+      value {
+        b: false
+      }
+    }
+  }
+  node {
+    name: "_arg_x_0_0"
+    op: "_Arg"
+    device: "/job:localhost/replica:0/task:0/device:CPU:0"
+    attr {
+      key: "index"
+      value {
+        i: 0
+      }
+    }
+    attr {
+      key: "_XlaHasReferenceVars"
+      value {
+        b: false
+      }
+    }
+    attr {
+      key: "T"
+      value {
+        type: DT_FLOAT
+      }
+    }
+  }
+  node {
+    name: "matmul"
+    op: "MatMul"
+    input: "_arg_x_0_0"
+    input: "Const"
+    device: "/job:localhost/replica:0/task:0/device:CPU:0"
+    attr {
+      key: "transpose_b"
+      value {
+        b: false
+      }
+    }
+    attr {
+      key: "transpose_a"
+      value {
+        b: false
+      }
+    }
+    attr {
+      key: "grad_b"
+      value {
+        b: false
+      }
+    }
+    attr {
+      key: "grad_a"
+      value {
+        b: false
+      }
+    }
+    attr {
+      key: "_XlaHasReferenceVars"
+      value {
+        b: false
+      }
+    }
+    attr {
+      key: "T"
+      value {
+        type: DT_FLOAT
+      }
+    }
+  }
+  node {
+    name: "relu_0"
+    op: "Relu"
+    input: "matmul"
+    device: "/job:localhost/replica:0/task:0/device:CPU:0"
+    attr {
+      key: "_XlaHasReferenceVars"
+      value {
+        b: false
+      }
+    }
+    attr {
+      key: "T"
+      value {
+        type: DT_FLOAT
+      }
+    }
+  }
+  node {
+    name: "_retval_relu_0_0_0"
+    op: "_Retval"
+    input: "relu_0"
+    device: "/job:localhost/replica:0/task:0/device:CPU:0"
+    attr {
+      key: "index"
+      value {
+        i: 0
+      }
+    }
+    attr {
+      key: "_XlaHasReferenceVars"
+      value {
+        b: false
+      }
+    }
+    attr {
+      key: "T"
+      value {
+        type: DT_FLOAT
+      }
+    }
+  }
+  library {
+  }
+  versions {
+    producer: 2474
+  }
+}

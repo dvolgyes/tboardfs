@@ -168,14 +168,19 @@ The virtual tree covers these TensorBoard objects:
   bfloat16 tensors are widened to float32; this is exact. Float8 and 4-bit tensors are not decoded. String tensors are
   NumPy text arrays (dtype `U`), so `np.load` reads them without `allow_pickle`. A numeric tensor written without a
   plugin name is also a tensor here. A tensor with one value is a scalar instead.
-- Graphs: graph protobuf files under `/graphs`. `graph.pb` is the newest graph that the event files hold as a
-  `graph_def`, as in TensorBoard; TensorFlow 1 and PyTorch `add_graph` write these. A run with several such graphs also
-  has `graph_<i>.pb` for each graph, in write order. A TensorFlow 2 graph summary is in `/graphs/<tag>`. The Keras model
-  config that the Keras TensorBoard callback writes is `<step>.json`, and the RunMetadata of `tf.summary.trace_export`
-  is `<step>.run_metadata.pb`. Next to each one, `<step>.conceptual.pb` or `<step>.pb` is the GraphDef that the
-  TensorBoard Graphs tab shows for it. TensorBoard 2.21 cannot draw a functional model inside a Sequential model from a
-  Keras 3 config, because it reads the one input of the nested model as three inputs; tboardfs draws it with that one
-  input. A malformed summary has no GraphDef file; tboardfs logs a warning for it once, when it reads the event.
+- Graphs: graph protobuf files under `/graphs`. `graph.pb` is the graph that TensorBoard shows: the newest graph that
+  the event files hold as a `graph_def`, which TensorFlow 1 and PyTorch `add_graph` write, or without one, the graph of
+  the newest TensorFlow 1 meta graph. A run with several `graph_def` graphs also has `graph_<i>.pb` for each one, in
+  write order. `meta_graph.pb` is the newest TensorFlow 1 `MetaGraphDef`, with `meta_graph_<i>.pb` in the same way. A
+  TensorFlow 2 graph summary is in `/graphs/<tag>`. The Keras model config that the Keras TensorBoard callback writes is
+  `<step>.json`, and the RunMetadata of `tf.summary.trace_export` is `<step>.run_metadata.pb`. Next to each one,
+  `<step>.conceptual.pb` or `<step>.pb` is the GraphDef that the TensorBoard Graphs tab shows for it. A TensorFlow 1
+  tagged RunMetadata, which `FileWriter.add_run_metadata` and PyTorch `add_graph` write, is also
+  `/graphs/<tag>/<step>.run_metadata.pb`. Next to each RunMetadata, `<step>.run_metadata.pbtxt` is the profile text that
+  the Graphs tab shows for it. TensorBoard 2.21 cannot draw a functional model inside a Sequential model from a Keras 3
+  config, because it reads the one input of the nested model as three inputs; tboardfs draws it with that one input. A
+  malformed summary, RunMetadata or meta graph has no converted file (GraphDef, profile text or `graph.pb`); tboardfs
+  logs a warning for it once, when it reads the event. Its native file stays.
 - Projector and profile sidecars: available in filesystem mode, and in command mode for a directory, under `/projector`
   and `/profile`; command mode for one event file omits sibling sidecar files. The embedding files that
   `projector_config.pbtxt` names (`tensor_path`, `metadata_path`, sprite `image_path`, `bookmarks_path`), such as the

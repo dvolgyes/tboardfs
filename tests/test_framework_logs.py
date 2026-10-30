@@ -64,4 +64,12 @@ def test_lightning_metrics_hparams_and_media(fs: TensorBoardFS) -> None:
     assert fs.readdir(f"{run}/images/pattern")[2:] == ["000.png", "001.png"]
     assert fs.read(f"{run}/images/pattern/000.png", 8, 0) == b"\x89PNG\r\n\x1a\n"
     assert fs.read(f"{run}/audio/tone/001.wav", 4, 0) == b"RIFF"
-    assert fs.readdir(f"{run}/graphs")[2:] == ["graph.pb"]
+    # PyTorch add_graph also writes a tagged RunMetadata, which TensorBoard
+    # shows as the profile of tag step1.
+    assert fs.readdir(f"{run}/graphs")[2:] == ["graph.pb", "step1"]
+    assert fs.readdir(f"{run}/graphs/step1")[2:] == [
+        "000.run_metadata.pb",
+        "000.run_metadata.pbtxt",
+    ]
+    profile = fs.read(f"{run}/graphs/step1/000.run_metadata.pbtxt", 1 << 20, 0)
+    assert profile.startswith(b"step_stats {\n  dev_stats {\n")

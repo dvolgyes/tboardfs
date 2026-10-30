@@ -21,6 +21,7 @@ from tboardfs.errors import fuse_error
 from tboardfs.extract import _extract_graph_blob, extract_binary_blob
 from tboardfs.graph_files import add_graph_files
 from tboardfs.indexer import _EventIndexer
+from tboardfs.meta_graph import meta_graph_graph_def
 from tboardfs.model import (
     BinaryEntry,
     EventFileCache,
@@ -37,6 +38,7 @@ from tboardfs.plugin_files import add_typed_plugin_files
 from tboardfs.projector import _ProjectorConfig
 from tboardfs.render_cache import RenderCache
 from tboardfs.restarts import _RestartPurge
+from tboardfs.run_metadata_text import run_metadata_text
 from tboardfs.summary_graph import summary_graph_def
 from tboardfs.tables import (
     _TableExport,
@@ -69,6 +71,18 @@ def _materialize_node_bytes(node: dict[str, Any]) -> bytes:
         if graph_def is None:  # the event file changed after indexing
             raise fuse_error(EIO)
         return graph_def
+    if node_type == "meta_graph_graph":
+        entry = node["entry"]
+        meta_graph = meta_graph_graph_def(entry, _extract_graph_blob(entry))
+        if meta_graph is None:  # the event file changed after indexing
+            raise fuse_error(EIO)
+        return meta_graph
+    if node_type == "run_metadata_text":
+        entry = node["entry"]
+        text = run_metadata_text(entry, extract_binary_blob(entry))
+        if text is None:  # the event file changed after indexing
+            raise fuse_error(EIO)
+        return text
     if node_type == "sidecar":
         return bytes(node["entry"].source_path.read_bytes())
     raise fuse_error(EOPNOTSUPP)

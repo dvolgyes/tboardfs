@@ -11,14 +11,18 @@ GIF_HEADERS = (b"GIF87a", b"GIF89a")
 # Columns of a TF2 histogram tensor: bucket left, bucket right, count.
 HISTOGRAM_COLUMNS = 3
 # TensorBoard's graph plugins: file-name suffix and extension of the stored
-# Keras config or RunMetadata.
+# Keras config or RunMetadata, and whether the TensorBoard Graphs tab draws
+# its graph and shows its profile.
 GRAPH_PLUGINS = MappingProxyType(
     {
-        "graph_keras_model": ("", "json"),
-        "graph_run_metadata": (".run_metadata", "pb"),
-        "graph_run_metadata_graph": (".run_metadata", "pb"),
+        "graph_keras_model": ("", "json", True, False),
+        "graph_run_metadata": (".run_metadata", "pb", True, True),
+        "graph_run_metadata_graph": (".run_metadata", "pb", True, False),
+        "graph_tagged_run_metadata": (".run_metadata", "pb", False, True),
     }
 )
+# The one graph plugin that TensorBoard reads without plugin content b"1".
+TAGGED_RUN_METADATA = "graph_tagged_run_metadata"
 
 
 class _TensorSummary:
@@ -36,7 +40,8 @@ class _TensorSummary:
 
         One item has no suffix. Items of a step are _<i>, with i padded to one
         width. Returns None when the value is not a TF2 image, audio or graph
-        tensor. As in TensorBoard, a graph tensor needs plugin content b"1".
+        tensor. As in TensorBoard, a graph tensor other than a tagged run
+        metadata needs plugin content b"1".
         """
         tensor = value.get("tensor") or {}
         if tensor.get("dtype") != DT_STRING:
@@ -45,7 +50,8 @@ class _TensorSummary:
         strings = tensor.get("string_val", [])
         shape = tensor.get("shape") or []
         if plugin in GRAPH_PLUGINS:
-            if value.get("plugin_content") != b"1" or not strings:
+            content = value.get("plugin_content")
+            if not strings or (plugin != TAGGED_RUN_METADATA and content != b"1"):
                 return None
             return [("graphs", 0, GRAPH_PLUGINS[plugin][0])]
         if plugin == "images" and len(strings) >= 2:
@@ -70,6 +76,12 @@ class _TensorSummary:
         if kind == "graphs":
             return GRAPH_PLUGINS[(value.get("plugin_name") or "").lower()][1]
         return detect_extension(blob, kind)
+
+    @staticmethod
+    def graph_views(value: dict[str, Any]) -> tuple[bool, bool]:
+        """Return whether TensorBoard draws the graph and shows the profile of a graph tensor."""
+        _, _, graph, profile = GRAPH_PLUGINS[(value.get("plugin_name") or "").lower()]
+        return graph, profile
 
     @staticmethod
     def histogram_buckets(

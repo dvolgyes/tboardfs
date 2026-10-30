@@ -4,6 +4,7 @@ from tboardfs.model.field import Field
 from tboardfs.model.graph_entry import GraphEntry
 from tboardfs.model.graph_summary_entry import GraphSummaryEntry
 from tboardfs.model.json_entry import JsonEntry
+from tboardfs.model.meta_graph_entry import MetaGraphEntry
 from tboardfs.model.parse_progress import ParseProgress
 from tboardfs.model.record import Record
 from tboardfs.model.restart_mark import RestartMark
@@ -19,6 +20,7 @@ __all__ = (
     "GraphEntry",
     "GraphSummaryEntry",
     "JsonEntry",
+    "MetaGraphEntry",
     "ParseProgress",
     "Record",
     "RestartMark",
