@@ -176,6 +176,8 @@ scalar, histogram and other table files, NaN is a missing value and is written a
 written as the string `"NaN"`, as in protobuf JSON. A complex number is written as its `[real, imag]` pair. Bytes that
 are valid UTF-8 are written as text. Other bytes are written as `{"base64": "..."}`.
 
+An event without a step field is at step 0, as in TensorBoard: writers leave out step 0.
+
 `tboardfs-file list` prints virtual file paths to stdout, one per line. `tboardfs-file get -o -` writes raw bytes to
 stdout. Extraction status, warnings, errors, copied-file counts, skipped-path warnings, copied-path conflict reports,
 and overwrite hints are written to stderr through Loguru/Click so stdout remains safe for pipelines.

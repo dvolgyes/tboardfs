@@ -198,7 +198,8 @@ class _EventIndexer:
             if first_time is None or np.isnan(wall_time)
             else wall_time - first_time
         )
-        timing = (event.get("step", np.nan), wall_time, relative_time)
+        # Proto3 writers leave out step 0, as TensorBoard reads it.
+        timing = (event.get("step", 0), wall_time, relative_time)
         _EventIndexer.add_restart(cache, event, rows)
         _EventIndexer.add_graph(cache, path, event, record, wall_time)
         for value in values:
