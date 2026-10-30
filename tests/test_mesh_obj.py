@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2, mesh_plugin_data_pb2
@@ -111,6 +112,16 @@ def test_colors_of_another_shape_are_left_out(tmp_path: Path) -> None:
 
     assert _obj(fs) == ["v 0.0 0.0 0.0", "v 1.0 0.0 0.0", "v 0.0 1.0 0.0"]
     assert "/meshes/shape/000005.npz" in _files(fs)
+
+
+def test_colors_that_are_not_rgb_bytes_are_left_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A color above 255 is not an OBJ color above 1."""
+    monkeypatch.setitem(DTYPES, COLOR, DT_INT32)
+    fs = _mesh(tmp_path, {VERTEX: TRIANGLES[:1], COLOR: COLORS[:1].astype("<i4") + 45})
+
+    assert _obj(fs) == ["v 0.0 0.0 0.0", "v 1.0 0.0 0.0", "v 0.0 1.0 0.0"]
 
 
 def test_a_shorter_face_batch_leaves_later_objects_without_faces(

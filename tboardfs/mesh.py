@@ -177,11 +177,7 @@ class _MeshFiles:
         faces = _MeshFiles.indices(
             _MeshFiles.batched(mesh.get("faces")), vertices.shape[1]
         )
-        colors = _MeshFiles.batched(mesh.get("colors"))
-        if colors is not None and (
-            colors.shape != vertices.shape or not _MeshFiles.finite(colors)
-        ):
-            colors = None
+        colors = _MeshFiles.rgb(mesh, vertices)
         lines = ["# TensorBoard mesh export"]
         offset = 0
         for index, points in enumerate(vertices):
@@ -216,12 +212,19 @@ class _MeshFiles:
         faces = _MeshFiles.indices(
             _MeshFiles.batched(mesh.get("faces")), vertices.shape[1]
         )
+        return ply_bytes(vertices, faces, _MeshFiles.rgb(mesh, vertices))
+
+    @staticmethod
+    def rgb(mesh: dict[str, np.ndarray], vertices: np.ndarray) -> np.ndarray | None:
+        """Return the [B, N, 3] colors, or None when they are not RGB bytes.
+
+        Colors must have one whole number from 0 to 255 per channel of each
+        vertex; the NPZ file keeps colors that do not.
+        """
         colors = _MeshFiles.batched(mesh.get("colors"))
-        if colors is not None and (
-            colors.shape != vertices.shape or not _MeshFiles.rgb_bytes(colors)
-        ):
-            colors = None
-        return ply_bytes(vertices, faces, colors)
+        if colors is None or colors.shape != vertices.shape:
+            return None
+        return colors if _MeshFiles.rgb_bytes(colors) else None
 
     @staticmethod
     def rgb_bytes(colors: np.ndarray) -> bool:
