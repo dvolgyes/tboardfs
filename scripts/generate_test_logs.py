@@ -50,8 +50,10 @@ WALL_TIME = 1_700_000_000.0
 
 def main() -> None:
     """Generate deterministic TensorBoard and TensorBoardX fixture logs."""
-    if ROOT.exists():
-        shutil.rmtree(ROOT)
+    # The other generate_*_logs.py scripts own the other directories.
+    for producer in ("tensorboard", "tensorboardx"):
+        if (ROOT / producer).exists():
+            shutil.rmtree(ROOT / producer)
 
     images: list[np.ndarray] = []
     waves: list[np.ndarray] = []
