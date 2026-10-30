@@ -359,3 +359,32 @@ def _filesystem_file_paths(fs: TensorBoardFS, path: str) -> list[str]:
 
 def _target_for_virtual_path(outdir: Path, virtual_path: str) -> Path:
     return outdir.joinpath(*virtual_path.lstrip("/").split("/"))
+
+
+def test_file_cli_list_reports_a_missing_prefix() -> None:
+    result = CliRunner().invoke(main, ["list", str(FIXTURE_EVENT), "/missing"])
+
+    assert result.exit_code == 1
+    assert "virtual path not found: /missing" in result.stderr
+    assert isinstance(result.exception, SystemExit)
+
+
+def test_file_cli_reports_an_output_that_cannot_be_written(tmp_path: Path) -> None:
+    """A file where a directory must be is an error, not a traceback."""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("")
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / "scalars").write_text("")
+    runner = CliRunner()
+
+    got = runner.invoke(
+        main, ["get", str(FIXTURE_EVENT), "/scalars/loss.json", "-o", f"{blocker}/x"]
+    )
+    copied = runner.invoke(
+        main, ["copy-all", str(FIXTURE_EVENT), str(tmp_path / "out"), "--force"]
+    )
+
+    for result in (got, copied):
+        assert result.exit_code == 1
+        assert "Error: " in result.stderr
+        assert isinstance(result.exception, SystemExit)

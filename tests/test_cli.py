@@ -210,3 +210,23 @@ def test_mount_cli_sets_the_owner(
 
     assert result.exit_code == 0, result.output
     assert owners == [owner, owner]
+
+
+def test_mount_cli_reports_a_failed_mount_without_a_traceback(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """libfuse gives the reason on stderr; mfusepy raises RuntimeError(1)."""
+    (tmp_path / "runs").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise RuntimeError(1)
+
+    monkeypatch.setattr(cli, "FUSE", fail)
+
+    result = CliRunner().invoke(cli.main, ["runs", "missing"])
+
+    assert result.exit_code == 1
+    assert "could not mount" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert isinstance(result.exception, SystemExit)

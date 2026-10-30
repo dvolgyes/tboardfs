@@ -1,3 +1,4 @@
+import math
 import os
 from pathlib import Path
 import sys
@@ -16,7 +17,14 @@ from tboardfs.mounted import MountedTensorBoardFS
 @click.argument("source", type=click.Path(exists=True, file_okay=False))
 @click.argument("mountpoint", type=click.Path(file_okay=False))
 @STEP_DIGITS
-@click.option("--refresh-age-seconds", type=float, default=60.0, show_default=True)
+@click.option(
+    "--refresh-age-seconds",
+    type=click.FloatRange(min=0),
+    default=60.0,
+    show_default=True,
+    callback=lambda _ctx, _param, value: _number(value),
+    help="Minimum age of the data before it is read again; inf never reads it again.",
+)
 @SCALAR_FORMAT
 @click.option(
     "--cache-size-mb",
@@ -75,14 +83,27 @@ def main(
     )
     # attr_timeout=0 makes fstat and SEEK_END ask for the size of the open
     # handle; a cached size from an older version would cut its data.
-    FUSE(
-        filesystem,
-        str(mountpoint_path),
-        foreground=foreground,
-        ro=True,
-        raw_fi=True,
-        attr_timeout=0,
-    )
+    try:
+        FUSE(
+            filesystem,
+            str(mountpoint_path),
+            foreground=foreground,
+            ro=True,
+            raw_fi=True,
+            attr_timeout=0,
+        )
+    except RuntimeError as error:
+        # libfuse writes the reason to stderr; mfusepy raises its exit status.
+        raise click.ClickException(
+            f"could not mount {mountpoint_path} (FUSE status {error})"
+        ) from error
+
+
+def _number(value: float) -> float:
+    """Refuse NaN, which no range check refuses."""
+    if math.isnan(value):
+        raise click.BadParameter(f"{value} is not a number")
+    return value
 
 
 def _configure_logging(logfile: Path | None, loglevel: str, foreground: bool) -> None:

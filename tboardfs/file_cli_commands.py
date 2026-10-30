@@ -26,7 +26,11 @@ def register_file_cli_commands(group: click.Group) -> None:
         tree = SingleEventTree(
             source, step_digits=step_digits, scalar_format=scalar_format
         )
-        for path in tree.list_file_paths(prefix=prefix):
+        try:
+            paths = tree.list_file_paths(prefix=prefix)
+        except FileNotFoundError as error:
+            raise click.ClickException(f"virtual path not found: {prefix}") from error
+        for path in paths:
             sys.stdout.write(path + "\n")
 
     @group.command("get")
@@ -70,8 +74,13 @@ def register_file_cli_commands(group: click.Group) -> None:
                 f"output already exists: {output_path}\n"
                 "Use --force for forced overwriting."
             )
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(data)
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(data)
+        except OSError as error:
+            raise click.ClickException(
+                f"could not write {output_path}: {error.strerror or error}"
+            ) from error
         logger.info("wrote {} to {}", _Paths.norm_virtual_path(vpath), output_path)
 
     @group.command("copy-all")
@@ -100,7 +109,7 @@ def register_file_cli_commands(group: click.Group) -> None:
         except _CopyConflictError as error:
             _report_copy_conflict(error)
             raise click.exceptions.Exit(1) from error
-        except PermissionError as error:
+        except OSError as error:
             raise click.ClickException(str(error)) from error
         for path in skipped:
             logger.warning("Skipped existing: {}", path)

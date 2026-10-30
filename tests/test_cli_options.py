@@ -28,6 +28,8 @@ def _mount(tmp_path: Path, monkeypatch: Any, *option: str) -> Result:
         (["--step-digits", "-1"], "not in the range"),
         (["--step-digits", "21"], "not in the range"),
         (["--loglevel", "LOUD"], "LOUD"),
+        (["--refresh-age-seconds", "-1"], "not in the range"),
+        (["--refresh-age-seconds", "nan"], "not a number"),
     ],
 )
 def test_mount_cli_refuses_bad_values(
@@ -48,6 +50,8 @@ def test_mount_cli_refuses_bad_values(
         ["--step-digits", "1"],
         ["--step-digits", "20"],
         ["--loglevel", "debug"],
+        ["--refresh-age-seconds", "0"],
+        ["--refresh-age-seconds", "inf"],
     ],
 )
 def test_mount_cli_accepts_good_values(
