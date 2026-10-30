@@ -18,12 +18,16 @@ class RunPlaces:
     Attributes:
         renamed: by run path prefix, its virtual path with a suffix, at the
             last build, so a rename is logged once.
+        disk_parts: by virtual folder path, its run path prefix on disk, at
+            the last build.
     """
 
     renamed: dict[tuple[str, ...], tuple[str, ...]]
+    disk_parts: dict[tuple[str, ...], tuple[str, ...]]
 
     def __init__(self) -> None:
         self.renamed = {}
+        self.disk_parts = {(): ()}
 
     def build(
         self, run_trees: Mapping[tuple[str, ...], dict[str, Any]]
@@ -57,6 +61,7 @@ class RunPlaces:
                     renamed[prefix] = paths[prefix]
             dirs[run_parts]["children"].update(run_trees[run_parts]["children"])
         self.log(renamed)
+        self.disk_parts = {path: prefix for prefix, path in paths.items()}
         return root
 
     @staticmethod

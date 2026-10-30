@@ -93,6 +93,24 @@ def test_runs_below_a_renamed_folder_follow_it(
     assert len(warnings) == 1
 
 
+def test_a_renamed_run_shows_new_data(tmp_path: Path) -> None:
+    """The files of a run under a renamed folder render again when it grows."""
+    _write_run(tmp_path / "exp", 1, value=1.0)
+    _write_run(tmp_path / "exp" / "scalars", 1, value=2.0)
+    _write_run(tmp_path / "exp" / "scalars" / "sub", 1, value=3.0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    renamed = "/exp/scalars~2/scalars/value.json"
+    below = "/exp/scalars~2/sub/scalars/value.json"
+    assert _values(fs, renamed) == [2.0]
+    assert _values(fs, below) == [3.0]
+    _write_run(tmp_path / "exp" / "scalars", 2, value=5.0)
+    _write_run(tmp_path / "exp" / "scalars" / "sub", 2, value=6.0)
+
+    assert _values(fs, renamed) == [2.0, 5.0]
+    assert _values(fs, below) == [3.0, 6.0]
+    assert fs.getattr(renamed)["st_size"] == len(fs.read(renamed, 1 << 20, 0))
+
+
 def test_a_renamed_run_folder_is_logged_once(
     tmp_path: Path, warnings: list[str]
 ) -> None:

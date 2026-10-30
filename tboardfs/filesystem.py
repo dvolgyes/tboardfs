@@ -349,10 +349,12 @@ class TensorBoardFS:  # pcr: noqa: PCR010
                     raise FileNotFoundError(path)
                 node = node["children"][part]
             runs = self._state.runs
+            # A renamed run folder has other parts on disk than in the tree.
+            disk_parts = self._run_places.disk_parts
             versions = tuple(
-                runs[parts[:end]].version
+                runs[disk_parts[parts[:end]]].version
                 for end in range(len(parts) + 1)
-                if parts[:end] in runs
+                if disk_parts.get(parts[:end]) in runs
             )
             return node, (versions, parts)
 
