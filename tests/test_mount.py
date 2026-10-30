@@ -1,8 +1,10 @@
 """Reads through a real FUSE mount stay complete while event files grow."""
 
 from collections.abc import Iterator
+import errno
 import io
 import json
+import mmap
 import os
 from pathlib import Path
 import shutil
@@ -110,6 +112,22 @@ def test_reads_right_after_a_change_are_complete(
             end = handle.seek(0, os.SEEK_END)
             handle.seek(0)
             assert end == len(handle.read())
+
+
+def test_a_private_memory_map_gives_the_bytes_of_a_read(
+    mounted: tuple[Path, Path],
+) -> None:
+    """As the README states: direct I/O allows private maps, not shared maps."""
+    _, run = mounted
+    path = run / "scalars/loss.npz"
+    expected = path.read_bytes()
+
+    with path.open("rb") as handle:
+        with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_COPY) as mapped:
+            assert mapped[:] == expected
+        with pytest.raises(OSError) as raised:
+            mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ)
+    assert raised.value.errno == errno.ENODEV
 
 
 def test_concurrent_readers_see_whole_versions_while_a_run_grows(

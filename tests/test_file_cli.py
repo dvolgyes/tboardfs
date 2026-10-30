@@ -333,6 +333,7 @@ def test_metadata_and_readme_document_both_access_modes() -> None:
     readme = (ROOT / "README.md").read_text()
 
     assert project["version"] == "0.3.0"
+    assert f"badge/version-{project['version']}-" in readme
     assert project["license"] == "MIT"
     assert project["scripts"]["tboardfs"] == "tboardfs:main"
     assert project["scripts"]["tboardfs-file"] == "tboardfs.file_cli:main"

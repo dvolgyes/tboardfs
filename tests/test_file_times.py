@@ -5,7 +5,7 @@ from pathlib import Path
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
 
-from test_incremental_parse import _frame
+from test_incremental_parse import _files, _frame
 
 
 def _scalar(run_dir: Path, wall_time: float, tag: str) -> None:
@@ -59,3 +59,14 @@ def test_a_file_has_the_blocks_of_its_size(tmp_path: Path) -> None:
     assert status["st_size"] > 0
     assert status["st_blocks"] == (status["st_size"] + 511) // 512
     assert fs.getattr("/scalars")["st_blocks"] == 0
+
+
+def test_each_fixture_file_has_the_size_of_its_bytes() -> None:
+    """A size that differs from the bytes cuts reads or pads them with zeros."""
+    fs = TensorBoardFS(Path(__file__).resolve().parent.parent / "test-logs")
+    sizes = {path: fs.getattr(path)["st_size"] for path in _files(fs)}
+
+    assert len(sizes) > 300
+    assert {path: len(fs.read(path, size + 1, 0)) for path, size in sizes.items()} == (
+        sizes
+    )
