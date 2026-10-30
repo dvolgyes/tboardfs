@@ -41,6 +41,7 @@ from tboardfs.tables import (
     _TableMerge,
     export_table,
 )
+from tboardfs.text_table import _TextTable
 
 
 def _materialize_node_bytes(node: dict[str, Any]) -> bytes:
@@ -554,17 +555,12 @@ class _RunTree:
             if id(entry) in consumed:
                 continue
             tab = entry.tab if entry.tab in FIXED_TABS else "plugins"
-            text = _RunTree.text_from_json_entry(entry)
-            if tab == "text" and text is not None:
-                _FsNode.add_file(
-                    run_node,
-                    (
-                        tab,
-                        *_Paths.tag_dir_parts(entry.tag),
-                        f"{_Paths.step_name(entry.step, step_digits)}.txt",
-                    ),
-                    {"type": "bytes", "data": text.encode(), "mtime": entry.wall_time},
-                )
+            text_nodes = tab == "text" and _TextTable.nodes(entry)
+            if text_nodes:
+                step = _Paths.step_name(entry.step, step_digits)
+                for suffix, node in text_nodes:
+                    parts = (tab, *_Paths.tag_dir_parts(entry.tag), f"{step}.{suffix}")
+                    _FsNode.add_file(run_node, parts, node)
                 continue
             _FsNode.add_file(
                 run_node,
@@ -602,20 +598,6 @@ class _RunTree:
                     "mtime": sidecar.mtime_ns / 1e9,
                 },
             )
-
-    @staticmethod
-    def text_from_json_entry(entry: JsonEntry) -> str | None:
-        """Return text content from a text plugin JSON entry."""
-        tensor = entry.payload.get("tensor") or {}
-        values = tensor.get("string_val")
-        if values:
-            return "\n".join(
-                value.decode("utf-8", errors="replace")
-                if isinstance(value, bytes)
-                else str(value)
-                for value in values
-            )
-        return None
 
     @staticmethod
     def json_entry_parts(

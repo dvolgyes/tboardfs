@@ -11,8 +11,7 @@ def tensor_to_array(tensor: dict[str, Any]) -> np.ndarray:
     """Convert a parsed TensorProto dictionary to a NumPy array."""
     dtype = tensor.get("dtype")
     if dtype == 7:
-        string_values = [_Decode.text(value) for value in tensor.get("string_val", [])]
-        return _shape_array(np.asarray(string_values, dtype=np.str_), tensor)
+        return _TensorDType.strings(tensor)
 
     spec = _TensorDType.spec(dtype)
     if spec is None:
@@ -78,6 +77,12 @@ class _TensorDType:
         22: ("<u4", 16, "<u4"),
         23: ("<u8", 17, "<u8"),
     }
+
+    @staticmethod
+    def strings(tensor: dict[str, Any]) -> np.ndarray:
+        """Return the string_val items of a TensorProto as a shaped text array."""
+        values = [_Decode.text(value) for value in tensor.get("string_val", [])]
+        return _shape_array(np.asarray(values, dtype=np.str_), tensor)
 
     @staticmethod
     def spec(dtype: object) -> tuple[str, int, str] | None:

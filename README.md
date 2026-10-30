@@ -128,7 +128,9 @@ The virtual tree covers these TensorBoard objects:
 - Videos: encoded video/GIF outputs under `/videos`, including raw subpaths when present.
 - Histograms: per-step `json`, `tsv`, and `npz` exports under `/histograms`.
 - Distributions: per-step distribution tables under `/distributions`.
-- Text summaries: UTF-8 text files under `/text`.
+- Text summaries: UTF-8 text files under `/text`. A summary with one string is that text. A summary with many strings is
+  a Markdown table, as TensorBoard shows it: a vector is one column, and a tensor with more than 2 dimensions shows its
+  first 2-D slice after a warning. A `.json` file next to the table keeps the shape and the exact strings.
 - Meshes: per-step `json`, `npz`, and Wavefront `obj` exports under `/meshes`.
 - PR curves: per-step `json`, `tsv`, and `npy` exports under `/pr_curves`.
 - HParams: merged experiment/session/metric JSON under `/hparams`. The metrics are the declared metric tags, or all
