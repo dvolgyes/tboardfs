@@ -325,6 +325,9 @@ class _EventIndexer:
             scalar_dtypes,
             (epoch, step, wall_time, relative_time),
         )
+        # A TF1 or PyTorch scalar without metadata holds nothing else.
+        if value.keys() == {"tag", "simple_value"}:
+            return epoch
         _EventIndexer.add_histogram(
             cache, value, histogram_rows, (epoch, step, wall_time, relative_time)
         )
