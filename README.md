@@ -150,7 +150,10 @@ The virtual tree covers these TensorBoard objects:
 - Graphs: graph protobuf files under `/graphs`. `graph.pb` is the newest graph of the run, as in TensorBoard. A run with
   several graphs also has `graph_<i>.pb` for each graph, in write order.
 - Projector and profile sidecars: available in filesystem mode under `/projector` and `/profile`; command mode
-  intentionally omits sibling sidecar files because it operates on one event file.
+  intentionally omits sibling sidecar files because it operates on one event file. The embedding files that
+  `projector_config.pbtxt` names (`tensor_path`, `metadata_path`, sprite `image_path`, `bookmarks_path`), such as the
+  `<step>/<tag>/tensors.tsv` files of PyTorch and tensorboardX `add_embedding`, are under `/projector` at the same
+  relative paths. Only relative paths to files of the run are followed, and only the first MiB of the config is read.
 - Other plugin JSON payloads: exposed under `/plugins` when no typed tab handles them.
 
 ## Output Rules

@@ -34,6 +34,7 @@ from tboardfs.paths import (
     find_tensorboard_files,
 )
 from tboardfs.plugin_files import add_typed_plugin_files
+from tboardfs.projector import _ProjectorConfig
 from tboardfs.render_cache import RenderCache
 from tboardfs.restarts import _RestartPurge
 from tboardfs.tables import (
@@ -805,9 +806,15 @@ class _RunData:
             return []
         run_dir = source.joinpath(*run.run_parts)
         sidecars = []
-        for path in _RunData.sidecar_paths(source, run_dir):
+        paths = list(_RunData.sidecar_paths(source, run_dir))
+        embeddings = _ProjectorConfig.references(paths)
+        for path in paths:
             rel_parts = path.relative_to(run_dir).parts
             tab = _RunData.sidecar_tab(rel_parts)
+            if tab is None and path in embeddings:
+                config, named = embeddings[path]
+                config_parts = config.relative_to(run_dir).parts
+                tab, rel_parts = "projector", (*config_parts[:-1], *named)
             if tab is None:
                 continue
             try:
