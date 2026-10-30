@@ -131,7 +131,11 @@ The virtual tree covers these TensorBoard objects:
 - Text summaries: UTF-8 text files under `/text`.
 - Meshes: per-step `json`, `npz`, and Wavefront `obj` exports under `/meshes`.
 - PR curves: per-step `json`, `tsv`, and `npy` exports under `/pr_curves`.
-- HParams: merged experiment/session/metric JSON under `/hparams`.
+- HParams: merged experiment/session/metric JSON under `/hparams`. The metrics are the declared metric tags, or all
+  scalar tags when the run declares no experiment, as in TensorBoard. Each metric has its last value, or `null` without
+  data. Metrics in a sub-run group (for example Keras `validation`) have no value here; read them from the scalars of
+  that run. `sessions` lists every session of the run; `session_start` and `session_end` are the first ones, as in
+  TensorBoard.
 - Tensors: tensor arrays as `npy` plus compact JSON or native blob files under `/tensors`.
 - Graphs: graph protobuf files under `/graphs`.
 - Projector and profile sidecars: available in filesystem mode under `/projector` and `/profile`; command mode
