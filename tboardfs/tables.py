@@ -2,6 +2,7 @@ import base64
 from collections import defaultdict
 from io import BytesIO
 import json
+import math
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -44,11 +45,20 @@ class _TableExport:
     @staticmethod
     def json(series: dict[str, np.ndarray]) -> bytes:
         """Render a table as strict JSON rows."""
-        rows = [
-            {column: _TableExport.json_safe(series[column][index]) for column in series}
-            for index in range(_TableExport.series_len(series))
-        ]
+        columns = [_TableExport.json_column(values) for values in series.values()]
+        rows = [dict(zip(series, cells, strict=True)) for cells in zip(*columns)]
         return (json.dumps(rows, allow_nan=False, indent=2) + "\n").encode()
+
+    @staticmethod
+    def json_column(values: np.ndarray) -> list[object]:
+        """Return the JSON cells of one column; real numbers convert at once."""
+        if values.ndim != 1 or values.dtype.kind not in "biuf":
+            return [_TableExport.json_safe(value) for value in values]
+        cells: list[object] = values.tolist()
+        if values.dtype.kind == "f":
+            for index in np.flatnonzero(~np.isfinite(values)):
+                cells[index] = _TableExport.json_safe(cells[index])
+        return cells
 
     @staticmethod
     def dataframe(series: dict[str, np.ndarray]) -> pd.DataFrame:
@@ -82,8 +92,8 @@ class _TableExport:
             value = value.item()
         if isinstance(value, complex):
             value = [value.real, value.imag]
-        if isinstance(value, float) and not np.isfinite(value):
-            if np.isnan(value):
+        if isinstance(value, float) and not math.isfinite(value):
+            if math.isnan(value):
                 return nan
             return "Infinity" if value > 0 else "-Infinity"
         if isinstance(value, bytes):
@@ -134,13 +144,6 @@ class _TableExport:
         if values.dtype != object:
             return False
         return any(value is None for value in values)
-
-    @staticmethod
-    def series_len(series: dict[str, np.ndarray]) -> int:
-        """Return the number of rows in a column-oriented table."""
-        if not series:
-            return 0
-        return len(next(iter(series.values())))
 
 
 class _TableRows:
