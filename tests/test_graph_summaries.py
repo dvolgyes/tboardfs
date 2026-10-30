@@ -26,7 +26,7 @@ DT_STRING = 7
 RUN = Path("test-logs/graphs")
 GOLDEN = Path("tests/golden/graphs")
 TAGS = sorted(path.stem for path in GOLDEN.iterdir())
-UNCONVERTIBLE = "/graphs/func_in_seq/000000.conceptual.pb"
+UNCONVERTIBLE = "/graphs/g/000000.conceptual.pb"
 
 
 @pytest.fixture(scope="module")
@@ -238,13 +238,14 @@ def test_copy_all_reports_an_unconvertible_graph_and_copies_the_rest(
     tmp_path: Path,
 ) -> None:
     """copy-all names the file that gives EIO, copies the others and fails."""
-    result = CliRunner().invoke(main, ["copy-all", str(RUN), str(tmp_path / "out")])
+    run = _broken_run(tmp_path)
+    result = CliRunner().invoke(main, ["copy-all", str(run), str(tmp_path / "out")])
     copied = sorted(
         "/" + path.relative_to(tmp_path / "out").as_posix()
         for path in (tmp_path / "out").rglob("*")
         if path.is_file()
     )
-    listed = CliRunner().invoke(main, ["list", str(RUN)]).output.splitlines()
+    listed = CliRunner().invoke(main, ["list", str(run)]).output.splitlines()
 
     assert result.exit_code == 1
     assert result.exception is None or isinstance(result.exception, SystemExit)
@@ -255,11 +256,22 @@ def test_copy_all_reports_an_unconvertible_graph_and_copies_the_rest(
 
 def test_get_of_an_unconvertible_graph_is_an_error(tmp_path: Path) -> None:
     """get reports the file that gives EIO instead of a traceback."""
-    result = CliRunner().invoke(main, ["get", str(RUN), UNCONVERTIBLE, "-o", "-"])
+    run = _broken_run(tmp_path)
+    result = CliRunner().invoke(main, ["get", str(run), UNCONVERTIBLE, "-o", "-"])
 
     assert result.exit_code == 1
     assert f"cannot convert virtual file: {UNCONVERTIBLE}" in result.stderr
     assert result.stdout_bytes == b""
+
+
+def _broken_run(tmp_path: Path) -> Path:
+    """Return a run with a scalar and a Keras config that cannot be converted."""
+    run = tmp_path / "run"
+    run.mkdir()
+    scalar = event_pb2.Event(wall_time=1.0, step=0)
+    scalar.summary.value.add(tag="loss", simple_value=1.0)
+    _log(run, _frame(scalar), _graph_event(b"{not json", plugin="graph_keras_model"))
+    return run
 
 
 def test_merged_gradients_name_the_prefixed_functions(tmp_path: Path) -> None:

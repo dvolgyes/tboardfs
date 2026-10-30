@@ -177,8 +177,9 @@ The virtual tree covers these TensorBoard objects:
   has `graph_<i>.pb` for each graph, in write order. A TensorFlow 2 graph summary is in `/graphs/<tag>`. The Keras model
   config that the Keras TensorBoard callback writes is `<step>.json`, and the RunMetadata of `tf.summary.trace_export`
   is `<step>.run_metadata.pb`. Next to each one, `<step>.conceptual.pb` or `<step>.pb` is the GraphDef that the
-  TensorBoard Graphs tab shows for it. Reading that GraphDef fails with EIO when TensorBoard cannot draw the graph
-  either, for example for a functional model inside a Sequential model.
+  TensorBoard Graphs tab shows for it. TensorBoard 2.21 cannot draw a functional model inside a Sequential model from a
+  Keras 3 config, because it reads the one input of the nested model as three inputs; tboardfs draws it with that one
+  input. Reading the GraphDef fails with EIO when the summary is malformed.
 - Projector and profile sidecars: available in filesystem mode, and in command mode for a directory, under `/projector`
   and `/profile`; command mode for one event file omits sibling sidecar files. The embedding files that
   `projector_config.pbtxt` names (`tensor_path`, `metadata_path`, sprite `image_path`, `bookmarks_path`), such as the

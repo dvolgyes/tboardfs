@@ -126,3 +126,30 @@ def test_a_nested_model_without_layers_fails() -> None:
 
     with pytest.raises(ValueError, match="no layers"):
         keras_model_to_graph_def(model)
+
+
+def test_a_functional_model_in_a_sequential_model_takes_the_previous_layer() -> None:
+    """The flat Keras 3 input of a nested model is one input, unlike in TensorBoard."""
+    inner = _functional(
+        "f", [_layer("fi", []), _layer("fd", _history(["fi", 0, 0]))], [["fd", 0, 0]]
+    )
+    inner["config"]["input_layers"] = ["fi", 0, 0]
+    model = {
+        "class_name": "Sequential",
+        "config": {"name": "s", "layers": [_layer("a"), inner]},
+    }
+
+    assert _inputs(model) == [("s/a", []), ("s/f/fi", ["s/a"]), ("s/f/fd", ["s/f/fi"])]
+
+
+def test_a_nested_model_with_several_inputs_in_a_sequential_model_fails() -> None:
+    """Three Keras 3 inputs are not one flat input."""
+    inner = _functional("f", [_layer("fi", [])], [["fi", 0, 0]])
+    inner["config"]["input_layers"] = [["a", 0, 0], ["b", 0, 0], ["c", 0, 0]]
+    model = {
+        "class_name": "Sequential",
+        "config": {"name": "s", "layers": [_layer("a"), inner]},
+    }
+
+    with pytest.raises(ValueError, match="several inputs"):
+        keras_model_to_graph_def(model)

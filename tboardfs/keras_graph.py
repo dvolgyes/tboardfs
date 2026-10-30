@@ -133,7 +133,9 @@ class _Links:
         elif inbound:
             self.previous = _scoped(scope, inbound[0][0])
         elif self.previous and functional:
-            if _KerasConfig.size(inputs) != 1:
+            # Keras 3 writes one input as a flat [name, node, index] list. Unlike
+            # TensorBoard 2.21, which fails on it, read it as one input.
+            if _KerasConfig.size(inputs) != 1 and not _KerasConfig.is_history(inputs):
                 raise ValueError("Keras model in a Sequential model has several inputs")
             key = _KerasConfig.key(_scoped(name, _KerasConfig.element(inputs, 0)))
             self.input_to_layer[key] = self.previous
@@ -256,6 +258,15 @@ class _KerasConfig:
         if not isinstance(value, (list, str, dict)):
             raise ValueError(f"Keras config has {type(value).__name__} for a list")
         return len(value)
+
+    @staticmethod
+    def is_history(value: object) -> bool:
+        """Return true for one flat [name, node, index] Keras 3 tensor reference."""
+        return (
+            isinstance(value, list)
+            and len(value) == HISTORY_FIELDS
+            and isinstance(value[0], str)
+        )
 
     @staticmethod
     def element(value: object, index: object) -> object:

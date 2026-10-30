@@ -11,7 +11,9 @@
 The run holds Keras model configs (graph_keras_model) and traced functions
 (graph_run_metadata_graph). tests/golden/graphs/<tag>.pb is the GraphDef that
 the TensorBoard graph plugin builds for a summary, or <tag>.error names the
-exception when TensorBoard cannot build one.
+exception when TensorBoard cannot build one. TensorBoard 2.21 fails on the flat
+[name, node, index] list with which Keras 3 writes the one input of a model, so
+the goldens read such a list as that one input, as tboardfs does.
 """
 
 from collections.abc import Callable, Iterator
@@ -125,7 +127,7 @@ def _models() -> Iterator[tuple[str, Any]]:
         keras.Sequential([keras.Input((2,)), layers.Dense(2), activation], name="mp"),
     )
     keras.mixed_precision.set_global_policy("float32")
-    # TensorBoard cannot draw a functional model inside a Sequential model.
+    # TensorBoard 2.21 cannot draw a functional model inside a Sequential model.
     yield "func_in_seq", keras.Sequential([keras.Input((3,)), finner], name="fs")
     embedding = [
         keras.Input((5,), dtype="int64"),
@@ -137,12 +139,30 @@ def _models() -> Iterator[tuple[str, Any]]:
 
 def _write_golden(path: Path) -> None:
     """Write the graph of each summary as the TensorBoard graph plugin builds it."""
+
+    def one_input(config: object) -> object:
+        """Return a Keras config with each flat Keras 3 input reference as [name].
+
+        TensorBoard counts the fields of [name, node, index] as three inputs,
+        but reads input_layers[0], the name, when there is one input.
+        """
+        if isinstance(config, list):
+            return [one_input(item) for item in config]
+        if not isinstance(config, dict):
+            return config
+        inputs = config.get("input_layers")
+        fixed = {key: one_input(value) for key, value in config.items()}
+        if isinstance(inputs, list) and len(inputs) == 3 and isinstance(inputs[0], str):
+            fixed["input_layers"] = inputs[:1]
+        return fixed
+
     for event in event_file_loader.EventFileLoader(str(path)).Load():
         for value in event.summary.value:
             blob = value.tensor.string_val[0]
             try:
                 if value.metadata.plugin_data.plugin_name == "graph_keras_model":
-                    graph = keras_util.keras_model_to_graph_def(json.loads(blob))
+                    config = one_input(json.loads(blob))
+                    graph = keras_util.keras_model_to_graph_def(config)
                 else:
                     run_metadata = config_pb2.RunMetadata.FromString(blob)
                     graph = graph_util.merge_graph_defs(
