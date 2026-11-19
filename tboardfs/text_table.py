@@ -34,13 +34,14 @@ class _TextTable:
         tensor = entry.payload.get("tensor") or {}
         if not tensor.get("string_val"):
             return []
-        cells = _TensorDType.shaped(_TensorDType.strings(tensor), tensor, fill=True)
-        if cells is None:
+        preview = _TensorDType.string_preview(tensor)
+        if preview is None:
             return []
+        cells, dtype = preview
         text = _TextTable.markdown(cells).encode()
         nodes = [("txt", {"type": "bytes", "data": text, "mtime": entry.wall_time})]
         if cells.size > 1:
-            data = array_to_json(cells)
+            data = array_to_json(cells, dtype=dtype)
             nodes.append(
                 ("json", {"type": "json", "data": data, "mtime": entry.wall_time})
             )
@@ -51,6 +52,13 @@ class _TextTable:
         """Return one string as is, or many strings as a Markdown table."""
         if cells.size == 1:
             return str(cells.reshape(-1)[0])
+        if cells.size == 0:
+            if cells.ndim > 2:
+                return (
+                    f"**Warning:** this text summary has {cells.ndim} dimensions "
+                    "and its first 2-D slice is empty.\n"
+                )
+            return ""
         warning = ""
         if cells.ndim > 2:
             warning = WARNING.format(rank=cells.ndim)

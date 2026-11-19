@@ -10,15 +10,19 @@ BFLOAT16 = 14
 _MAX_NUMPY_DIMS = 64
 
 
-def tensor_to_array(tensor: dict[str, Any]) -> np.ndarray | None:
+def tensor_to_array(
+    tensor: dict[str, Any], *, copy_content: bool = True
+) -> np.ndarray | None:
     """Convert a parsed TensorProto dictionary to a NumPy array.
 
     Returns None when the tensor does not decode: an unsupported dtype,
     malformed values, or values that do not fill the shape.
+    Set copy_content to False when a read-only view of stored bytes suffices.
     """
     dtype = tensor.get("dtype")
     if dtype == DT_STRING:
-        return _TensorDType.shaped(_TensorDType.strings(tensor), tensor, fill=True)
+        values = np.asarray(_TensorDType.strings(tensor), dtype=np.str_)
+        return _TensorDType.shaped(values, tensor, fill=True)
 
     spec = _TensorDType.spec(dtype)
     if spec is None:
@@ -29,7 +33,9 @@ def tensor_to_array(tensor: dict[str, Any]) -> np.ndarray | None:
     if content:
         if len(content) % np.dtype(storage).itemsize:
             return None
-        values = np.frombuffer(bytes(content), dtype=storage).copy()
+        values = np.frombuffer(bytes(content), dtype=storage)
+        if copy_content and dtype != BFLOAT16:
+            values = values.copy()
     else:
         all_values = tensor.get("values", {})
         raw_values = all_values.get(field, all_values.get(str(field), []))
@@ -76,14 +82,29 @@ class _TensorDType:
     }
 
     @staticmethod
-    def strings(tensor: dict[str, Any]) -> np.ndarray:
-        """Return the string_val items of a TensorProto as a flat text array."""
-        values = [_Decode.text(value) for value in tensor.get("string_val", [])]
-        return np.asarray(values, dtype=np.str_)
+    def strings(tensor: dict[str, Any]) -> list[str]:
+        """Decode string_val items, replacing invalid UTF-8."""
+        return [_Decode.text(value) for value in tensor.get("string_val", [])]
+
+    @staticmethod
+    def string_preview(
+        tensor: dict[str, Any],
+    ) -> tuple[np.ndarray, np.dtype] | None:
+        """Keep exact decoded strings and their fixed-width Unicode dtype."""
+        strings = _TensorDType.strings(tensor)
+        width = max(1, max(map(len, strings), default=0))
+        dtype = np.dtype(f"U{width}")
+        values = np.asarray(strings, dtype=object)
+        cells = _TensorDType.shaped(values, tensor, fill=True, itemsize=dtype.itemsize)
+        return None if cells is None else (cells, dtype)
 
     @staticmethod
     def shaped(
-        values: np.ndarray, tensor: dict[str, Any], *, fill: bool
+        values: np.ndarray,
+        tensor: dict[str, Any],
+        *,
+        fill: bool,
+        itemsize: int | None = None,
     ) -> np.ndarray | None:
         """Return the values in the tensor shape, or None when they do not fill it.
 
@@ -92,14 +113,18 @@ class _TensorDType:
         make_ndarray. With fill, a single value is repeated to the shape size,
         as make_ndarray does for the repeated value fields; the result may
         hold at most MAX_REPEATED_TENSOR_BYTES, so that a small record cannot
-        claim memory for any shape that it declares.
+        claim memory for any shape that it declares. For string previews,
+        itemsize is the fixed-width Unicode size, not the object pointer size.
         """
         shape = tuple(int(dim) for dim in tensor.get("shape") or [])
-        if min(shape, default=0) < 0 or not _TensorDType.fits_numpy(shape, values):
+        width = values.itemsize if itemsize is None else itemsize
+        if min(shape, default=0) < 0 or not _TensorDType.fits_numpy(
+            shape, max(values.itemsize, width)
+        ):
             return None
         size = math.prod(shape)
         if fill and values.size == 1 and size != 1:
-            if size * values.itemsize > MAX_REPEATED_TENSOR_BYTES:
+            if size * width > MAX_REPEATED_TENSOR_BYTES:
                 return None
             values = np.repeat(values, size)
         if values.size != size:
@@ -107,7 +132,7 @@ class _TensorDType:
         return values.reshape(shape)
 
     @staticmethod
-    def fits_numpy(shape: tuple[int, ...], values: np.ndarray) -> bool:
+    def fits_numpy(shape: tuple[int, ...], itemsize: int) -> bool:
         """Return whether NumPy can make an array of this shape and item size.
 
         NumPy limits an array to 64 dimensions, and the bytes of its nonzero
@@ -116,7 +141,7 @@ class _TensorDType:
         nonzero = math.prod(dim for dim in shape if dim)
         return (
             len(shape) <= _MAX_NUMPY_DIMS
-            and nonzero * max(values.itemsize, 1) <= np.iinfo(np.intp).max
+            and nonzero * max(itemsize, 1) <= np.iinfo(np.intp).max
         )
 
     @staticmethod

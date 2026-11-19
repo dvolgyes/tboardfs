@@ -373,6 +373,8 @@ dimensions shows its first 2-D slice with a warning.
 
 The adjacent `.json` preview keeps the full shape and all strings, but both previews replace invalid UTF-8 with `�`.
 
+The text and JSON previews preserve trailing NUL characters.
+
 Use the raw event frame to recover the exact string bytes.
 
 ### Meshes
@@ -401,7 +403,8 @@ A supported tensor has a `.npy` preview and a `.json` preview with its `shape`, 
 - Bfloat16 widens exactly to float32.
 - Use the raw frame for float8, float4, 2- and 4-bit integers, resources, variants and obsolete reference types; none
   has a NumPy preview.
-- String tensors are NumPy text arrays (dtype `U`), so `np.load` reads them without `allow_pickle`.
+- String tensors use a pickle-free fixed-width Unicode dtype (`U`) in `.npy` files.
+- Use the JSON preview for decoded strings with trailing NULs because NumPy cannot distinguish them from padding.
 - A numeric tensor without a plugin name is also a tensor here.
 - A single repeated-field value can fill the declared shape up to 1 KiB of expanded data. Shapes requiring more
   expansion do not get an array preview.

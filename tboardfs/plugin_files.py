@@ -3,6 +3,7 @@ from functools import partial
 import numpy as np
 
 from tboardfs.array_json import array_to_json
+from tboardfs.constants import DT_STRING
 from tboardfs.custom_scalars import custom_scalar_layout_json
 from tboardfs.hparams import hparams_json
 from tboardfs.mesh import mesh_nodes
@@ -10,7 +11,7 @@ from tboardfs.model import JsonEntry
 from tboardfs.paths import _Paths
 from tboardfs.run_files import RunFiles
 from tboardfs.skip_failure import skip_failure
-from tboardfs.tensor import tensor_to_array
+from tboardfs.tensor import _TensorDType, tensor_to_array
 
 # Row order of the pr_curves tensor, from the TensorBoard pr_curve plugin.
 PR_CURVE_ROWS = (
@@ -139,15 +140,25 @@ class _TypedPluginFiles:
     @staticmethod
     def add_tensor(files: RunFiles, entry: JsonEntry, step_digits: int) -> set[int]:
         """Add JSON and NPY views for one tensor record."""
-        data = tensor_to_array(entry.payload.get("tensor") or {})
-        if data is None:
-            return set()
+        tensor = entry.payload.get("tensor") or {}
+        if tensor.get("dtype") == DT_STRING:
+            preview = _TensorDType.string_preview(tensor)
+            if preview is None:
+                return set()
+            cells, dtype = preview
+            json_data = array_to_json(cells, dtype=dtype)
+            data = cells.astype(dtype)
+        else:
+            data = tensor_to_array(tensor, copy_content=False)
+            if data is None:
+                return set()
+            json_data = array_to_json(data)
         step = _Paths.step_name(entry.step, step_digits)
         files.add(
             ("tensors",),
             entry.tag,
             f"{step}.json",
-            {"type": "json", "data": array_to_json(data), "mtime": entry.wall_time},
+            {"type": "json", "data": json_data, "mtime": entry.wall_time},
         )
         files.add(
             ("tensors",),
