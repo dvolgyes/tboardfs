@@ -13,6 +13,7 @@ DEFAULT_SCALAR_FORMATS = ("json", "tsv", "npz")
 MAX_STEP_DIGITS = 20  # an int64 step and its sign
 LOG_LEVELS = ("TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL")
 DEFAULT_CACHE_SIZE_MB = 1024
+MAX_INDEX_BYTES = 512 << 20
 DEFAULT_DISCOVERY_SECONDS = 150.0
 LOG_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "

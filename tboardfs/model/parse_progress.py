@@ -11,6 +11,14 @@ _UNINDEXED = FileIdentity(0, 0, None)
 
 
 @dataclass
+class _ParseProvenance:
+    """Record whether the index reused a prefix or would hide diagnostics."""
+
+    resumed: bool = False
+    cacheable: bool = field(default=True, compare=False, repr=False)
+
+
+@dataclass
 class ParseProgress:
     """Where the parse of one event file stopped, and what it carries on.
 
@@ -22,7 +30,7 @@ class ParseProgress:
     :ivar checked_status: device, inode, size, mtime and ctime of the file
         when it was last checked; while they stay the same, the file is not
         opened again
-    :ivar resumed: this parse extended the supplied index instead of replacing it
+    :ivar provenance: origin and persistent eligibility of this index
     """
 
     processed_pos: int = 0
@@ -34,4 +42,9 @@ class ParseProgress:
     initial_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     effective_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     frames: FrameIndex = field(default_factory=FrameIndex)
-    resumed: bool = False
+    provenance: _ParseProvenance = field(default_factory=_ParseProvenance)
+
+    @property
+    def resumed(self) -> bool:
+        """Return whether this parse extended the supplied index."""
+        return self.provenance.resumed

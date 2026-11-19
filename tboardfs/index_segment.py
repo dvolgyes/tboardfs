@@ -148,6 +148,7 @@ class Segment:
             epoch=epoch,
             clock=clock,
             deferred_tensor_content=deferred if defer_tensor_content else None,
+            retain_tensor_extents=True,
         )
         position = start
         try:

@@ -18,6 +18,7 @@ from tboardfs.event_source import EventSource
 from tboardfs.file_status import FileIdentity
 from tboardfs.frame_ref import FrameRef
 from tboardfs.indexed_frame import IndexedFrame
+from tboardfs.meta_graph import meta_graph_graph_def
 from tboardfs.model import (
     BinaryEntry,
     EventFileCache,
@@ -31,14 +32,14 @@ from tboardfs.model import (
     TFRecordError,
 )
 from tboardfs.model.indexed_blob import IndexedBlob
-from tboardfs.meta_graph import meta_graph_graph_def
+from tboardfs.model.parse_progress import _ParseProvenance
 from tboardfs.payload_spans import PayloadSpans, Span
 from tboardfs.proto_schema import _ProtoParser
 from tboardfs.range_proof import range_proof
 from tboardfs.restarts import _RestartPurge, _offset_restarts
 from tboardfs.run_metadata_text import run_metadata_text
+from tboardfs.skip_failure import _diagnostic_provenance, _warn_skipped, skip_failure
 from tboardfs.summary import parse_event
-from tboardfs.skip_failure import _warn_skipped, skip_failure
 from tboardfs.summary_graph import summary_graph_def
 from tboardfs.tensor_summary import GRAPH_PLUGINS, _TensorSummary
 from tboardfs.tables import (
@@ -123,6 +124,7 @@ class _ParseState:
     binary_extensions: dict[tuple[str, bytes], str | None] = field(default_factory=dict)
     clock: _ClockDependencies | None = None
     deferred_tensor_content: list[tuple[int, int, int, int]] | None = None
+    retain_tensor_extents: bool = False
 
 
 class _EventIndexer:
@@ -137,6 +139,7 @@ class _EventIndexer:
         base_cache: EventFileCache | None = None,
         initial_metadata: dict[str, dict[str, Any]] | None = None,
         mountpoint: Path | None = None,
+        retain_tensor_extents: bool = False,
     ) -> EventFileCache:
         """Index a validated prefix and appended frames on one descriptor."""
         with EventSource.open(path, mountpoint=mountpoint) as handle:
@@ -160,6 +163,9 @@ class _EventIndexer:
                 initial_metadata,
                 ignore_truncated=ignore_truncated,
                 strict_framing=strict_framing,
+                state=_ParseState(retain_tensor_extents=True)
+                if retain_tensor_extents
+                else None,
             )
 
     @staticmethod
@@ -173,10 +179,13 @@ class _EventIndexer:
         ignore_truncated: bool,
         strict_framing: bool,
         retry: bool = True,
+        state: _ParseState | None = None,
     ) -> EventFileCache:
         """Index validated frames from the same descriptor checked for continuity."""
         cache = EventFileCache(source_path=path)
         progress = cache.progress
+        provenance = progress.provenance
+        provenance.cacheable = retry
         progress.identity = FileIdentity.of(status)
         progress.checked_status = FileIdentity.fingerprint(status)
         progress.initial_metadata = (
@@ -189,11 +198,11 @@ class _EventIndexer:
             if base_cache is not None
             else progress.initial_metadata
         )
-        state = _ParseState()
-        processed_pos = 0
+        state = _ParseState() if state is None else state
         if base_cache is not None:
-            progress.resumed = True
-            processed_pos = base_cache.progress.processed_pos
+            provenance.resumed = True
+            provenance.cacheable = retry and base_cache.progress.provenance.cacheable
+            progress.processed_pos = base_cache.progress.processed_pos
             progress.frames = base_cache.progress.frames.copy()
             state.first_time = base_cache.progress.first_time
             state.epoch = base_cache.progress.epoch
@@ -203,29 +212,17 @@ class _EventIndexer:
             cache.scalar_mtimes = dict(base_cache.scalar_mtimes)
             cache.histogram_mtimes = dict(base_cache.histogram_mtimes)
 
-        handle.seek(processed_pos)
+        handle.seek(progress.processed_pos)
         try:
-            for record in iter_tfrecords(handle):
-                processed_pos = record.record_offset + record.total_size
-                progress.frames.append(processed_pos, record.payload_crc)
-                try:
-                    _EventIndexer.index_record(
-                        cache, record, state, strict=not ignore_truncated
-                    )
-                except _MALFORMED_RECORD_ERRORS as error:
-                    if not ignore_truncated:
-                        raise
-                    logger.warning(
-                        "skipping malformed record at offset {} in {}: {}",
-                        record.record_offset,
-                        path,
-                        error,
-                    )
+            _EventIndexer._index_records(
+                handle, cache, state, strict=not ignore_truncated
+            )
         except TFRecordError as error:
             if strict_framing or not ignore_truncated:
                 raise TFRecordError(
                     f"{path}: {error}", corrupt=error.corrupt
                 ) from error
+            provenance.cacheable = False
             if not _EventIndexer.valid_anchor(handle, cache):
                 if not retry:
                     logger.warning("discarding unstable prefix of {}: {}", path, error)
@@ -234,6 +231,7 @@ class _EventIndexer:
                         progress=ParseProgress(
                             initial_metadata=progress.initial_metadata,
                             effective_metadata=dict(progress.initial_metadata),
+                            provenance=_ParseProvenance(cacheable=False),
                         ),
                     )
                 return _EventIndexer.parse_open(
@@ -245,11 +243,19 @@ class _EventIndexer:
                     ignore_truncated=ignore_truncated,
                     strict_framing=strict_framing,
                     retry=False,
+                    state=_ParseState(
+                        retain_tensor_extents=state.retain_tensor_extents
+                    ),
                 )
             if error.corrupt:
                 logger.warning("stopped reading {}: {}", path, error)
 
-        progress.processed_pos = processed_pos
+        provenance.cacheable = (
+            provenance.cacheable
+            and _EventIndexer._complete_snapshot(
+                handle, cache, status, state.retain_tensor_extents
+            )
+        )
         progress.last_checked_size = status.st_size
         progress.first_time = state.first_time
         progress.epoch = state.epoch
@@ -264,6 +270,48 @@ class _EventIndexer:
             )
             cache.restarts = _EventIndexer.rebase_restarts(cache.restarts, base_cache)
         return cache
+
+    @staticmethod
+    def _index_records(
+        handle: BinaryIO, cache: EventFileCache, state: _ParseState, *, strict: bool
+    ) -> None:
+        """Index records and scope conversion diagnostics to this cache."""
+        progress = cache.progress
+        provenance = progress.provenance
+        token = _diagnostic_provenance.set(provenance)
+        try:
+            for record in iter_tfrecords(handle):
+                progress.processed_pos = record.record_offset + record.total_size
+                progress.frames.append(progress.processed_pos, record.payload_crc)
+                try:
+                    _EventIndexer.index_record(cache, record, state, strict=strict)
+                except _MALFORMED_RECORD_ERRORS as error:
+                    if strict:
+                        raise
+                    provenance.cacheable = False
+                    logger.warning(
+                        "skipping malformed record at offset {} in {}: {}",
+                        record.record_offset,
+                        cache.source_path,
+                        error,
+                    )
+        finally:
+            _diagnostic_provenance.reset(token)
+
+    @staticmethod
+    def _complete_snapshot(
+        handle: BinaryIO,
+        cache: EventFileCache,
+        status: os.stat_result,
+        verify_stability: bool,
+    ) -> bool:
+        """Require a whole nonempty file and, for disk reuse, unchanged status."""
+        progress = cache.progress
+        return 0 < progress.processed_pos == status.st_size and (
+            not verify_stability
+            or FileIdentity.fingerprint(os.fstat(handle.fileno()))
+            == progress.checked_status
+        )
 
     @staticmethod
     def rebase_restarts(
@@ -473,16 +521,8 @@ class _EventIndexer:
             state.binary_extensions,
         )
         entry = _EventIndexer.add_plugin(cache, value, (tag, step, wall_time))
-        deferred = state.deferred_tensor_content
-        if entry is not None and spans is not None and deferred is not None:
-            _EventIndexer.defer_tensor(
-                deferred,
-                len(cache.json_entries) - 1,
-                entry,
-                record.payload_offset,
-                spans,
-                ordinal,
-            )
+        if entry is not None and spans is not None and state.retain_tensor_extents:
+            _EventIndexer._retain_extent(cache, state, entry, record, spans, ordinal)
         return epoch
 
     @staticmethod
@@ -699,15 +739,15 @@ class _EventIndexer:
         return entry
 
     @staticmethod
-    def defer_tensor(
-        descriptors: list[tuple[int, int, int, int]],
-        entry_index: int,
+    def _retain_extent(
+        cache: EventFileCache,
+        state: _ParseState,
         entry: JsonEntry,
-        payload_offset: int,
+        record: Record,
         spans: PayloadSpans,
         ordinal: int,
     ) -> None:
-        """Replace a large plugin buffer with a verified source extent for IPC."""
+        """Retain verified source evidence without dropping eager serial bytes."""
         tensor = entry.payload.get("tensor")
         if tensor is None:
             return
@@ -718,10 +758,11 @@ class _EventIndexer:
         if len(fields) != 1 or spans.match(fields[0], content) is None:
             return
         offset, size = fields[0]
-        descriptors.append(
-            (entry_index, payload_offset + offset, size, masked_crc32c(content))
-        )
-        tensor["tensor_content"] = b""
+        extent = (record.payload_offset + offset, size, masked_crc32c(content))
+        entry.tensor_extent = extent
+        if state.deferred_tensor_content is not None:
+            state.deferred_tensor_content.append((len(cache.json_entries) - 1, *extent))
+            tensor["tensor_content"] = b""
 
     @staticmethod
     def plugin_error(tab: str, payload: dict[str, Any]) -> str | None:

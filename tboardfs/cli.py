@@ -15,6 +15,7 @@ from tboardfs.constants import (
     LOG_FORMAT,
 )
 from tboardfs.mounted import MountedTensorBoardFS
+from tboardfs.mount_index import _DEFAULT_DISK_INDEX_SIZE_MB
 from tboardfs.stdlib_logging import StdlibToLoguru
 
 
@@ -46,6 +47,18 @@ from tboardfs.stdlib_logging import StdlibToLoguru
     default=1,
     show_default=True,
     help="Maximum workers for cold indexing of event files at least 8 MiB.",
+)
+@click.option(
+    "--disk-index",
+    is_flag=True,
+    help="Reuse verified whole-event-file indexes across mounts.",
+)
+@click.option(
+    "--disk-index-size-mb",
+    type=click.IntRange(min=1),
+    default=_DEFAULT_DISK_INDEX_SIZE_MB,
+    show_default=True,
+    help="Disk budget for persistent indexes (requires --disk-index).",
 )
 @click.option("--foreground/--background", default=False, show_default=True)
 @click.option(
@@ -96,6 +109,8 @@ def main(
         cache_size_mb=cast(int, params["cache_size_mb"]),
         owner=(0, 0) if params["root_owner"] else (os.getuid(), os.getgid()),
         index_workers=cast(int, params["index_workers"]),
+        disk_index=cast(bool, params["disk_index"]),
+        disk_index_size_mb=cast(int, params["disk_index_size_mb"]),
     )
     # attr_timeout=0 makes fstat and SEEK_END ask for the size of the open
     # handle; a cached size from an older version would cut its data.

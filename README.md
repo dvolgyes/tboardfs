@@ -91,6 +91,8 @@ tboardfs runs in the background by default. With `--foreground`, it stays in the
 | `--refresh-age-seconds S` | `150` | Minimum interval between local searches for new files and directories. Use `0` for immediate discovery or `inf` to freeze each directory after first access. |
 | `--cache-size-mb N` | `1024` | Memory for rendered files. `0` turns the cache off. |
 | `-j N`, `--index-workers N` | `1` | Maximum workers per cold file index (`1` keeps indexing serial). |
+| `--disk-index` | off | Reuse verified per-file indexes across mounts. |
+| `--disk-index-size-mb N` | `2048` | Disk budget in MiB for saved index payloads; does not enable the disk index by itself. |
 | `--root-owner` / `--user-owner` | `--root-owner` | Owner of all files and directories: root, or the user who mounts. |
 | `--foreground` / `--background` | `--background` | Stay in the terminal, or detach. |
 | `--logfile FILE` | none | Write the log to FILE. |
@@ -117,6 +119,48 @@ serial reader.
 Repeated reads reuse the cache; appends resume from the existing index without starting workers.
 
 On memory-constrained systems, keep the serial default: each active worker needs memory in addition to the index.
+
+### Reuse an index on the next mount
+
+Use `tboardfs --disk-index SOURCE MOUNTPOINT` when you repeatedly mount the same large event files.
+
+Without `--disk-index`, tboardfs neither reads nor writes persistent indexes.
+
+- **Miss:** A new path or size goes straight to the configured parser; add `-j N` to use parallel indexing on large
+  files.
+- **Candidate:** tboardfs opens the current event file for reading and verifies a BLAKE2b digest of **all** its bytes
+  before loading the saved index.
+- **Hit:** The bytes, parser configuration and plugin metadata inherited from earlier files must all match.
+- **Multiple files:** `-j N` allows up to four concurrent candidate hashes in the active run.
+- **Diagnostics:** `--loglevel DEBUG` reports `persistent index stored` or `persistent index hit` with the event-file
+  path.
+
+The first mount pays for parsing, hashing and writing; subsequent hits avoid protobuf parsing and file-type detection
+but still verify the source and build the virtual tree.
+
+Only complete, stable parses without skipped records or conversion warnings are saved.
+
+Within a mount, appends still extend the in-memory index; a later mount reparses a changed file rather than trusting a
+saved prefix.
+
+An unreadable source is never served from the cache.
+
+Restart the mount process after upgrading libmagic or changing its rule files.
+
+**Storage:** The default is `$XDG_CACHE_HOME/tboardfs/indexes-v1`, or `~/.cache/tboardfs/indexes-v1` when no absolute
+XDG cache directory is configured.
+
+The cache can contain training values and metadata: choose a private location outside the source and mount with no
+symlink components.
+
+Entries expire 30 days after writing; subsequent writes reclaim expired entries and evict the oldest writes to fit
+`--disk-index-size-mb`.
+
+The budget counts index payloads, not the catalog or temporary files, and a single index cannot exceed 512 MiB.
+
+If the cache is unavailable or incompatible, tboardfs uses the normal parser.
+
+Deleting the cache while unmounted loses only the speedup, not the event data.
 
 ### Live Training Runs
 

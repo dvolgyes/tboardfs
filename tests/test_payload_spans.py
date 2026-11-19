@@ -7,11 +7,12 @@ from errno import EIO
 from pathlib import Path
 from unittest.mock import patch
 
+import magic
 import pytest
 
 from scripts.scale_corpus import _ScaleCorpus
 from tboardfs import parse_file
-from tboardfs.classify import detect_extension, magic
+from tboardfs.classify import detect_extension
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.extract import _extract_graph_blob, extract_binary_blob
 from tboardfs.payload_spans import PayloadSpans

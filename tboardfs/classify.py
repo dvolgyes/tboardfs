@@ -4,11 +4,11 @@ from types import MappingProxyType
 from typing import Any
 from zlib import crc32
 
-import magic
 import numpy as np
 
 from tboardfs.constants import DT_STRING, DT_UINT8, LARGE_TENSOR_THRESHOLD, PLUGIN_TAB
 from tboardfs.data_formats import _Mesh, data_extension
+from tboardfs.index_magic import MagicHost
 from tboardfs.media_containers import media_extension
 from tboardfs.model import Scalar
 from tboardfs.native_files import _Framing, native_extension
@@ -313,7 +313,7 @@ class _Classifier:
     @staticmethod
     def extension_from_magic(blob: bytes) -> str | None:
         """Map known libmagic MIME types and descriptions to stable filename extensions."""
-        mime = magic.from_buffer(blob, mime=True).lower()
+        mime = MagicHost.classify(blob, mime=True).lower()
         if mime == "audio/mpeg" and (layer := _Classifier.mpeg_layer(blob)):
             return layer
         if blob[4:12] == b"ftypM4A ":
@@ -361,7 +361,7 @@ class _Classifier:
         if mime in mime_extensions:
             return mime_extensions[mime]
         return _Classifier.extension_from_magic_description(
-            magic.from_buffer(blob).lower()
+            MagicHost.classify(blob).lower()
         )
 
     @staticmethod

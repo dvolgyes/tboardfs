@@ -5,7 +5,12 @@ from contextvars import ContextVar
 
 from loguru import logger
 
+from tboardfs.model.parse_progress import _ParseProvenance
+
 _speculative_record = ContextVar("speculative_record", default=False)
+_diagnostic_provenance: ContextVar[_ParseProvenance | None] = ContextVar(
+    "diagnostic_provenance", default=None
+)
 
 
 class _ReplayRecordError(Exception):
@@ -16,6 +21,14 @@ def _warn_skipped(message: str, *args: object) -> None:
     """Defer skip diagnostics during speculative record conversion."""
     if _speculative_record.get():
         raise _ReplayRecordError(message.format(*args))
+    _log_skipped(message, *args)
+
+
+def _log_skipped(message: str, *args: object) -> None:
+    """Record that a serial index cannot be reused without losing a warning."""
+    provenance = _diagnostic_provenance.get()
+    if provenance is not None:
+        provenance.cacheable = False
     logger.warning(message, *args)
 
 
@@ -48,6 +61,6 @@ def skip_failure[Result](
             ) from error
         if strict:
             raise
-        logger.warning("{} is skipped: {}: {}", what, type(error).__name__, error)
+        _log_skipped("{} is skipped: {}: {}", what, type(error).__name__, error)
         logger.opt(exception=error).debug("traceback of the skipped {}", what)
         return None

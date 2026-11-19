@@ -1,14 +1,12 @@
 from dataclasses import dataclass, field
 from errno import EIO, EISDIR, ENOENT, ENOTDIR, EROFS
-from importlib import import_module
 from io import FileIO
 import os
 from pathlib import Path
 import stat
 from threading import RLock
 import time
-from typing import Any
-from collections.abc import Callable
+from typing import Any, Unpack
 
 from loguru import logger
 
@@ -18,10 +16,7 @@ from tboardfs.constants import (
     DEFAULT_SCALAR_FORMATS,
 )
 from tboardfs.errors import fuse_error
-from tboardfs.event_source import EventSource
 from tboardfs.file_times import FileTimes
-from tboardfs.file_status import FileIdentity
-from tboardfs.indexer import _EventIndexer
 from tboardfs.model import (
     BinaryEntry,
     EventFileCache,
@@ -29,6 +24,7 @@ from tboardfs.model import (
     RunCache,
     SidecarEntry,
 )
+from tboardfs.mount_index import _IndexOptions, _MountIndexKeywords, _RunData
 from tboardfs.open3d_asset import OPEN3D_PLUGIN, Open3DAsset
 from tboardfs.paths import _DirectoryNode, _Paths
 from tboardfs.run_places import RunPlaces
@@ -37,7 +33,6 @@ from tboardfs.sidecar_scan import SidecarScan
 from tboardfs.render_cache import RenderCache, RenderKey
 from tboardfs.render_node import render_node
 from tboardfs.verified_span import _FrameValidations, _VerifiedSpan
-
 
 _PARALLEL_MIN_BYTES = 8 << 20
 
@@ -53,14 +48,6 @@ class _Directory:
     pieces: dict[tuple[str, ...], tuple[SidecarEntry, ...]] = field(
         default_factory=dict
     )
-
-
-@dataclass(frozen=True, slots=True)
-class _IndexOptions:
-    """Event-source lookup and worker limits for this mount."""
-
-    mountpoint: Path | None
-    workers: int
 
 
 @dataclass
@@ -139,10 +126,8 @@ class TensorBoardFS:
         cache_size_mb: int = DEFAULT_CACHE_SIZE_MB,
         owner: tuple[int, int] = (0, 0),
         mountpoint: str | Path | None = None,
-        index_workers: int = 1,
+        **index_options: Unpack[_MountIndexKeywords],
     ) -> None:
-        if index_workers < 1:
-            raise ValueError("index_workers must be positive")
         self.source = Path(source)
         self.step_digits = step_digits
         self.refresh_age_seconds = refresh_age_seconds
@@ -152,8 +137,12 @@ class TensorBoardFS:
         self.log_to_screen = log_to_screen
         self.owner = owner
         self._renders = RenderCache(cache_size_mb * 1024 * 1024)
-        mounted_at = Path(mountpoint).resolve() if mountpoint is not None else None
-        self._state = _FsState(_IndexOptions(mounted_at, index_workers))
+        index = _IndexOptions.create(
+            self.source, mountpoint, _PARALLEL_MIN_BYTES, **index_options
+        )
+        self._state = _FsState(index)
+        if index.disk is not None:
+            self.source = self.source.absolute()
         self._lock = RLock()
         self._run_places = RunPlaces()
         self._state.directories[()] = _Directory()
@@ -458,8 +447,8 @@ class TensorBoardFS:
         return data
 
     def _allowed(self, path: Path) -> bool:
-        mountpoint = self._state.index.mountpoint
-        if mountpoint is None:
+        blocked = (self._state.index.mountpoint, self._state.index.storage)
+        if blocked == (None, None):
             return True
         pending = list(reversed(path.absolute().parts[1:]))
         current = Path("/")
@@ -470,7 +459,7 @@ class TensorBoardFS:
                 current = current.parent
                 continue
             current /= part
-            if current == mountpoint:
+            if current in blocked:
                 return False
             if current.is_symlink():
                 links += 1
@@ -491,23 +480,9 @@ class TensorBoardFS:
         now = time.time()
         entries = None
         if previous is None or now - previous >= self.refresh_age_seconds:
-            entries = (
-                [
-                    entry
-                    for entry in _Paths.entries(directory)
-                    if not entry.is_symlink() or self._allowed(Path(entry.path))
-                ]
-                if self._allowed(directory)
-                else []
-            )
+            entries = self._scan_entries(directory)
             local.scanned_at = now
-        files = list(run.files)
-        if entries is not None:
-            files = _Paths.event_files(
-                directory, entries, mountpoint=self._state.index.mountpoint
-            )
-            event_names = {path.name for path in files}
-            entries = [entry for entry in entries if entry.name not in event_names]
+        files, entries = self._run_sources(run, directory, entries)
         if self._refresh_run(run, files, entries):
             self._log("finished parsing TensorBoard files")
         if entries is not None:
@@ -523,6 +498,32 @@ class TensorBoardFS:
                 for removed in old - children:
                     self._forget(removed)
                 self._invalidate_tree()
+
+    def _scan_entries(self, directory: Path) -> list[os.DirEntry[str]]:
+        if not self._allowed(directory):
+            return []
+        return [
+            entry
+            for entry in _Paths.entries(directory)
+            if not entry.is_symlink() or self._allowed(Path(entry.path))
+        ]
+
+    def _run_sources(
+        self,
+        run: RunCache,
+        directory: Path,
+        entries: list[os.DirEntry[str]] | None,
+    ) -> tuple[list[Path], list[os.DirEntry[str]] | None]:
+        if entries is None:
+            files = list(run.files)
+            if self._state.index.storage is not None:
+                files = [path for path in files if self._allowed(path)]
+            return files, None
+        files = _Paths.event_files(
+            directory, entries, mountpoint=self._state.index.mountpoint
+        )
+        event_names = {path.name for path in files}
+        return files, [entry for entry in entries if entry.name not in event_names]
 
     @staticmethod
     def _child_names(
@@ -597,8 +598,7 @@ class TensorBoardFS:
             files,
             force=force,
             log=log_parse,
-            index_workers=self.index_workers,
-            mountpoint=self._state.index.mountpoint,
+            options=self._state.index,
         )
         self._refresh_sidecars(run, entries)
         run.refreshed_at = now
@@ -716,103 +716,3 @@ class TensorBoardFS:
         self._renders.expire(None)
         self._state.tree_generation += 1
         self._state.tree_cache = None
-
-
-class _RunData:
-    """Refresh event-file caches and collect run entries."""
-
-    @staticmethod
-    def refresh_event_files(
-        run: RunCache,
-        files: list[Path],
-        *,
-        force: bool,
-        log: Callable[[str, object], None] | None,
-        index_workers: int,
-        mountpoint: Path | None,
-    ) -> tuple[bool, EventFileCache | None]:
-        """Report a change and the base index if exactly one source resumed."""
-        changed = False
-        base = None
-        carry: dict[str, dict[str, Any]] = {}
-        for source_path in sorted(files):
-            old = run.files.get(source_path)
-            try:
-                if _RunData.refresh_event_file(
-                    run,
-                    source_path,
-                    force=force
-                    or (old is not None and old.progress.initial_metadata != carry),
-                    log=log,
-                    initial_metadata=carry,
-                    index_workers=index_workers,
-                    mountpoint=mountpoint,
-                ):
-                    base = (
-                        old
-                        if not changed and run.files[source_path].progress.resumed
-                        else None
-                    )
-                    changed = True
-            except OSError as error:
-                if not isinstance(error, FileNotFoundError):
-                    logger.warning("cannot read event file {}: {}", source_path, error)
-                if run.files.pop(source_path, None) is not None:
-                    changed, base = True, None
-            if source_path in run.files:
-                carry = run.files[source_path].progress.effective_metadata
-        for deleted in set(run.files) - set(files):
-            if log is not None:
-                log("event file removed {}", deleted)
-            del run.files[deleted]
-            changed, base = True, None
-        return changed, base
-
-    @staticmethod
-    def refresh_event_file(
-        run: RunCache,
-        source_path: Path,
-        *,
-        force: bool,
-        log: Callable[[str, object], None] | None,
-        initial_metadata: dict[str, dict[str, Any]],
-        index_workers: int,
-        mountpoint: Path | None,
-    ) -> bool:
-        """Check a known source; open and parse it only when its status changes."""
-        old = run.files.get(source_path)
-        if (
-            not force
-            and old is not None
-            and FileIdentity.fingerprint(
-                EventSource.stat(source_path, mountpoint=mountpoint)
-            )
-            == old.progress.checked_status
-        ):
-            return False
-        if log is not None:
-            log("parsing {}", source_path)
-        if (
-            old is None
-            and index_workers > 1
-            and EventSource.stat(source_path, mountpoint=mountpoint).st_size
-            >= _PARALLEL_MIN_BYTES
-        ):
-            cold = import_module("tboardfs.parallel_index")
-            cache: EventFileCache | None = cold.parallel_index(
-                source_path,
-                index_workers,
-                initial_metadata=initial_metadata,
-                mountpoint=mountpoint,
-            )
-            if cache is not None:
-                run.files[source_path] = cache
-                return True
-        run.files[source_path] = _EventIndexer.parse_event_file(
-            source_path,
-            ignore_truncated=True,
-            base_cache=None if force else old,
-            initial_metadata=initial_metadata,
-            mountpoint=mountpoint,
-        )
-        return True
