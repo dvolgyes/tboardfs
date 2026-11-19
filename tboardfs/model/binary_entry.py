@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from tboardfs.frame_ref import FrameRef
+
 
 @dataclass
 class BinaryEntry:
@@ -11,8 +13,7 @@ class BinaryEntry:
     :ivar kind: virtual tab for the binary payload
     :ivar step: TensorBoard step
     :ivar wall_time: event wall time
-    :ivar payload_offset: event payload byte offset
-    :ivar payload_size: event payload byte length
+    :ivar frame: verified source frame and generation
     :ivar extension: detected file extension
     :ivar part: string_val index of a TF2 media item, or None for the value blob
     :ivar suffix: file-name suffix after the step, for one of several items
@@ -23,8 +24,8 @@ class BinaryEntry:
     kind: str
     step: int | float
     wall_time: float
-    payload_offset: int
-    payload_size: int
+    frame: FrameRef
     extension: str
+    value_ordinal: int
     part: int | None = None
     suffix: str = ""

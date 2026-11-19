@@ -118,7 +118,7 @@ class _RestartPurge:
         entries: list[Entry], table: str, starts: list[_Start]
     ) -> list[Entry]:
         """Drop replaced entries from a list of indexed payloads."""
-        steps = np.array([entry.step for entry in entries], dtype=np.float64)
+        steps = np.asarray([entry.step for entry in entries])
         keep = _RestartPurge.kept_rows(steps, (table, ""), starts)
         return [entry for entry, kept in zip(entries, keep, strict=True) if kept]
 
@@ -129,10 +129,8 @@ class _RestartPurge:
         starts: list[_Start],
     ) -> np.ndarray:
         """Return a mask of the rows that no START drops."""
-        steps = np.asarray(steps, dtype=np.float64)
-        index = np.arange(len(steps))
         keep = np.ones(len(steps), dtype=bool)
         for step, counts in starts:
             before = len(steps) if counts is None else counts.get(key, 0)
-            keep &= ~((steps >= step) & (index < before))
+            keep[:before] &= ~(steps[:before] >= step)
         return keep

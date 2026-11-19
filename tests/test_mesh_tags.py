@@ -95,16 +95,14 @@ def warnings() -> list[str]:
 def test_mesh_tags_with_the_same_path_keep_their_own_files(
     tmp_path: Path, warnings: list[str]
 ) -> None:
-    """The mesh tag a//b gets a suffix; the warning names the mesh tags."""
+    """The empty component separates the two mesh directories without a rename."""
     event = compat_pb2.Event(wall_time=1.0, step=1)
     _add(event, "a/b_VERTEX", "b", VERTEX, _points(1.0))
     _add(event, "a//b_VERTEX", "b", VERTEX, _points(2.0))
     fs = _fs(tmp_path, event)
 
     plain = _npz(fs, "/meshes/a/b/000001.npz")["vertices"]
-    doubled = _npz(fs, "/meshes/a/b~2/000001.npz")["vertices"]
+    doubled = _npz(fs, "/meshes/a/~empty/b/000001.npz")["vertices"]
     assert plain.ravel().tolist() == [1.0] * 6
     assert doubled.ravel().tolist() == [2.0] * 6
-    assert len(warnings) == 1
-    assert "'a/b'" in warnings[0]
-    assert "'a//b'" in warnings[0]
+    assert not warnings

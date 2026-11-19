@@ -29,7 +29,10 @@ def test_list_of_a_log_directory_matches_the_mount(tmp_path: Path) -> None:
     result = CliRunner().invoke(main, ["list", str(logs)])
 
     assert result.exit_code == 0
-    assert result.output.splitlines() == sorted(_files(TensorBoardFS(logs)))
+    mounted = _files(TensorBoardFS(logs))
+    assert result.output.splitlines() == sorted(
+        p for p in mounted if not p.startswith(("/a/raw/", "/b/raw/"))
+    )
     assert "/a/projector/projector_config.pbtxt" in result.output.splitlines()
 
 
@@ -52,7 +55,9 @@ def test_copy_all_of_a_log_directory_copies_every_run(tmp_path: Path) -> None:
     logs = _logdir(tmp_path)
     fs = TensorBoardFS(logs)
 
-    result = CliRunner().invoke(main, ["copy-all", str(logs), str(tmp_path / "out")])
+    result = CliRunner().invoke(
+        main, ["copy-all", str(logs), str(tmp_path / "out"), "--view", "both"]
+    )
 
     assert result.exit_code == 0
     for path in _files(fs):
@@ -70,6 +75,31 @@ def test_directory_listing_uses_the_format_options(tmp_path: Path) -> None:
 
     expected = TensorBoardFS(logs, step_digits=3, scalar_formats="csv")
     assert result.exit_code == 0
-    assert result.output.splitlines() == sorted(_files(expected))
+    assert result.output.splitlines() == sorted(
+        p
+        for p in _files(expected)
+        if not p.startswith(("/a/raw/", "/b/raw/", "/c/raw/"))
+    )
     assert "/a/scalars/loss.csv" in result.output.splitlines()
     assert "/c/tensors/activations/001.npy" in result.output.splitlines()
+
+
+def test_run_named_raw_does_not_change_view(tmp_path: Path) -> None:
+    logs = tmp_path / "logs"
+    run = logs / "raw"
+    run.mkdir(parents=True)
+    _append(run / EVENTS, 0, 1)
+    runner = CliRunner()
+    typed = runner.invoke(main, ["list", str(logs)])
+    raw = runner.invoke(main, ["list", str(logs), "--view", "raw"])
+    both = runner.invoke(main, ["list", str(logs), "--view", "both"])
+    assert typed.exit_code == raw.exit_code == both.exit_code == 0
+    typed_paths = set(typed.stdout.splitlines())
+    raw_paths = set(raw.stdout.splitlines())
+    assert typed_paths and raw_paths and typed_paths.isdisjoint(raw_paths)
+    assert set(both.stdout.splitlines()) == typed_paths | raw_paths
+    assert any(p.endswith("/scalars/loss.json") for p in typed_paths)
+    prefix = next(p for p in typed_paths if p.endswith("/scalars/loss.json")).rsplit(
+        "/scalars/", 1
+    )[0]
+    assert runner.invoke(main, ["list", str(logs), prefix]).stdout == typed.stdout

@@ -38,6 +38,8 @@ def test_a_directory_has_the_newest_time_below_it(tmp_path: Path) -> None:
     assert _times(fs, "/a/scalars") == (1000.0, 1000.0, 1000.0)
     assert _times(fs, "/a") == (1000.0, 1000.0, 1000.0)
     assert _times(fs, "/a/images") == (1000.0, 1000.0, 1000.0)
+    assert _times(fs, "/") == (1000.0, 1000.0, 1000.0)
+    assert _times(fs, "/b/scalars") == (2000.0, 2000.0, 2000.0)
     assert _times(fs, "/") == (2000.0, 2000.0, 2000.0)
 
 

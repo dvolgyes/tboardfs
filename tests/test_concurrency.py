@@ -99,26 +99,13 @@ def test_state_updates_never_overlap(
     assert peak[0] == 1
 
 
-def test_tree_built_during_a_change_is_not_kept(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A change that lands while the tree is built shows on the next lookup."""
+def test_append_after_snapshot_shows_on_next_lookup(tmp_path: Path) -> None:
+    """An explicit snapshot does not prevent later lookups from seeing new data."""
     path = tmp_path / "events.out.tfevents"
     _append(path, 0)
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
-    original = TensorBoardFS._build_tree
-    changed = []
-
-    def build_while_training_writes(self: TensorBoardFS) -> dict[str, Any]:
-        tree = original(self)
-        if not changed:
-            changed.append(True)
-            _append(path, 1)
-            self._refresh_runs({})
-        return tree
-
-    monkeypatch.setattr(TensorBoardFS, "_build_tree", build_while_training_writes)
-    fs.readdir("/")
+    assert fs.virtual_tree()["children"]["scalars"]["type"] == "dir"
+    _append(path, 1)
 
     rows = json.loads(fs.read("/scalars/loss.json", 1 << 20, 0))
 

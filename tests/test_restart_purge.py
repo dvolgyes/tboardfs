@@ -188,4 +188,57 @@ def test_a_start_keeps_the_rows_of_a_later_file(tmp_path: Path) -> None:
         _run(_version(), *(_values(step, 40.0 + step) for step in range(4, 8))),
     )
 
-    assert [step for step, _ in _loss(fs)] == [0, 1, 0, 1, 2, 3, 4, 5, 6, 7]
+    assert _loss(fs) == [
+        (0, 10),
+        (0, 20),
+        (1, 11),
+        (1, 21),
+        (2, 32),
+        (3, 33),
+        (4, 44),
+        (5, 45),
+        (6, 46),
+        (7, 47),
+    ]
+
+
+def test_restart_distinguishes_adjacent_large_steps(tmp_path: Path) -> None:
+    first = 2**53
+    fs = _write(
+        tmp_path,
+        _version() + _values(first, 1) + _values(first + 1, 2),
+        _start(first + 1),
+    )
+    assert _loss(fs) == [(first, 1)]
+    assert _histogram_steps(fs) == [(first, 1)]
+    assert fs.readdir("/images/img")[2:] == [f"{first}.png"]
+
+
+def test_same_clock_histograms_remain_independent_after_append_and_restart(
+    tmp_path: Path,
+) -> None:
+    def observations(*lefts: float) -> bytes:
+        event = compat_pb2.Event(step=3, wall_time=5)
+        for left in lefts:
+            histogram = event.summary.value.add(tag="weights").histo
+            histogram.min = left
+            histogram.max = left + 2
+            histogram.bucket_limit.append(left + 2)
+            histogram.bucket.append(1)
+        return _frame(event)
+
+    path = tmp_path / "events.out.tfevents.0"
+    path.write_bytes(_version() + observations(0, 10))
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+
+    def medians() -> list[float]:
+        rows = json.loads(fs.read("/distributions/weights/000003.json", 1 << 20, 0))
+        return [row["value"] for row in rows if row["percentile"] == 50]
+
+    assert medians() == [1, 11]
+    with path.open("ab") as handle:
+        handle.write(observations(20))
+    assert medians() == [1, 11, 21]
+    with path.open("ab") as handle:
+        handle.write(_start(3) + observations(10, 0))
+    assert medians() == [11, 1]

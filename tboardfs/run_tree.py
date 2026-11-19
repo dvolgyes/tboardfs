@@ -9,6 +9,7 @@ from tboardfs.graph_files import add_graph_files
 from tboardfs.histogram_files import add_histogram_files
 from tboardfs.model import BinaryEntry, EventFileCache, JsonEntry, RunCache
 from tboardfs.paths import _Paths
+from tboardfs.raw_frames import RawFrames
 from tboardfs.plugin_files import add_typed_plugin_files
 from tboardfs.restarts import _RestartPurge
 from tboardfs.run_files import RunFiles
@@ -24,8 +25,7 @@ def build_run_tree(
 ) -> dict[str, Any]:
     """Return virtual tab directories and files for one TensorBoard run.
 
-    Projector/profile sidecars come from ``run.sidecars``, which only a
-    mounted log directory fills.
+    Directory sources include sidecars; a single event file has none.
     """
     run_node: dict[str, Any] = {"type": "dir", "children": {}}
     for tab in FIXED_TABS:
@@ -60,7 +60,12 @@ class _RunTree:
         _RunTree.add_json_files(files, run, step_digits, consumed)
         add_graph_files(files, _RunTree.sorted_file_caches(run), step_digits)
         _RunTree.add_sidecar_files(files, run)
+        RawFrames.add(files, run)
         files.fill(run_node, run)
+        raw = run_node["children"]["raw"]
+        raw["view"] = "raw"
+        for event in raw["children"].values():
+            event["view"] = "raw"
 
     @staticmethod
     def add_scalar_files(
@@ -125,7 +130,7 @@ class _RunTree:
                     files.add((tab,), entry.tag, f"{step}.{suffix}", node)
                 continue
             files.add(
-                _RunTree.json_entry_root(tab, entry),
+                _RunTree.json_entry_root(tab, entry, files.name_map),
                 entry.tag,
                 f"{step}.json",
                 {"type": "json", "data": entry.payload, "mtime": entry.wall_time},
@@ -134,30 +139,37 @@ class _RunTree:
     @staticmethod
     def merged_scalars(run: RunCache) -> dict[str, dict[str, Any]]:
         """Return merged scalar series for one run, with the epoch of each step."""
-        scalars = _TableMerge.merge_series(
-            cache.scalars for cache in _RunTree.sorted_file_caches(run)
+        scalars = _TableMerge.merge_run_tables(_RunTree.sorted_file_caches(run))
+        return _TableMerge.sort_scalars(
+            _TableMerge.step_epochs(scalars, scalars.get("epoch"))
         )
-        return _TableMerge.step_epochs(scalars, scalars.get("epoch"))
 
     @staticmethod
     def add_sidecar_files(files: RunFiles, run: RunCache) -> None:
         """Add projector, profile and hparams sidecar files for one run."""
         for sidecar in run.sidecars:
+            parts = (
+                _Paths.safe_component(p, name_map=files.name_map)
+                for p in sidecar.rel_parts
+            )
             files.add_fixed(
-                (sidecar.tab, *sidecar.rel_parts),
+                (sidecar.tab, *parts),
                 {
                     "type": "sidecar",
                     "entry": sidecar,
                     "mtime": sidecar.mtime_ns / 1e9,
                 },
+                identity=str(sidecar.source_path),
             )
 
     @staticmethod
-    def json_entry_root(tab: str, entry: JsonEntry) -> tuple[str, ...]:
+    def json_entry_root(
+        tab: str, entry: JsonEntry, name_map: dict[str, str]
+    ) -> tuple[str, ...]:
         """Return the directory of the tag directories of a plugin JSON entry."""
         if tab == "plugins":
             plugin = _Paths.safe_component(
-                str(entry.payload.get("plugin_name") or "unknown")
+                str(entry.payload.get("plugin_name", "")), name_map=name_map
             )
             return (tab, plugin)
         return (tab,)

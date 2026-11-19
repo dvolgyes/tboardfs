@@ -1,5 +1,6 @@
 import base64
 from collections.abc import Iterator
+from io import BytesIO
 import errno
 import json
 import os
@@ -19,6 +20,7 @@ from tboardfs.summary import parse_event
 from tboardfs.tables import export_table
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.model import Record, TFRecordError
+from tboardfs.tfrecord import iter_tfrecords
 import tboardfs.indexer
 
 
@@ -573,8 +575,10 @@ def test_filesystem_sidecars_stay_with_their_nested_run(tmp_path: Path) -> None:
     assert fs.read("/child/profile/trace.json", 1000, 0) == b"child-trace"
 
 
-def test_filesystem_skips_sidecar_symlinks_outside_source(tmp_path: Path) -> None:
-    """Sidecar symlinks that resolve outside the source are not served."""
+def test_filesystem_follows_sidecar_links_but_not_ancestor_loops(
+    tmp_path: Path,
+) -> None:
+    """Trusted source links can point outside the run without recursing into it."""
     secret = tmp_path / "secret.json"
     secret.write_text("secret")
     run = tmp_path / "source" / "run"
@@ -593,8 +597,10 @@ def test_filesystem_skips_sidecar_symlinks_outside_source(tmp_path: Path) -> Non
         ".",
         "..",
         "alias.json",
+        "escape.json",
         "inside.json",
     ]
+    assert fs.read("/run/profile/escape.json", 16, 0) == b"secret"
 
 
 def test_filesystem_accepts_mfusepy_positional_file_handles(tmp_path: Path) -> None:
@@ -818,25 +824,27 @@ def test_corrupt_length_checksum_stops_tolerant_parse(tmp_path: Path) -> None:
     with pytest.raises(TFRecordError, match="checksum") as error:
         parse_file(path)
     assert error.value.corrupt
-    tree = SingleEventTree(path, step_digits=1)
-
-    rows = json.loads(tree.read_file("/scalars/loss.json"))
+    with pytest.raises(TFRecordError, match="length checksum"):
+        SingleEventTree(path)
+    fs = TensorBoardFS(tmp_path)
+    rows = json.loads(fs.read("/scalars/loss.json", 10000, 0))
     assert [row["step"] for row in rows] == [1]
 
 
-def test_huge_declared_length_is_truncation_without_allocation(
+def test_huge_declared_length_is_corruption_without_allocation(
     tmp_path: Path,
 ) -> None:
     """A length larger than the file never allocates the declared size."""
     path = tmp_path / "events.out.tfevents"
     path.write_bytes(_loss_record(1) + _header(2**62) + b"tail")
 
-    with pytest.raises(TFRecordError, match="truncated TFRecord payload") as error:
+    with pytest.raises(TFRecordError, match="exceeds maximum") as error:
         parse_file(path)
-    assert not error.value.corrupt
-    tree = SingleEventTree(path, step_digits=1)
-
-    rows = json.loads(tree.read_file("/scalars/loss.json"))
+    assert error.value.corrupt
+    with pytest.raises(TFRecordError, match="exceeds maximum"):
+        SingleEventTree(path)
+    fs = TensorBoardFS(tmp_path)
+    rows = json.loads(fs.read("/scalars/loss.json", 10000, 0))
     assert [row["step"] for row in rows] == [1]
 
 
@@ -849,6 +857,109 @@ def test_malformed_payload_is_skipped_in_tolerant_mode(tmp_path: Path) -> None:
 
     rows = json.loads(tree.read_file("/scalars/loss.json"))
     assert [row["step"] for row in rows] == [1, 2]
+    paths = list(tree.iter_file_paths(view="raw"))
+    assert b"".join(tree.read_file(name) for name in paths) == path.read_bytes()
+
+
+def test_complete_frame_over_configured_limit_is_damage() -> None:
+    with pytest.raises(TFRecordError, match="exceeds maximum") as error:
+        list(iter_tfrecords(BytesIO(_record(b"1234")), max_record_size=3))
+    assert error.value.corrupt
+
+
+def test_rotation_between_continuity_check_and_parse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(_loss_record(1))
+    indexer = tboardfs.indexer._EventIndexer
+    old = indexer.parse_event_file(path)
+    with path.open("ab") as writer:
+        writer.write(_loss_record(2))
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(_loss_record(3) + _loss_record(4))
+    check = indexer.valid_anchor
+
+    def rotate(handle: BinaryIO, cache: tboardfs.indexer.EventFileCache) -> bool:
+        valid = check(handle, cache)
+        replacement.replace(path)
+        return valid
+
+    monkeypatch.setattr(indexer, "valid_anchor", staticmethod(rotate))
+    snapshot = indexer.parse_event_file(path, base_cache=old)
+    assert snapshot.scalars["loss"]["step"].tolist() == [1, 2]
+    refreshed = indexer.parse_event_file(path, base_cache=snapshot)
+    assert refreshed.scalars["loss"]["step"].tolist() == [3, 4]
+
+
+def test_payload_checksum_failure_keeps_live_prefix(tmp_path: Path) -> None:
+    path = tmp_path / "events.out.tfevents"
+    good = _loss_record(1)
+    damaged = bytearray(_loss_record(2))
+    damaged[-1] ^= 1
+    path.write_bytes(good + damaged + _loss_record(3))
+    with pytest.raises(
+        TFRecordError, match=rf"payload checksum mismatch at offset {len(good)}"
+    ):
+        SingleEventTree(path)
+    fs = TensorBoardFS(tmp_path)
+    assert [
+        row["step"] for row in json.loads(fs.read("/scalars/loss.json", 10000, 0))
+    ] == [1]
+    assert {
+        name for name in fs.readdir(f"/raw/{path.name}") if name.endswith(".tfrecord")
+    } == {f"{0:020d}.tfrecord"}
+
+
+@pytest.mark.parametrize("grow", [False, True])
+def test_rewritten_anchor_rebuilds_all_rows(tmp_path: Path, grow: bool) -> None:
+    path = tmp_path / "events.out.tfevents"
+    old = _loss_record(1) + _loss_record(2)
+    new = _loss_record(3) + _loss_record(4)
+    assert len(old) == len(new)
+    path.write_bytes(old)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    assert len(json.loads(fs.read("/scalars/loss.json", 10000, 0))) == 2
+    path.write_bytes(new + (_loss_record(5) if grow else b""))
+    rows = json.loads(fs.read("/scalars/loss.json", 10000, 0))
+    assert [row["step"] for row in rows] == ([3, 4, 5] if grow else [3, 4])
+
+
+@pytest.mark.parametrize("replace", [False, True])
+def test_raw_materialization_rejects_changed_frame(
+    tmp_path: Path, replace: bool
+) -> None:
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(_loss_record(1))
+    tree = SingleEventTree(path)
+    (name,) = tree.iter_file_paths(view="raw")
+    if replace:
+        replacement = tmp_path / "replacement"
+        replacement.write_bytes(path.read_bytes())
+        replacement.replace(path)
+    else:
+        path.write_bytes(_loss_record(2))
+    with pytest.raises(OSError) as error:
+        tree.read_file(name)
+    assert error.value.errno == errno.EIO
+
+
+def test_raw_handle_retains_original_frame_across_replacement(tmp_path: Path) -> None:
+    path = tmp_path / "events.out.tfevents"
+    before, after = _loss_record(1), _loss_record(2)
+    path.write_bytes(before)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    name = f"/raw/{path.name}/{0:020d}.tfrecord"
+    handle = fs.open(name, os.O_RDONLY)
+    try:
+        prefix = fs.read(name, 12, 0, handle)
+        replacement = tmp_path / "replacement"
+        replacement.write_bytes(after)
+        replacement.replace(path)
+        assert fs.read(name, len(after), 0) == after
+        assert prefix + fs.read(name, len(before), len(prefix), handle) == before
+    finally:
+        fs.release(name, handle)
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root can read mode-000 files")

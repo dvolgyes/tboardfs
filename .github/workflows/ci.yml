@@ -39,6 +39,20 @@ jobs:
       - name: Run tests
         run: uv run pytest -n 8 --cov --cov-report=term --cov-report=xml:coverage.xml
 
+      - name: Read a real event file from the installed wheel
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/wheels"
+          uv venv --python 3.12 "$RUNNER_TEMP/wheel-env"
+          uv pip install --python "$RUNNER_TEMP/wheel-env/bin/python" "$RUNNER_TEMP"/wheels/tboardfs-*.whl
+          export PATH="$RUNNER_TEMP/wheel-env/bin:$PATH"
+          cd "$RUNNER_TEMP"
+          source_file=$(find "$GITHUB_WORKSPACE/test-logs/tensorboard" -maxdepth 1 -type f -name 'events.out.tfevents*' -print -quit)
+          tboardfs --help
+          tboardfs-file list "$source_file" > typed-paths
+          test -s typed-paths
+          tboardfs-file copy-all --view raw "$source_file" extracted
+          cat extracted/raw/*/*.tfrecord | cmp "$source_file" -
+
       - name: Upload coverage to Coveralls
         run: uv run coveralls
         env:

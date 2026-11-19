@@ -12,6 +12,7 @@ import pandas as pd
 from tboardfs.constants import SCALAR_COLUMNS
 from tboardfs.decode import _Decode
 from tboardfs.histogram_compress import NORMAL_HISTOGRAM_BPS, compress_histogram
+from tboardfs.model import EventFileCache
 
 # Two-space indents, keys such as numbers as text, a final newline, and
 # NumPy arrays that json_value lets through.
@@ -305,6 +306,7 @@ class _TableRows:
         """Convert mutable scalar rows to NumPy column arrays."""
         return {
             tag: {
+                "_inherits_epoch": _TableRows.missing_epochs(rows["epoch"]),
                 "epoch": np.asarray(rows["epoch"], dtype=np.float64),
                 "step": np.asarray(
                     rows["step"],
@@ -327,6 +329,8 @@ class _TableRows:
         """Convert mutable histogram rows to NumPy column arrays."""
         return {
             tag: {
+                "_inherits_epoch": _TableRows.missing_epochs(rows["epoch"]),
+                "_start": np.asarray(rows["_start"], dtype=bool),
                 "step": np.asarray(
                     rows["step"],
                     dtype=np.int64 if _Decode.all_ints(rows["step"]) else np.float64,
@@ -342,6 +346,13 @@ class _TableRows:
         }
 
     @staticmethod
+    def missing_epochs(values: list[Any]) -> np.ndarray:
+        """Identify rows preceding the first epoch, distinct from logged NaN."""
+        return np.fromiter(
+            (value is None for value in values), dtype=bool, count=len(values)
+        )
+
+    @staticmethod
     def empty_scalar_rows() -> dict[str, list[Any]]:
         """Create mutable storage for scalar table rows."""
         return {column: [] for column in SCALAR_COLUMNS}
@@ -350,6 +361,7 @@ class _TableRows:
     def empty_histogram_rows() -> dict[str, list[Any]]:
         """Create mutable storage for histogram table rows."""
         return {
+            "_start": [],
             "step": [],
             "epoch": [],
             "wall_time": [],
@@ -410,6 +422,55 @@ class _TableMerge:
         return merged
 
     @staticmethod
+    def _file_tables(
+        tables: Mapping[str, Mapping[str, np.ndarray]], carried: float
+    ) -> dict[str, dict[str, np.ndarray]]:
+        result = {}
+        for tag, series in tables.items():
+            columns = dict(series)
+            inherits = columns.pop("_inherits_epoch")
+            if not np.isnan(carried) and inherits.any():
+                columns["epoch"] = np.where(inherits, carried, columns["epoch"])
+            result[tag] = columns
+        return result
+
+    @staticmethod
+    def merge_run_tables(
+        caches: Iterable[EventFileCache], *, histograms: bool = False
+    ) -> dict[str, dict[str, np.ndarray]]:
+        """Carry the previous file's last epoch into the next file's early rows."""
+        return _TableMerge.merge_series(_TableMerge._run_pieces(caches, histograms))
+
+    @staticmethod
+    def _run_pieces(
+        caches: Iterable[EventFileCache], histograms: bool
+    ) -> Iterable[Mapping[str, Mapping[str, np.ndarray]]]:
+        """Yield each file's tables with its initial epoch inherited."""
+        carried = np.nan
+        for cache in caches:
+            tables = cache.histograms if histograms else cache.scalars
+            yield _TableMerge._file_tables(tables, carried)
+            if "epoch" in cache.scalars:
+                carried = cache.scalars["epoch"]["value"][-1]
+
+    @staticmethod
+    def sort_scalars(
+        tables: dict[str, dict[str, np.ndarray]],
+    ) -> dict[str, dict[str, np.ndarray]]:
+        """Sort scalar rows by step without changing the order of ties."""
+        sorted_tables = {}
+        for tag, series in tables.items():
+            steps = series["step"]
+            if np.any(steps[1:] < steps[:-1]):
+                order = np.argsort(steps, kind="stable")
+                sorted_tables[tag] = {
+                    column: values[order] for column, values in series.items()
+                }
+            else:
+                sorted_tables[tag] = series
+        return sorted_tables
+
+    @staticmethod
     def step_epochs(
         tables: Mapping[str, Mapping[str, np.ndarray]],
         epochs: Mapping[str, np.ndarray] | None,
@@ -423,12 +484,12 @@ class _TableMerge:
         """
         if not epochs or not len(epochs["step"]):
             return {tag: dict(series) for tag, series in tables.items()}
-        backward = np.asarray(epochs["step"], dtype=np.float64)[::-1]
+        backward = epochs["step"][::-1]
         known, last = np.unique(backward, return_index=True)
         values = np.asarray(epochs["value"], dtype=np.float64)[::-1][last]
         aligned = {}
         for tag, series in tables.items():
-            steps = np.asarray(series["step"], dtype=np.float64)
+            steps = series["step"]
             index = np.minimum(np.searchsorted(known, steps), len(known) - 1)
             aligned[tag] = {
                 **series,
@@ -453,9 +514,7 @@ class _TableMerge:
     ) -> dict[str, np.ndarray]:
         """Derive TensorBoard distribution rows from histogram buckets.
 
-        Each histogram event is one contiguous run of bucket rows with the same
-        step and wall time, so repeated steps stay separate groups. The
-        percentile column holds the basis points in percent.
+        Each observation starts at a marked bucket. Percentiles are in percent.
         """
         out = defaultdict(list)
         buckets = np.column_stack(
@@ -478,24 +537,12 @@ class _TableMerge:
 
     @staticmethod
     def event_bounds(series: dict[str, np.ndarray]) -> list[tuple[int, int]]:
-        """Return [start, stop) row ranges with a constant step and wall time."""
-        size = len(series.get("step", []))
-        if size == 0:
+        """Return the bucket range of each indexed histogram observation."""
+        size = len(series["step"])
+        starts = np.flatnonzero(series["_start"]).tolist()
+        if not starts:
             return []
-        changed = np.zeros(size, dtype=bool)
-        changed[0] = True
-        for column in ("step", "wall_time"):
-            values = np.asarray(series[column], dtype=np.float64)
-            changed[1:] |= ~_TableMerge.nan_equal(values[:-1], values[1:])
-        starts = np.flatnonzero(changed).tolist()
         return list(zip(starts, [*starts[1:], size], strict=True))
-
-    @staticmethod
-    def nan_equal(left: np.ndarray, right: object) -> np.ndarray:
-        """Compare elementwise and treat NaN as equal to NaN."""
-        values = np.asarray(left, dtype=np.float64)
-        other = np.asarray(right, dtype=np.float64)
-        return (values == other) | (np.isnan(values) & np.isnan(other))
 
     @staticmethod
     def split_steps(

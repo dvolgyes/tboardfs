@@ -24,7 +24,7 @@ def meta_graph_graph_def(entry: GraphEntry, blob: bytes) -> bytes | None:
     except DecodeError as error:
         logger.warning(
             "meta graph at offset {} in {} has no graph file: {}",
-            entry.payload_offset,
+            entry.frame.payload_offset,
             entry.source_path,
             error,
         )

@@ -10,7 +10,6 @@ shows for a RunMetadata.
 from collections.abc import Iterator
 from contextlib import contextmanager
 import errno
-import os
 from pathlib import Path
 
 from loguru import logger
@@ -195,14 +194,12 @@ def test_converted_file_of_a_changed_event_file_is_eio(
 ) -> None:
     """A payload that no longer parses after indexing gives EIO on read."""
     fs = _log(tmp_path, good)
+    fs.refresh_age_seconds = float("inf")
     directory, name = path.rsplit("/", 1)
     # readdir does not render the file, so the read below parses it again.
     assert name in fs.readdir(directory)
     log = tmp_path / "events.out.tfevents.host"
-    status = log.stat()
     log.write_bytes(_frame(bad))
-    # The same size, mtime and first bytes: the mount does not index it again.
-    os.utime(log, ns=(status.st_atime_ns, status.st_mtime_ns))
 
     with pytest.raises(OSError) as raised:
         fs.read(path, 1 << 20, 0)

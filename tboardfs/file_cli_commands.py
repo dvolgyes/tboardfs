@@ -1,4 +1,3 @@
-from pathlib import Path
 from pathlib import PurePosixPath
 import sys
 from typing import cast
@@ -7,8 +6,13 @@ import click
 from loguru import logger
 
 from tboardfs.cli_options import SCALAR_FORMAT, STEP_DIGITS
-from tboardfs.file_tree import SingleEventTree, _CopyConflictError, _NoEventError
+from tboardfs.file_tree import SingleEventTree, _CopyError, _NoEventError
+from tboardfs.host_publish import OutputPublisher, _OutputConflictError
+from tboardfs.model import TFRecordError
 from tboardfs.paths import _Paths
+
+_VIEW = click.option("-v", "--view", type=click.Choice(["typed", "raw", "both"]))
+_status = logger.bind(command_status=True)
 
 
 def register_file_cli_commands(group: click.Group) -> None:
@@ -17,30 +21,26 @@ def register_file_cli_commands(group: click.Group) -> None:
     @group.command("list")
     @click.argument("source", type=click.Path(exists=True))
     @click.argument("prefix", required=False, default="/")
+    @_VIEW
     @STEP_DIGITS
     @SCALAR_FORMAT
     def list_files(
-        source: str, prefix: str, step_digits: int, scalar_format: str
+        source: str, prefix: str, step_digits: int, scalar_format: str, view: str | None
     ) -> None:
         """Print virtual file paths below PREFIX."""
         tree = _FileCli.open_tree(source, step_digits, scalar_format)
         try:
-            paths = tree.list_file_paths(prefix=prefix)
+            for path in tree.iter_file_paths(prefix=prefix, view=view):
+                sys.stdout.write(path + "\n")
         except FileNotFoundError as error:
             raise click.ClickException(f"virtual path not found: {prefix}") from error
-        for path in paths:
-            sys.stdout.write(path + "\n")
 
     @group.command("get")
     @click.argument("source", type=click.Path(exists=True))
     @click.argument("vpath")
-    @click.option(
-        "-o",
-        "--output",
-        required=True,
-        type=click.Path(writable=True),
-    )
+    @click.option("-o", "--output", required=True, metavar="PATH")
     @click.option("--force", is_flag=True)
+    @_VIEW
     @STEP_DIGITS
     @SCALAR_FORMAT
     def get_file(
@@ -50,40 +50,46 @@ def register_file_cli_commands(group: click.Group) -> None:
         force: bool,
         step_digits: int,
         scalar_format: str,
+        view: str | None,
     ) -> None:
         """Write one virtual file to OUTPUT."""
         tree = _FileCli.open_tree(source, step_digits, scalar_format)
         try:
-            data = tree.read_file(vpath)
+            data = tree.read_file(vpath, view=view or "both")
         except FileNotFoundError as error:
             raise click.ClickException(f"virtual path not found: {vpath}") from error
         except IsADirectoryError as error:
             raise click.ClickException(
                 f"virtual path is a directory: {vpath}"
             ) from error
+        except (OSError, TFRecordError) as error:
+            raise click.ClickException(
+                f"could not read {source}:{vpath}: {error}"
+            ) from error
         if output == "-":
             sys.stdout.buffer.write(data)
             return
-        output_path = _FileCli.output_path(vpath, output)
-        if output_path.exists() and not force:
-            raise click.ClickException(
-                f"output already exists: {output_path}\n"
-                "Use --force for forced overwriting."
-            )
         try:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_bytes(data)
-        except OSError as error:
+            output_path = OutputPublisher.publish_get(
+                output,
+                PurePosixPath(_Paths.norm_virtual_path(vpath)).name,
+                data,
+                "overwrite" if force else "fail",
+            )
+        except _OutputConflictError as error:
             raise click.ClickException(
-                f"could not write {output_path}: {error.strerror or error}"
+                f"output already exists: {output} ({error})\nUse --force for forced overwriting."
             ) from error
-        logger.info("wrote {} to {}", _Paths.norm_virtual_path(vpath), output_path)
+        except (OSError, ValueError) as error:
+            raise click.ClickException(f"could not write {output}: {error}") from error
+        _status.info("wrote {} to {}", _Paths.norm_virtual_path(vpath), output_path)
 
     @group.command("copy-all")
     @click.argument("source", type=click.Path(exists=True))
-    @click.argument("outdir", type=click.Path(file_okay=False))
+    @click.argument("outdir")
     @click.option("-f", "--force", is_flag=True)
     @click.option("-s", "--skip-existing", is_flag=True)
+    @_VIEW
     @STEP_DIGITS
     @SCALAR_FORMAT
     def copy_all(**params: object) -> None:
@@ -100,16 +106,20 @@ def register_file_cli_commands(group: click.Group) -> None:
         )
         try:
             copied, skipped = tree.copy_all(
-                cast(str, params["outdir"]), existing=existing
+                cast(str, params["outdir"]),
+                existing=existing,
+                view=cast(str, params["view"]) or "typed",
             )
-        except _CopyConflictError as error:
-            _FileCli.report_copy_conflict(error)
-            raise click.exceptions.Exit(1) from error
-        except OSError as error:
+        except _CopyError as error:
+            _status.info("Copied successfully: {} files", len(error.copied_paths))
+            for path in error.copied_paths:
+                _status.info("{}", path)
+            for path in error.skipped_paths:
+                _status.warning("Skipped existing: {}", path)
             raise click.ClickException(str(error)) from error
         for path in skipped:
-            logger.warning("Skipped existing: {}", path)
-        logger.info("copied {} files", copied)
+            _status.warning("Skipped existing: {}", path)
+        _status.info("copied {} files", copied)
 
 
 class _FileCli:
@@ -124,23 +134,5 @@ class _FileCli:
             )
         except _NoEventError as error:
             raise click.ClickException(str(error)) from error
-
-    @staticmethod
-    def output_path(vpath: str, output: str) -> Path:
-        """Return the file path that ``get`` writes a virtual file to."""
-        output_path = Path(output)
-        if output_path.exists() and output_path.is_dir():
-            return output_path / PurePosixPath(_Paths.norm_virtual_path(vpath)).name
-        if output.endswith("/"):
-            return output_path / PurePosixPath(_Paths.norm_virtual_path(vpath)).name
-        return output_path
-
-    @staticmethod
-    def report_copy_conflict(error: _CopyConflictError) -> None:
-        """Log the copied files and the target that stopped ``copy-all``."""
-        copied_count = len(error.copied_paths)
-        logger.info("Copied successfully: {} files", copied_count)
-        for path in error.copied_paths:
-            logger.info(path)
-        logger.error("Error: output already exists: {}", error.target)
-        logger.error("Use --force for forced overwriting.")
+        except (OSError, TFRecordError) as error:
+            raise click.ClickException(f"could not read {source}: {error}") from error

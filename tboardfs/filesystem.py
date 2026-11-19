@@ -1,43 +1,44 @@
 from dataclasses import dataclass, field
 from errno import EISDIR, ENOENT, ENOTDIR, EROFS
-from fnmatch import fnmatchcase
 import os
 from pathlib import Path
 import stat
 from threading import RLock
 import time
 from typing import Any
-from collections.abc import Callable, Hashable, Iterator
+from collections.abc import Callable, Hashable
 
 from loguru import logger
 
 from tboardfs.constants import (
     DEFAULT_CACHE_SIZE_MB,
+    DEFAULT_DISCOVERY_SECONDS,
     DEFAULT_SCALAR_FORMATS,
-    TENSORBOARD_EVENT_GLOB,
 )
 from tboardfs.errors import fuse_error
 from tboardfs.file_times import FileTimes
+from tboardfs.file_status import FileIdentity
 from tboardfs.indexer import _EventIndexer
 from tboardfs.model import RunCache, SidecarEntry
 from tboardfs.paths import _Paths
 from tboardfs.run_places import RunPlaces
 from tboardfs.run_tree import build_run_tree
-from tboardfs.projector import _ProjectorConfig
+from tboardfs.sidecar_scan import SidecarScan
 from tboardfs.render_cache import RenderCache
 from tboardfs.render_node import render_node
 
 
 @dataclass
-class _ScanTimes:
-    """When the mount searches for event files and reads the runs again.
+class _Directory:
+    """Local listing deadline, browseable children, and their sidecar ownership."""
 
-    :ivar discovered_at: time of the last search for event files
-    :ivar next_refresh_at: time before which no run is due for a refresh
-    """
-
-    discovered_at: float = 0.0
-    next_refresh_at: float = 0.0
+    scanned_at: float | None = None
+    children: set[tuple[str, ...]] = field(default_factory=set)
+    owned: set[Path] = field(default_factory=set)
+    owner: tuple[str, ...] | None = None
+    pieces: dict[tuple[str, ...], tuple[SidecarEntry, ...]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass
@@ -45,9 +46,7 @@ class _FsState:
     """Mutable TensorBoardFS cache state.
 
     :ivar runs: run caches by virtual run path
-    :ivar known_run_parts: discovered run path parts
-    :ivar last_event_files: event files seen during last discovery
-    :ivar scan_times: when to search for event files and read runs again
+    :ivar directories: local discovery state by source directory
     :ivar tree_cache: generation and virtual tree put together from run trees
     :ivar tree_generation: current virtual tree generation
     :ivar run_trees: run version and virtual tree by run path
@@ -57,9 +56,8 @@ class _FsState:
     """
 
     runs: dict[tuple[str, ...], RunCache] = field(default_factory=dict)
-    known_run_parts: set[tuple[str, ...]] = field(default_factory=set)
-    last_event_files: set[Path] | None = None
-    scan_times: _ScanTimes = field(default_factory=_ScanTimes)
+    directories: dict[tuple[str, ...], _Directory] = field(default_factory=dict)
+    mountpoint: Path | None = None
     tree_cache: tuple[int, dict[str, Any]] | None = None
     tree_generation: int = 0
     run_trees: dict[tuple[str, ...], tuple[int, dict[str, Any]]] = field(
@@ -110,11 +108,12 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         source: str | Path,
         *,
         step_digits: int = 6,
-        refresh_age_seconds: float = 60.0,
+        refresh_age_seconds: float = DEFAULT_DISCOVERY_SECONDS,
         scalar_formats: str | list[str] | tuple[str, ...] = DEFAULT_SCALAR_FORMATS,
         log_to_screen: bool = False,
         cache_size_mb: int = DEFAULT_CACHE_SIZE_MB,
         owner: tuple[int, int] = (0, 0),
+        mountpoint: str | Path | None = None,
     ) -> None:
         self.source = Path(source)
         self.step_digits = step_digits
@@ -125,15 +124,24 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         self.log_to_screen = log_to_screen
         self.owner = owner
         self._renders = RenderCache(cache_size_mb * 1024 * 1024)
-        self._state = _FsState()
+        self._state = _FsState(
+            mountpoint=Path(mountpoint).resolve() if mountpoint else None
+        )
         self._lock = RLock()
         self._run_places = RunPlaces()
-        self._discover_runs(force=True)
+        self._state.directories[()] = _Directory()
+        self._ensure_run(())
 
     def virtual_tree(self) -> dict[str, Any]:
         """Return the current root node; nodes are not changed after creation."""
         with self._lock:
-            self._refresh_runs(self._discover_runs())
+            pending: list[tuple[str, ...]] = [()]
+            while pending:
+                parts = pending.pop()
+                self._activate(parts)
+                pending.extend(
+                    sorted(self._state.directories[parts].children, reverse=True)
+                )
             return self._cached_tree()
 
     def getattr(self, path: str, *file_handles: object) -> dict[str, Any]:
@@ -267,7 +275,21 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         """
         parts = _Paths.path_parts(path)
         with self._lock:
-            self._refresh_runs(self._discover_runs())
+            self._cached_tree()
+            depth = max(
+                end
+                for end in range(len(parts) + 1)
+                if parts[:end] in self._run_places.disk_parts
+            )
+            while True:
+                self._activate(self._run_places.disk_parts[parts[:depth]])
+                self._cached_tree()
+                if (
+                    depth == len(parts)
+                    or parts[: depth + 1] not in self._run_places.disk_parts
+                ):
+                    break
+                depth += 1
             node = self._cached_tree()
             for part in parts:
                 if node["type"] != "dir" or part not in node["children"]:
@@ -276,18 +298,28 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             runs = self._state.runs
             # A renamed run folder has other parts on disk than in the tree.
             disk_parts = self._run_places.disk_parts
-            versions = tuple(
-                runs[disk_parts[parts[:end]]].version
-                for end in range(len(parts) + 1)
-                if disk_parts.get(parts[:end]) in runs
+            if node["type"] == "name_map":
+                return node, (self._state.tree_generation, parts)
+            owner = next(
+                disk_parts[parts[:end]]
+                for end in range(len(parts), -1, -1)
+                if parts[:end] in disk_parts
             )
-            return node, (versions, parts)
+            return node, (runs[owner].version, parts)
 
     def _build_tree(self) -> dict[str, Any]:
         tree = self._run_places.build(
             {
-                run_parts: self._run_tree(self._ensure_run(run_parts))
-                for run_parts in self._state.known_run_parts
+                run_parts: (
+                    self._run_tree(self._state.runs[run_parts])
+                    if run_parts in self._state.runs
+                    and (
+                        self._state.runs[run_parts].files
+                        or (not run_parts and not self._state.directories[()].children)
+                    )
+                    else {"type": "dir", "children": {}}
+                )
+                for run_parts in self._state.directories
             }
         )
         # The run trees have their times, so only the run folders get them.
@@ -312,9 +344,13 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             return self._state.open_files.get(handle)
 
     def _node_size(self, node: dict[str, Any], key: Hashable) -> int:
+        if node["type"] == "raw":
+            return int(node["frame"].size)
         # A sidecar can be large, so its size comes from the disk.
         if node["type"] == "sidecar":
             entry: SidecarEntry = node["entry"]
+            if not self._allowed(entry.source_path):
+                raise fuse_error(ENOENT)
             return entry.source_path.stat().st_size
         return len(self._node_bytes(node, key))
 
@@ -322,65 +358,118 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         # Sidecars are files on disk that can change without a new run
         # version, so they are read each time.
         if node["type"] == "sidecar":
+            if not self._allowed(node["entry"].source_path):
+                raise fuse_error(ENOENT)
             return render_node(node)
         data = self._renders.get(key)
         if data is None:
+            entry = node.get("entry")
+            source = node.get("source") if entry is None else entry.source_path
+            if source is not None and not self._allowed(source):
+                raise fuse_error(ENOENT)
             data = render_node(node)
             self._renders.put(key, data)
         return data
 
-    def _discover_runs(
-        self, *, force: bool = False
-    ) -> dict[Path, list[os.DirEntry[str]]]:
-        """Search for event files when due; return the listings of their directories.
+    def _allowed(self, path: Path) -> bool:
+        if self._state.mountpoint is None:
+            return True
+        pending = list(reversed(path.absolute().parts[1:]))
+        current = Path("/")
+        links = 0
+        while pending:
+            part = pending.pop()
+            if part == "..":
+                current = current.parent
+                continue
+            current /= part
+            if current == self._state.mountpoint:
+                return False
+            if current.is_symlink():
+                links += 1
+                if links > 40:
+                    return False
+                target = current.readlink()
+                current = Path("/") if target.is_absolute() else current.parent
+                pending.extend(reversed(target.parts[int(target.is_absolute()) :]))
+        return True
 
-        Nothing is returned when no search is due.
-        """
+    def _activate(self, parts: tuple[str, ...]) -> None:
+        directory = self.source.joinpath(*parts)
+        run = self._ensure_run(parts)
+        local = self._state.directories[parts]
+        previous = local.scanned_at
+        if previous is not None and self.refresh_age_seconds == float("inf"):
+            return
         now = time.time()
-        if (
-            not force
-            and self._state.last_event_files is not None
-            and now - self._state.scan_times.discovered_at < self.refresh_age_seconds
-        ):
-            return {}
-        listings = _Paths.event_dirs(self.source)
-        files = sorted(
-            path
-            for directory, entries in listings.items()
-            for path in _Paths.event_files(directory, entries)
-        )
-        file_set = set(files)
-        should_log = file_set != self._state.last_event_files
-        if should_log:
-            self._log("finding TensorBoard files in {}", self.source)
-        self._state.known_run_parts = {
-            _Paths.run_parts_for(self.source, path) for path in files
-        }
-        if not self._state.known_run_parts:
-            self._state.known_run_parts = {()}
-        for stale_run in set(self._state.runs) - self._state.known_run_parts:
-            del self._state.runs[stale_run]
-            self._state.run_trees.pop(stale_run, None)
-        for run_parts in self._state.known_run_parts:
-            self._ensure_run(run_parts)
-        if should_log:
-            self._log(
-                "found {} event files in {} runs",
-                len(files),
-                len(self._state.known_run_parts),
+        entries = None
+        if previous is None or now - previous >= self.refresh_age_seconds:
+            entries = (
+                [
+                    entry
+                    for entry in _Paths.entries(directory)
+                    if not entry.is_symlink() or self._allowed(Path(entry.path))
+                ]
+                if self._allowed(directory)
+                else []
             )
-        self._state.last_event_files = file_set
-        self._state.scan_times.discovered_at = now
-        if should_log:
-            self._invalidate_tree()
-        return listings
+            local.scanned_at = now
+        if self._refresh_run(run, entries):
+            self._log("finished parsing TensorBoard files")
+        if entries is not None:
+            children = {
+                (*parts, name)
+                for name in self._child_names(directory, entries, local.owned)
+            }
+            old = local.children
+            if old != children:
+                local.children = children
+                for child in children - old:
+                    self._state.directories[child] = _Directory()
+                for removed in old - children:
+                    self._forget(removed)
+                self._invalidate_tree()
+
+    @staticmethod
+    def _child_names(
+        directory: Path, entries: list[os.DirEntry[str]], owned: set[Path]
+    ) -> list[str]:
+        children = [
+            entry
+            for entry in entries
+            if _Paths.is_dir(entry) and Path(entry.path) not in owned
+        ]
+        if not any(entry.is_symlink() for entry in children):
+            return [entry.name for entry in children]
+        parent = directory.resolve()
+        seen = {parent, *(p.resolve() for p in directory.parents)}
+        names = []
+        for entry in children:
+            target = (
+                Path(entry.path).resolve()
+                if entry.is_symlink()
+                else parent / entry.name
+            )
+            if target in seen or parent.is_relative_to(target):
+                continue
+            seen.add(target)
+            names.append(entry.name)
+        return names
+
+    def _forget(self, parts: tuple[str, ...]) -> None:
+        local = self._state.directories[parts]
+        for child in local.children:
+            self._forget(child)
+        self._clear_piece(parts)
+        del self._state.directories[parts]
+        self._state.runs.pop(parts, None)
+        self._state.run_trees.pop(parts, None)
 
     def _ensure_run(self, run_parts: tuple[str, ...]) -> RunCache:
-        if run_parts not in self._state.known_run_parts:
+        if run_parts not in self._state.directories:
             raise fuse_error(ENOENT)
         if run_parts not in self._state.runs:
             self._state.runs[run_parts] = RunCache(run_parts, version=self._version())
-            self._state.scan_times.next_refresh_at = 0.0
         return self._state.runs[run_parts]
 
     def _version(self) -> int:
@@ -391,57 +480,109 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     def _refresh_run(
         self,
         run: RunCache,
-        listings: dict[Path, list[os.DirEntry[str]]],
+        entries: list[os.DirEntry[str]] | None,
         *,
         force: bool = False,
     ) -> bool:
-        """Read new data of a due run; return true when it changed.
-
-        A listing of the run directory from the discovery just before is
-        used, so the directory is not listed twice.
-        """
+        """Check known files on access; discover new files only with a fresh listing."""
         now = time.time()
-        if not _RunData.should_refresh(run, now, self.refresh_age_seconds, force):
-            return False
         run_dir = self.source.joinpath(*run.run_parts)
-        entries = listings.get(run_dir)
-        if entries is None:
-            entries = _Paths.entries(run_dir)
-        files = _Paths.event_files(run_dir, entries)
+        files = (
+            _Paths.event_files(run_dir, entries)
+            if entries is not None
+            else [path for path in run.files if self._allowed(path)]
+        )
         log_parse = logger.info if self.log_to_screen else None
         changed = _RunData.refresh_event_files(run, files, force=force, log=log_parse)
-        # Sidecars can change after the last event, so they count as run data.
-        sidecars = tuple(_RunData.run_sidecars(self.source, run, entries))
-        if sidecars != run.sidecars:
-            run.sidecars = sidecars
-            changed = True
+        self._refresh_sidecars(run, entries)
         run.refreshed_at = now
         if changed:
             run.version = self._version()
             self._invalidate_tree()
         return changed
 
+    def _clear_piece(self, parts: tuple[str, ...]) -> None:
+        local = self._state.directories[parts]
+        if local.owner is None:
+            return
+        pieces = self._state.directories[local.owner].pieces
+        if pieces.pop(parts, ()):
+            self._publish_sidecars(local.owner)
+        local.owner = None
+
+    def _publish_sidecars(self, owner: tuple[str, ...]) -> None:
+        run = self._state.runs[owner]
+        pieces = self._state.directories[owner].pieces
+        sidecars = tuple(item for key in sorted(pieces) for item in pieces[key])
+        if run.sidecars != sidecars:
+            run.sidecars = sidecars
+            run.version = self._version()
+            self._invalidate_tree()
+
+    def _refresh_sidecars(
+        self, run: RunCache, entries: list[os.DirEntry[str]] | None
+    ) -> None:
+        parts = run.run_parts
+        local = self._state.directories[parts]
+        owner = next(
+            (
+                parts[:i]
+                for i in range(len(parts), -1, -1)
+                if parts[:i] in self._state.runs and self._state.runs[parts[:i]].files
+            ),
+            None,
+        )
+        if owner != local.owner:
+            self._move_group_sidecars(parts, local.owner, owner)
+            self._clear_piece(parts)
+            local.owner = owner
+        if owner is None:
+            local.owned.clear()
+            return
+        pieces = self._state.directories[owner].pieces
+        if entries is not None:
+            scan = SidecarScan(
+                self.source.joinpath(*parts),
+                self.source.joinpath(*owner),
+                self._allowed,
+            )
+            files = scan.collect(entries)
+            local.owned = scan.owned
+            if files:
+                pieces[parts] = files
+            else:
+                pieces.pop(parts, None)
+        if owner == parts:
+            for group, files in pieces.items():
+                if group != parts or entries is None:
+                    pieces[group] = SidecarScan.restat(files, self._allowed)
+        self._publish_sidecars(owner)
+
+    def _move_group_sidecars(
+        self,
+        parts: tuple[str, ...],
+        old: tuple[str, ...] | None,
+        owner: tuple[str, ...] | None,
+    ) -> None:
+        if old is None:
+            return
+        pieces = self._state.directories[old].pieces
+        groups = [
+            group for group in pieces if group != parts and group[: len(parts)] == parts
+        ]
+        for group in groups:
+            items = pieces.pop(group)
+            self._state.directories[group].owner = owner
+            if owner is not None:
+                self._state.directories[owner].pieces[group] = SidecarScan.rebase(
+                    items, self.source.joinpath(*owner)
+                )
+        if groups:
+            self._publish_sidecars(old)
+
     def _log(self, message: str, *args: object) -> None:
         if self.log_to_screen:
             logger.info(message, *args)
-
-    def _refresh_runs(
-        self, listings: dict[Path, list[os.DirEntry[str]]], *, force: bool = False
-    ) -> None:
-        # Each operation calls this, so one check stands for all the runs.
-        now = time.time()
-        if not force and now < self._state.scan_times.next_refresh_at:
-            return
-        refreshed = False
-        runs = list(self._state.runs.values())
-        for run in runs:
-            refreshed = self._refresh_run(run, listings, force=force) or refreshed
-        self._state.scan_times.next_refresh_at = (
-            min((run.refreshed_at for run in runs), default=now)
-            + self.refresh_age_seconds
-        )
-        if refreshed:
-            self._log("finished parsing TensorBoard files")
 
     def _cached_tree(self) -> dict[str, Any]:
         generation = self._state.tree_generation
@@ -476,14 +617,28 @@ class _RunData:
         hides the rest of the run or the mount.
         """
         changed = False
-        for source_path in files:
+        carry: dict[str, dict[str, Any]] = {}
+        for source_path in sorted(files):
+            old = run.files.get(source_path)
             try:
                 changed = (
-                    _RunData.refresh_event_file(run, source_path, force=force, log=log)
+                    _RunData.refresh_event_file(
+                        run,
+                        source_path,
+                        force=force
+                        or (old is not None and old.progress.initial_metadata != carry),
+                        log=log,
+                        initial_metadata=carry,
+                    )
                     or changed
                 )
+            except FileNotFoundError:
+                if run.files.pop(source_path, None) is not None:
+                    changed = True
             except OSError as error:
                 logger.warning("cannot read event file {}: {}", source_path, error)
+            if source_path in run.files:
+                carry = run.files[source_path].progress.effective_metadata
         for deleted in set(run.files) - set(files):
             if log is not None:
                 log("event file removed {}", deleted)
@@ -498,157 +653,23 @@ class _RunData:
         *,
         force: bool,
         log: Callable[[str, object], None] | None,
+        initial_metadata: dict[str, dict[str, Any]] | None = None,
     ) -> bool:
-        """Parse new records of one event file; return true when it changed.
-
-        A file whose status did not change since the last check is not
-        opened. Each write changes the ctime, which no program can set back,
-        so only a same-size rewrite within one timestamp tick of a coarse
-        filesystem goes unseen.
-        """
+        """Check a known source; open and parse it only when its status changes."""
         old = run.files.get(source_path)
-        # Status before the identity read: a later write must look new.
-        status = source_path.stat()
-        checked_status = (
-            status.st_dev,
-            status.st_ino,
-            status.st_size,
-            status.st_mtime_ns,
-            status.st_ctime_ns,
-        )
         if (
             not force
             and old is not None
-            and checked_status == old.progress.checked_status
+            and FileIdentity.fingerprint(source_path.stat())
+            == old.progress.checked_status
         ):
-            return False
-        with source_path.open("rb", buffering=0) as handle:
-            size, identity = _EventIndexer.file_identity(handle)
-        if old is not None and not old.progress.continues_in(identity):
-            old = None
-        if not force and old is not None and size == old.progress.last_checked_size:
-            old.progress.checked_status = checked_status
             return False
         if log is not None:
             log("parsing {}", source_path)
-        if not force and old is not None and size >= old.progress.processed_pos:
-            run.files[source_path] = _EventIndexer.parse_event_file(
-                source_path,
-                ignore_truncated=True,
-                start_pos=old.progress.processed_pos,
-                base_cache=old,
-            )
-        else:
-            run.files[source_path] = _EventIndexer.parse_event_file(
-                source_path, ignore_truncated=True
-            )
-        run.files[source_path].progress.checked_status = checked_status
-        return True
-
-    @staticmethod
-    def should_refresh(
-        run: RunCache, now: float, refresh_age_seconds: float, force: bool
-    ) -> bool:
-        """Return true when a run cache should be refreshed."""
-        return (
-            force
-            or not run.refreshed_at
-            or now - run.refreshed_at >= refresh_age_seconds
+        run.files[source_path] = _EventIndexer.parse_event_file(
+            source_path,
+            ignore_truncated=True,
+            base_cache=None if force else old,
+            initial_metadata=initial_metadata,
         )
-
-    @staticmethod
-    def run_sidecars(
-        source: Path, run: RunCache, entries: list[os.DirEntry[str]]
-    ) -> list[SidecarEntry]:
-        """Return projector, profile and hparams sidecar entries under a run.
-
-        The entries are the listing of the run directory.
-        """
-        if not run.files:
-            return []
-        run_dir = source.joinpath(*run.run_parts)
-        sidecars = []
-        paths = list(_RunData.sidecar_paths(source, run_dir, entries))
-        embeddings = _ProjectorConfig.references(paths)
-        for path in paths:
-            rel_parts = path.relative_to(run_dir).parts
-            tab = _RunData.sidecar_tab(rel_parts)
-            if tab is None and path in embeddings:
-                config, named = embeddings[path]
-                config_parts = config.relative_to(run_dir).parts
-                tab, rel_parts = "projector", (*config_parts[:-1], *named)
-            if tab is None:
-                continue
-            try:
-                status = path.stat()
-            except OSError:
-                continue  # removed since the directory walk, or not readable
-            sidecars.append(
-                SidecarEntry(
-                    path,
-                    tab,
-                    _RunData.sidecar_rel_parts(tab, rel_parts),
-                    status.st_size,
-                    status.st_mtime_ns,
-                )
-            )
-        return sidecars
-
-    @staticmethod
-    def sidecar_paths(
-        source: Path, run_dir: Path, entries: list[os.DirEntry[str]]
-    ) -> Iterator[Path]:
-        """Yield candidate sidecar files that belong to one run directory.
-
-        Directories with their own event files are other runs and are pruned.
-        Symlinked directories are not followed, so only a symlinked file can
-        lead out of the run directory: it must resolve inside the source or
-        inside the real run directory, which a symlinked run has outside the
-        source.
-        """
-        roots: tuple[Path, ...] = ()
-        pending = [run_dir]
-        while pending:
-            directory = pending.pop()
-            listing = entries if directory == run_dir else _Paths.entries(directory)
-            files = [entry for entry in listing if _Paths.is_file(entry)]
-            if directory != run_dir and _Paths.event_files(directory, files):
-                continue
-            for entry in files:
-                if fnmatchcase(entry.name, TENSORBOARD_EVENT_GLOB):
-                    continue
-                path = directory / entry.name
-                if entry.is_symlink():
-                    roots = roots or (source.resolve(), run_dir.resolve())
-                    if not any(map(path.resolve().is_relative_to, roots)):
-                        continue
-                yield path
-            pending += reversed(
-                [
-                    directory / entry.name
-                    for entry in listing
-                    if _Paths.is_dir(entry, follow_symlinks=False)
-                ]
-            )
-
-    @staticmethod
-    def sidecar_tab(rel_parts: tuple[str, ...]) -> str | None:
-        """Return the tab of a sidecar file, such as the Lightning hparams.yaml."""
-        lowered = tuple(part.lower() for part in rel_parts)
-        if rel_parts == ("hparams.yaml",):
-            return "hparams"
-        if "profile" in lowered:
-            return "profile"
-        if "projector" in lowered or lowered[-1] == "projector_config.pbtxt":
-            return "projector"
-        return None
-
-    @staticmethod
-    def sidecar_rel_parts(tab: str, rel_parts: tuple[str, ...]) -> tuple[str, ...]:
-        """Trim the sidecar tab directory prefix when present."""
-        lowered = tuple(part.lower() for part in rel_parts)
-        if tab in lowered:
-            tail = rel_parts[lowered.index(tab) + 1 :]
-            if tail:
-                return tail
-        return rel_parts
+        return True

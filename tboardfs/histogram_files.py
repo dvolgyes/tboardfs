@@ -21,7 +21,7 @@ def add_histogram_files(
 
     A tag whose files fail to build is skipped with a warning.
     """
-    histograms = _TableMerge.merge_series(cache.histograms for cache in caches)
+    histograms = _TableMerge.merge_run_tables(caches, histograms=True)
     histograms = _TableMerge.step_epochs(histograms, epochs)
     mtimes = _TableMerge.merge_mtimes(cache.histogram_mtimes for cache in caches)
     for tag, series in histograms.items():
@@ -51,6 +51,7 @@ class _HistogramFiles:
         tag, series, mtime = item["tag"], item["series"], item["mtime"]
         for step, step_series in _TableMerge.split_steps(series):
             distribution = _TableMerge.distribution_from_histogram(step_series)
+            del step_series["_start"]
             for fmt in scalar_formats:
                 _HistogramFiles.add_step_table(
                     files,

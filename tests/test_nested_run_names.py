@@ -80,16 +80,16 @@ def test_a_run_folder_below_the_log_directory_run_gets_a_suffix(
 def test_runs_below_a_renamed_folder_follow_it(
     tmp_path: Path, warnings: list[str]
 ) -> None:
-    """A folder named scalars~2 on disk keeps that name; the moved one skips it."""
+    """A literal suffix is encoded, leaving the first collision suffix free."""
     _write_run(tmp_path / "exp", 1, value=1.0)
     _write_run(tmp_path / "exp" / "scalars", 1, value=2.0)
     _write_run(tmp_path / "exp" / "scalars" / "sub", 1, value=3.0)
     _write_run(tmp_path / "exp" / "scalars~2", 1, value=4.0)
     fs = TensorBoardFS(tmp_path)
 
-    assert _values(fs, "/exp/scalars~3/scalars/value.json") == [2.0]
-    assert _values(fs, "/exp/scalars~3/sub/scalars/value.json") == [3.0]
-    assert _values(fs, "/exp/scalars~2/scalars/value.json") == [4.0]
+    assert _values(fs, "/exp/scalars~2/scalars/value.json") == [2.0]
+    assert _values(fs, "/exp/scalars~2/sub/scalars/value.json") == [3.0]
+    assert _values(fs, "/exp/scalars%7E2/scalars/value.json") == [4.0]
     assert len(warnings) == 1
 
 

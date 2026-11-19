@@ -1,4 +1,5 @@
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 import os
@@ -10,8 +11,11 @@ from google.protobuf.message import DecodeError
 from loguru import logger
 import numpy as np
 
-from tboardfs.classify import _Classifier, detect_extension
+from tboardfs.classify import _Classifier
 from tboardfs.constants import PLUGIN_TAB
+from tboardfs.file_status import FileIdentity
+from tboardfs.frame_ref import FrameRef
+from tboardfs.indexed_frame import IndexedFrame
 from tboardfs.model import (
     BinaryEntry,
     EventFileCache,
@@ -40,8 +44,6 @@ from tboardfs.tfrecord import iter_tfrecords
 
 # A framed record whose payload cannot be decoded or indexed; framing is intact.
 _MALFORMED_RECORD_ERRORS = (DecodeError, ValueError, struct.error)
-# The first record holds a wall time, so these bytes tell files apart.
-IDENTITY_HEAD_BYTES = 64
 
 
 def parse_file(filename: str | Path) -> dict[str, Any]:
@@ -56,15 +58,27 @@ def parse_file(filename: str | Path) -> dict[str, Any]:
     }
     for entry in cache.binaries:
         if entry.kind in binaries:
-            binaries[entry.kind][entry.tag] = (entry.payload_offset, entry.payload_size)
+            binaries[entry.kind][entry.tag] = (
+                entry.frame.payload_offset,
+                entry.frame.payload_size,
+            )
 
+    for series in cache.histograms.values():
+        del series["_start"]
+        del series["_inherits_epoch"]
+    for series in cache.scalars.values():
+        del series["_inherits_epoch"]
     return {
         "binaries": binaries,
         "binary_entries": cache.binaries,
         "graphs": cache.graphs,
-        "histograms": cache.histograms,
+        "histograms": _TableMerge.step_epochs(
+            cache.histograms, cache.scalars.get("epoch")
+        ),
         "json_entries": cache.json_entries,
-        "scalars": cache.scalars,
+        "scalars": _TableMerge.sort_scalars(
+            _TableMerge.step_epochs(cache.scalars, cache.scalars.get("epoch"))
+        ),
     }
 
 
@@ -89,7 +103,7 @@ class _ParseState:
         default_factory=lambda: defaultdict(_TableRows.empty_histogram_rows)
     )
     first_time: float | None = None
-    epoch: object = np.nan
+    epoch: object = None
 
 
 class _EventIndexer:
@@ -100,18 +114,60 @@ class _EventIndexer:
         path: Path,
         *,
         ignore_truncated: bool = False,
-        start_pos: int = 0,
+        strict_framing: bool = False,
         base_cache: EventFileCache | None = None,
+        initial_metadata: dict[str, dict[str, Any]] | None = None,
     ) -> EventFileCache:
-        """Build an in-memory index for one TensorBoard event file.
+        """Index a validated prefix and appended frames on one descriptor."""
+        with path.open("rb") as handle:
+            status = os.fstat(handle.fileno())
+            if base_cache is not None and (
+                base_cache.progress.identity != FileIdentity.of(status)
+                or status.st_size < base_cache.progress.processed_pos
+                or not _EventIndexer.valid_anchor(handle, base_cache)
+            ):
+                base_cache = None
+            return _EventIndexer.parse_open(
+                path,
+                handle,
+                status,
+                base_cache,
+                initial_metadata,
+                ignore_truncated=ignore_truncated,
+                strict_framing=strict_framing,
+            )
 
-        With ``base_cache``, only records from ``start_pos`` are parsed and
-        their rows are appended, so the result equals a parse of the whole file.
-        """
+    @staticmethod
+    def parse_open(
+        path: Path,
+        handle: BinaryIO,
+        status: os.stat_result,
+        base_cache: EventFileCache | None,
+        initial_metadata: dict[str, dict[str, Any]] | None,
+        *,
+        ignore_truncated: bool,
+        strict_framing: bool,
+        retry: bool = True,
+    ) -> EventFileCache:
+        """Index validated frames from the same descriptor checked for continuity."""
         cache = EventFileCache(source_path=path)
+        progress = cache.progress
+        progress.identity = FileIdentity.of(status)
+        progress.initial_metadata = (
+            base_cache.progress.initial_metadata
+            if base_cache is not None
+            else dict(initial_metadata or {})
+        )
+        progress.effective_metadata = dict(
+            base_cache.progress.effective_metadata
+            if base_cache is not None
+            else progress.initial_metadata
+        )
         state = _ParseState()
-        processed_pos = start_pos
+        processed_pos = 0
         if base_cache is not None:
+            processed_pos = base_cache.progress.processed_pos
+            progress.frames = base_cache.progress.frames.copy()
             state.first_time = base_cache.progress.first_time
             state.epoch = base_cache.progress.epoch
             cache.binaries = list(base_cache.binaries)
@@ -120,36 +176,57 @@ class _EventIndexer:
             cache.scalar_mtimes = dict(base_cache.scalar_mtimes)
             cache.histogram_mtimes = dict(base_cache.histogram_mtimes)
 
-        with path.open("rb") as handle:
-            # Size before reading: records appended during the parse must
-            # look unread to the next refresh.
-            checked_size, identity = _EventIndexer.file_identity(handle)
-            handle.seek(start_pos)
-            try:
-                for record in iter_tfrecords(handle):
-                    processed_pos = record.record_offset + record.total_size
-                    try:
-                        _EventIndexer.index_record(
-                            cache, record, state, strict=not ignore_truncated
-                        )
-                    except _MALFORMED_RECORD_ERRORS as error:
-                        if not ignore_truncated:
-                            raise
-                        logger.warning(
-                            "skipping malformed record at offset {} in {}: {}",
-                            record.record_offset,
-                            path,
-                            error,
-                        )
-            except TFRecordError as error:
-                if not ignore_truncated:
-                    raise
-                if error.corrupt:
-                    logger.warning("stopped reading {}: {}", path, error)
+        handle.seek(processed_pos)
+        try:
+            for record in iter_tfrecords(handle):
+                processed_pos = record.record_offset + record.total_size
+                progress.frames.append(processed_pos, record.payload_crc)
+                try:
+                    _EventIndexer.index_record(
+                        cache, record, state, strict=not ignore_truncated
+                    )
+                except _MALFORMED_RECORD_ERRORS as error:
+                    if not ignore_truncated:
+                        raise
+                    logger.warning(
+                        "skipping malformed record at offset {} in {}: {}",
+                        record.record_offset,
+                        path,
+                        error,
+                    )
+        except TFRecordError as error:
+            if strict_framing or not ignore_truncated:
+                raise TFRecordError(
+                    f"{path}: {error}", corrupt=error.corrupt
+                ) from error
+            if not _EventIndexer.valid_anchor(handle, cache):
+                if not retry:
+                    logger.warning("discarding unstable prefix of {}: {}", path, error)
+                    return EventFileCache(
+                        source_path=path,
+                        progress=ParseProgress(
+                            initial_metadata=progress.initial_metadata,
+                            effective_metadata=dict(progress.initial_metadata),
+                        ),
+                    )
+                return _EventIndexer.parse_open(
+                    path,
+                    handle,
+                    os.fstat(handle.fileno()),
+                    None,
+                    initial_metadata,
+                    ignore_truncated=ignore_truncated,
+                    strict_framing=strict_framing,
+                    retry=False,
+                )
+            if error.corrupt:
+                logger.warning("stopped reading {}: {}", path, error)
 
-        cache.progress = ParseProgress(
-            processed_pos, checked_size, identity, state.first_time, state.epoch
-        )
+        progress.processed_pos = processed_pos
+        progress.last_checked_size = status.st_size
+        progress.first_time = state.first_time
+        progress.epoch = state.epoch
+        progress.checked_status = FileIdentity.fingerprint(status)
         cache.scalars = _TableRows.arrays_from_scalar_rows(
             state.scalar_rows, state.scalar_dtypes
         )
@@ -192,11 +269,16 @@ class _EventIndexer:
         ]
 
     @staticmethod
-    def file_identity(handle: BinaryIO) -> tuple[int, tuple[int, int, bytes]]:
-        """Return the size and the identity of an open event file."""
-        status = os.fstat(handle.fileno())
-        head = os.pread(handle.fileno(), IDENTITY_HEAD_BYTES, 0)
-        return status.st_size, (status.st_dev, status.st_ino, head)
+    def valid_anchor(handle: BinaryIO, cache: EventFileCache) -> bool:
+        """Check the last complete indexed frame before retaining its prefix."""
+        anchor = cache.progress.frames.last()
+        if anchor is None:
+            return True
+        try:
+            IndexedFrame.verify(handle, FrameRef(cache.progress.identity, *anchor))
+        except TFRecordError:
+            return False
+        return True
 
     @staticmethod
     def index_record(
@@ -221,13 +303,22 @@ class _EventIndexer:
         timing = (event["step"], wall_time, relative_time)
         _EventIndexer.add_restart(cache, event, state)
         _EventIndexer.add_graph(cache, path, event, record, wall_time)
-        for value in values:
+        binary_start = len(cache.binaries)
+        for ordinal, value in enumerate(values):
+            tag = value["tag"]
+            if "plugin_name" in value:
+                cache.progress.effective_metadata[tag] = {
+                    "plugin_name": value["plugin_name"],
+                    "plugin_content": value.get("plugin_content", b""),
+                }
+            elif tag in cache.progress.effective_metadata:
+                value.update(cache.progress.effective_metadata[tag])
             indexed = skip_failure(
                 f"value {value['tag']!r} at step {event['step']} in {path}",
                 partial(
                     _EventIndexer.add_summary,
                     cache,
-                    path,
+                    ordinal,
                     record,
                     value,
                     state,
@@ -236,6 +327,13 @@ class _EventIndexer:
                 strict=strict,
             )
             epoch = epoch if indexed is None else indexed
+        if len(values) > 1 and len(cache.binaries) - binary_start > 1:
+            seen: set[tuple[str, str, str, str]] = set()
+            for entry in cache.binaries[binary_start:]:
+                key = (entry.kind, entry.tag, entry.suffix, entry.extension)
+                if key in seen:
+                    entry.suffix += f"_v{entry.value_ordinal}"
+                seen.add(key)
         state.first_time, state.epoch = first_time, epoch
 
     @staticmethod
@@ -280,8 +378,7 @@ class _EventIndexer:
                 GraphEntry(
                     source_path=path,
                     wall_time=wall_time,
-                    payload_offset=record.payload_offset,
-                    payload_size=record.payload_size,
+                    frame=record.reference(cache.progress.identity),
                 )
             )
         meta_graph = event.get("meta_graph_def")
@@ -290,8 +387,7 @@ class _EventIndexer:
         entry = MetaGraphEntry(
             source_path=path,
             wall_time=wall_time,
-            payload_offset=record.payload_offset,
-            payload_size=record.payload_size,
+            frame=record.reference(cache.progress.identity),
         )
         entry.readable = meta_graph_graph_def(entry, bytes(meta_graph)) is not None
         cache.graphs.append(entry)
@@ -299,7 +395,7 @@ class _EventIndexer:
     @staticmethod
     def add_summary(
         cache: EventFileCache,
-        path: Path,
+        ordinal: int,
         record: Record,
         value: dict[str, Any],
         state: _ParseState,
@@ -308,7 +404,7 @@ class _EventIndexer:
         """Index one TensorBoard summary value.
 
         A value without a tag is kept, as TensorBoard keeps it; its files are
-        named "untagged".
+        named "~empty".
         """
         tag = value["tag"]
         epoch, step, wall_time, relative_time = timing
@@ -325,7 +421,7 @@ class _EventIndexer:
         _EventIndexer.add_histogram(
             cache, value, state.histogram_rows, (epoch, step, wall_time, relative_time)
         )
-        _EventIndexer.add_binary(cache, path, record, value, (tag, step, wall_time))
+        _EventIndexer.add_binary(cache, ordinal, record, value, (tag, step, wall_time))
         _EventIndexer.add_plugin(cache, value, (tag, step, wall_time))
         return epoch
 
@@ -369,7 +465,8 @@ class _EventIndexer:
         tag = value["tag"]
         epoch, step, wall_time, relative_time = timing
         rows = histogram_rows[tag]
-        for left, right, count in buckets:
+        for index, (left, right, count) in enumerate(buckets):
+            rows["_start"].append(index == 0)
             rows["step"].append(step)
             rows["epoch"].append(epoch)
             rows["wall_time"].append(wall_time)
@@ -382,57 +479,55 @@ class _EventIndexer:
     @staticmethod
     def add_binary(
         cache: EventFileCache,
-        path: Path,
+        ordinal: int,
         record: Record,
         value: dict[str, Any],
         identity: tuple[str, Any, float],
     ) -> None:
         """Index a binary summary value lazily by source record position."""
         tag, step, wall_time = identity
-        parts = _TensorSummary.media_parts(value)
-        if parts is not None:
-            strings = value["tensor"]["string_val"]
-            for part_kind, part, suffix in parts:
-                data = bytes(strings[part])
-                entry = BinaryEntry(
-                    source_path=path,
-                    tag=tag,
-                    kind=part_kind,
-                    step=step,
-                    wall_time=wall_time,
-                    payload_offset=record.payload_offset,
-                    payload_size=record.payload_size,
-                    extension=_TensorSummary.part_extension(value, part_kind, data),
-                    part=part,
-                    suffix=suffix,
-                )
-                if part_kind == "graphs":
-                    graph, profile = _TensorSummary.graph_views(value)
-                    entry = GraphSummaryEntry(
-                        **vars(entry),
-                        converts=graph and summary_graph_def(entry, data) is not None,
-                        profiles=profile and run_metadata_text(entry, data) is not None,
-                    )
-                cache.binaries.append(entry)
-            return
-        kind = _Classifier.binary_kind(value)
-        if kind is None:
-            return
-        blob = _Classifier.binary_blob(value)
-        if blob is None:
-            return
-        cache.binaries.append(
-            BinaryEntry(
-                source_path=path,
+        parts: Sequence[tuple[str, int | None, str]] | None = (
+            _TensorSummary.media_parts(value)
+        )
+        tensor = value.get("tensor", {})
+        strings = tensor.get("string_val", ())
+        if parts is None:
+            kind = _Classifier.binary_kind(value)
+            if kind is None:
+                return
+            if strings and not tensor.get("tensor_content"):
+                width = len(str(len(strings) - 1))
+                parts = [
+                    (kind, i, f"_{i:0{width}d}" if len(strings) > 1 else "")
+                    for i in range(len(strings))
+                ]
+            else:
+                parts = [(kind, None, "")]
+        frame = record.reference(cache.progress.identity)
+        for part_kind, part, suffix in parts:
+            data = _Classifier.binary_blob(value) if part is None else strings[part]
+            if data is None:
+                continue
+            entry = BinaryEntry(
+                source_path=cache.source_path,
                 tag=tag,
-                kind=kind,
+                kind=part_kind,
                 step=step,
                 wall_time=wall_time,
-                payload_offset=record.payload_offset,
-                payload_size=record.payload_size,
-                extension=detect_extension(blob),
+                frame=frame,
+                value_ordinal=ordinal,
+                extension=_TensorSummary.part_extension(value, part_kind, data),
+                part=part,
+                suffix=suffix,
             )
-        )
+            if part_kind == "graphs":
+                graph, profile = _TensorSummary.graph_views(value)
+                entry = GraphSummaryEntry(
+                    **vars(entry),
+                    converts=graph and summary_graph_def(entry, data) is not None,
+                    profiles=profile and run_metadata_text(entry, data) is not None,
+                )
+            cache.binaries.append(entry)
 
     @staticmethod
     def add_plugin(

@@ -7,7 +7,6 @@ TensorBoard 2.21 graph plugin builds for one summary.
 
 import errno
 import json
-import os
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -240,13 +239,11 @@ def test_graph_of_a_changed_event_file_is_eio(tmp_path: Path) -> None:
     name = b"d" * 100
     config = b'{"config": {"name": "m", "layers": [{"config": {"name": "%s"}}]}}' % name
     fs = _log(tmp_path, _graph_event(config, plugin="graph_keras_model"))
+    fs.refresh_age_seconds = float("inf")
     assert "000000.conceptual.pb" in fs.readdir("/graphs/g")
     path = tmp_path / "events.out.tfevents.host"
-    status = path.stat()
     broken = config.replace(b"}}]}}", b"}}]} ")
     path.write_bytes(_graph_event(broken, plugin="graph_keras_model"))
-    # The same size, mtime and first bytes: the mount does not index it again.
-    os.utime(path, ns=(status.st_atime_ns, status.st_mtime_ns))
 
     with pytest.raises(OSError) as raised:
         fs.read("/graphs/g/000000.conceptual.pb", 1 << 20, 0)

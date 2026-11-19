@@ -59,11 +59,9 @@ def test_an_image_of_a_changed_event_file_is_eio(
 ) -> None:
     """The file is listed, but its record is gone from the event file."""
     fs, path = _image_log(tmp_path)
+    fs.refresh_age_seconds = float("inf")
     assert fs.readdir("/images/picture")[2:] == ["000001.png"]
-    status = path.stat()
     path.write_bytes(change(path.read_bytes()))
-    # The same mtime, before the refresh age: the mount does not index it again.
-    os.utime(path, ns=(status.st_atime_ns, status.st_mtime_ns))
 
     with pytest.raises(OSError) as raised:
         fs.read("/images/picture/000001.png", 1 << 20, 0)

@@ -1,31 +1,43 @@
+"""Select, read, and copy exports from an event file or a directory tree."""
+
+from collections.abc import Iterator
 from errno import ENOENT
 import os
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
 from tboardfs.constants import DEFAULT_SCALAR_FORMATS
 from tboardfs.filesystem import TensorBoardFS
+from tboardfs.host_publish import OutputPublisher, _OutputConflictError
 from tboardfs.indexer import _EventIndexer
-from tboardfs.model import RunCache
+from tboardfs.model import RunCache, TFRecordError
 from tboardfs.paths import _Paths
 from tboardfs.render_node import render_node
 from tboardfs.run_tree import build_run_tree
 
 
-class _CopyConflictError(FileExistsError):
-    """File copy conflict with the successful virtual paths so far.
-
-    :ivar copied_paths: virtual paths copied before the conflict
-    :ivar target: filesystem path that already exists
-    """
+class _CopyError(OSError):
+    """A failed publication with the paths already published or skipped."""
 
     copied_paths: list[str]
-    target: Path
+    skipped_paths: list[str]
 
-    def __init__(self, target: Path, copied_paths: list[str]) -> None:
-        super().__init__(str(target))
-        self.target = target
-        self.copied_paths = copied_paths
+    def __init__(
+        self,
+        target: Path,
+        cause: OSError | TFRecordError,
+        copied: list[str],
+        skipped: list[str],
+    ) -> None:
+        message = (
+            f"output already exists: {target}\nUse --force for forced overwriting."
+            if isinstance(cause, _OutputConflictError)
+            else f"could not copy to {target}: {cause}"
+        )
+        super().__init__(message)
+        self.copied_paths = copied
+        self.skipped_paths = skipped
 
 
 class _NoEventError(ValueError):
@@ -67,53 +79,60 @@ class SingleEventTree:
             self.tree = filesystem.virtual_tree()
             return
         run = RunCache(())
-        cache = _EventIndexer.parse_event_file(source_path, ignore_truncated=True)
+        cache = _EventIndexer.parse_event_file(
+            source_path, ignore_truncated=True, strict_framing=True
+        )
         if cache.progress.processed_pos == 0:
             raise _NoEventError(source_path)
         run.files[source_path] = cache
         self.tree = build_run_tree(run, scalar_formats, step_digits)
 
-    def list_file_paths(self, *, prefix: str = "/") -> list[str]:
-        """Return virtual file paths below a prefix."""
+    def iter_file_paths(
+        self, *, prefix: str = "/", view: str | None = None
+    ) -> Iterator[str]:
+        """Yield selected files in virtual-path order."""
         node = self._lookup_path(prefix)
-        if node["type"] != "dir":
-            return [_Paths.norm_virtual_path(prefix)]
-        return [
-            _Paths.join_path(path)
-            for path in self._iter_file_parts(node, _Paths.path_parts(prefix))
-        ]
+        if view is None:
+            view = (
+                "raw" if node.get("view") == "raw" or node["type"] == "raw" else "typed"
+            )
+        for parts, _ in self._iter_files(node, _Paths.path_parts(prefix), view):
+            yield _Paths.join_path(parts)
 
-    def read_file(self, path: str) -> bytes:
+    def list_file_paths(
+        self, *, prefix: str = "/", view: str | None = None
+    ) -> list[str]:
+        """Return virtual file paths below a prefix."""
+        return list(self.iter_file_paths(prefix=prefix, view=view))
+
+    def read_file(self, path: str, *, view: str = "both") -> bytes:
         """Return virtual file bytes."""
         node = self._lookup_path(path)
         if node["type"] == "dir":
             raise IsADirectoryError(path)
+        if not self._selected(node, view):
+            raise FileNotFoundError(ENOENT, os.strerror(ENOENT), path)
         return render_node(node)
 
     def copy_all(
-        self, outdir: str | Path, *, existing: str = "fail"
+        self, outdir: str | Path, *, existing: str = "fail", view: str = "typed"
     ) -> tuple[int, list[str]]:
-        """Copy every virtual file into a directory."""
+        """Copy selected files, reporting completed paths if publication fails."""
         outdir_path = Path(outdir)
-        root = outdir_path.resolve()
-        paths = self._iter_file_parts(self.tree, ())
-        targets = [(path, outdir_path.joinpath(*path)) for path in paths]
-        copied_paths: list[str] = []
-        skipped_paths: list[str] = []
-        for path, target in targets:
-            virtual_path = _Paths.join_path(path)
-            if not target.resolve().is_relative_to(root):
-                msg = f"refusing to write {virtual_path} outside the output directory"
-                raise PermissionError(msg)
-            if target.exists() and existing != "overwrite":
-                if existing == "skip":
-                    skipped_paths.append(virtual_path)
-                    continue
-                raise _CopyConflictError(target, copied_paths)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(render_node(self._lookup_parts(path)))
-            copied_paths.append(virtual_path)
-        return len(copied_paths), skipped_paths
+        copied: list[str] = []
+        skipped: list[str] = []
+        target = outdir_path
+        try:
+            with OutputPublisher.directory(outdir_path) as root:
+                for parts, node in self._iter_files(self.tree, (), view):
+                    target = outdir_path.joinpath(*parts)
+                    written = OutputPublisher.publish(
+                        root, parts, partial(render_node, node), existing
+                    )
+                    (copied if written else skipped).append(_Paths.join_path(parts))
+        except (OSError, TFRecordError) as error:
+            raise _CopyError(target, error, copied, skipped) from error
+        return len(copied), skipped
 
     def _lookup_path(self, path: str) -> dict[str, Any]:
         return self._lookup_parts(_Paths.path_parts(path))
@@ -128,13 +147,21 @@ class SingleEventTree:
             node = cast(dict[str, Any], node["children"][part])
         return node
 
-    def _iter_file_parts(
-        self, node: dict[str, Any], prefix_parts: tuple[str, ...]
-    ) -> list[tuple[str, ...]]:
+    @staticmethod
+    def _selected(node: dict[str, Any], view: str) -> bool:
+        return view == "both" or view == ("raw" if node["type"] == "raw" else "typed")
+
+    def _iter_files(
+        self, node: dict[str, Any], parts: tuple[str, ...], view: str
+    ) -> Iterator[tuple[tuple[str, ...], dict[str, Any]]]:
         if node["type"] != "dir":
-            return [prefix_parts]
-        paths = []
-        for name in sorted(node["children"]):
-            child = node["children"][name]
-            paths.extend(self._iter_file_parts(child, (*prefix_parts, name)))
-        return paths
+            if self._selected(node, view):
+                yield parts, node
+            return
+        if view == "typed" and node.get("view") == "raw":
+            return
+        children = node["children"]
+        for name in sorted(
+            children, key=lambda n: n + ("/" if children[n]["type"] == "dir" else "")
+        ):
+            yield from self._iter_files(children[name], (*parts, name), view)

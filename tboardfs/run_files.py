@@ -1,22 +1,11 @@
 """Collect the virtual files of one run, then give each tag a directory that no file has."""
 
 from dataclasses import dataclass
-import hashlib
 from typing import Any
 
-from loguru import logger
-
 from tboardfs.model import RunCache
-from tboardfs.paths import _Paths
+from tboardfs.paths import NAME_MAP, _Paths
 from tboardfs.tag_paths import TagPaths
-
-# Each round can only move tag directories that a file is in the way of; more
-# rounds than this mean that the moved names keep meeting files.
-_ROUNDS = 8
-# The kernel refuses a longer name with ENAMETOOLONG.
-_MAX_NAME_BYTES = 255
-# A longer suffix is not an extension, such as the end of "lr.decay.0.0001".
-_MAX_EXTENSION_CHARS = 8
 
 
 @dataclass
@@ -32,38 +21,21 @@ class _RunFile:
     name: str
     node: dict[str, Any]
     named: bool
+    identity: str = ""
 
-    def path(self, tags: TagPaths) -> tuple[str, ...]:
-        """Return the virtual path of the file, with each name cut to the limit."""
+    def path(self, tags: TagPaths, name_map: dict[str, str]) -> tuple[str, ...]:
+        """Return the file's virtual path, including any generated extension."""
         if self.tag is None:
-            path = (*self.root, self.name)
-        elif self.named:
-            parts = tags.dir_parts(self.tag)
-            path = (*self.root, *parts[:-1], f"{parts[-1]}.{self.name}")
-        else:
-            path = (*self.root, *tags.dir_parts(self.tag), self.name)
-        return tuple(_RunFile.fit(part) for part in path)
-
-    @staticmethod
-    def fit(name: str) -> str:
-        """Return the name, or a cut name with a hash if it has more than 255 bytes.
-
-        The cut name keeps the start and the extension of the name, and the
-        hash of the full name keeps different names different.
-        """
-        if len(name) <= _MAX_NAME_BYTES // 4:  # a character has at most 4 bytes
-            return name
-        data = name.encode("utf-8", "surrogatepass")
-        if len(data) <= _MAX_NAME_BYTES:
-            return name
-        stem, dot, extension = name.rpartition(".")
-        if not dot or len(extension) > _MAX_EXTENSION_CHARS:
-            stem, dot, extension = name, "", ""
-        tail = f"~{hashlib.sha256(data).hexdigest()[:16]}{dot}{extension}"
-        budget = _MAX_NAME_BYTES - len(tail.encode("utf-8", "surrogatepass"))
-        # "ignore" drops a character that the cut splits.
-        cut = stem.encode("utf-8", "surrogatepass")[:budget].decode("utf-8", "ignore")
-        return cut + tail
+            return (*self.root, _Paths.fit(self.name, self.name, name_map))
+        parts = tags.dir_parts(self.tag)
+        if not self.named:
+            return (*self.root, *parts, _Paths.fit(self.name, self.name, name_map))
+        name = _Paths.fit(
+            f"{parts[-1]}.{self.name}",
+            f"{self.tag.rsplit('/', 1)[-1]}.{self.name}",
+            name_map,
+        )
+        return (*self.root, *parts[:-1], name)
 
     def tag_dir_ends(self, tags: TagPaths) -> range:
         """Return the lengths of the path prefixes that are tag directories."""
@@ -79,16 +51,18 @@ class RunFiles:
     The tree is built only when all files are known. Then a tag directory
     that has the name of a file, such as the tag "a/000001.npy" beside the
     step file 000001.npy of the tag "a", gets "~2" in every tab, and no file
-    hides another. A later file at the path of an earlier one replaces it.
+    hides another. A later observation of the same logical file replaces it.
 
     Attributes:
         files: the files in the order that they were added.
     """
 
     files: list[_RunFile]
+    name_map: dict[str, str]
 
     def __init__(self) -> None:
         self.files = []
+        self.name_map = {}
 
     def add(
         self, root: tuple[str, ...], tag: str, name: str, node: dict[str, Any]
@@ -102,9 +76,11 @@ class RunFiles:
         """Add a file named after its tag, such as /scalars/<tag>.json."""
         self.files.append(_RunFile(root, tag, extension, node, named=True))
 
-    def add_fixed(self, parts: tuple[str, ...], node: dict[str, Any]) -> None:
-        """Add a file at a path without a tag, such as /graphs/graph.pb."""
-        self.files.append(_RunFile(parts[:-1], None, parts[-1], node, named=False))
+    def add_fixed(
+        self, parts: tuple[str, ...], node: dict[str, Any], *, identity: str = ""
+    ) -> None:
+        """Add a generated file or a sidecar with a distinct source identity."""
+        self.files.append(_RunFile(parts[:-1], None, parts[-1], node, False, identity))
 
     def fill(self, run_node: dict[str, Any], run: RunCache) -> None:
         """Add every file to the directory of a run.
@@ -114,18 +90,60 @@ class RunFiles:
             run: the run, which keeps its moved tags so a run that grows
                 logs each move once.
         """
-        tag_names = {file.tag for file in self.files if file.tag is not None}
+        tag_names = dict.fromkeys(
+            file.tag for file in self.files if file.tag is not None
+        )
         blocked: dict[tuple[str, ...], str] = {}
-        for _ in range(_ROUNDS):
-            tags = TagPaths(tag_names, blocked)
-            paths = [file.path(tags) for file in self.files]
+        while True:
+            tags = TagPaths(tag_names, blocked, self.name_map)
+            paths = [file.path(tags, self.name_map) for file in self.files]
             found = self.blocked_dirs(paths, tags)
             if found.keys() <= blocked.keys():
                 break
             blocked |= found
         tags.log(run)
+        self._insert_files(run_node, paths)
+        if self.name_map:
+            run_node["children"][NAME_MAP] = {
+                "type": "name_map",
+                "data": self.name_map,
+            }
+
+    def _insert_files(
+        self, run_node: dict[str, Any], paths: list[tuple[str, ...]]
+    ) -> None:
+        leaves = set(paths)
+        directories = {path[:end] for path in leaves for end in range(1, len(path))}
+        collisions: dict[tuple[str, ...], dict[str, dict[str, Any]]] = {
+            path: {} for path in leaves & directories
+        }
         for path, file in zip(paths, self.files, strict=True):
-            self.insert(run_node, path, file.node, run)
+            if file.identity:
+                collisions.setdefault(path, {})
+        for path, file in zip(paths, self.files, strict=True):
+            sources = collisions.get(path)
+            if sources is None:
+                _Paths.mkdirs(run_node, path[:-1])["children"][path[-1]] = file.node
+            else:
+                sources[file.identity] = file.node
+        for path, sources in collisions.items():
+            children = _Paths.mkdirs(run_node, path[:-1])["children"]
+            number = 1
+            for index, source in enumerate(sorted(sources)):
+                resolved = path
+                if index or path in directories:
+                    while True:
+                        number += 1
+                        name = _Paths.fit(
+                            f"{path[-1]}~{number}",
+                            _Paths.decode_component(path[-1], name_map=self.name_map),
+                            self.name_map,
+                        )
+                        resolved = (*path[:-1], name)
+                        if resolved not in leaves and resolved not in directories:
+                            break
+                    leaves.add(resolved)
+                children[resolved[-1]] = sources[source]
 
     def blocked_dirs(
         self, paths: list[tuple[str, ...]], tags: TagPaths
@@ -141,32 +159,3 @@ class RunFiles:
                 if path[:end] in file_paths:
                     found.setdefault(path[len(file.root) : end], "/".join(path[:end]))
         return found
-
-    @staticmethod
-    def insert(
-        run_node: dict[str, Any],
-        path: tuple[str, ...],
-        node: dict[str, Any],
-        run: RunCache,
-    ) -> None:
-        """Add one file to a run directory, unless a file and a directory meet.
-
-        That can happen only between paths without tags, such as sidecars,
-        which no suffix can separate; the later file is left out.
-        """
-        parent = run_node
-        for end, part in enumerate(path, start=1):
-            child = parent["children"].get(part)
-            if child is None:
-                break
-            if (child["type"] == "dir") == (end == len(path)):
-                logger.warning(
-                    "{!r} in run {!r} is both a file and a directory; "
-                    "a file at {!r} is left out",
-                    "/".join(path[:end]),
-                    "/".join(run.run_parts),
-                    "/".join(path),
-                )
-                return
-            parent = child
-        _Paths.mkdirs(run_node, path[:-1])["children"][path[-1]] = node

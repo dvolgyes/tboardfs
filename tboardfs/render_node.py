@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from errno import EIO, EOPNOTSUPP
+import json
 from types import MappingProxyType
 from typing import Any, Final
 
@@ -9,6 +10,7 @@ from tboardfs.errors import fuse_error
 from tboardfs.extract import _extract_graph_blob, extract_binary_blob
 from tboardfs.meta_graph import meta_graph_graph_def
 from tboardfs.npy_export import array_to_npy
+from tboardfs.raw_frames import RawFrames
 from tboardfs.run_metadata_text import run_metadata_text
 from tboardfs.summary_graph import summary_graph_def
 from tboardfs.tables import _TableExport, export_table
@@ -35,6 +37,10 @@ _RENDERERS: Final[Mapping[str, Callable[[dict[str, Any]], bytes]]] = MappingProx
         "obj": lambda node: str(node["data"]).encode(),
         "npy": lambda node: array_to_npy(node["data"]),
         "json": lambda node: _TableExport.json_document(node["data"]),
+        "name_map": lambda node: json.dumps(
+            node["data"], ensure_ascii=True, sort_keys=True, indent=2
+        ).encode("ascii"),
+        "raw": RawFrames.read,
         "scalar": lambda node: export_table(node["series"], node["format"]),
         "table": lambda node: export_table(node["series"], node["format"]),
         "binary": lambda node: extract_binary_blob(node["entry"]),

@@ -13,10 +13,9 @@
 
 Read TensorBoard event logs as ordinary files.
 
-tboardfs shows the content of TensorBoard event files (`events.out.tfevents*`) as a read-only directory tree. Each
-TensorBoard tab is a directory, each tag is a path below it, and each value is a file in a common format: JSON, TSV,
-CSV, NumPy `.npy`/`.npz`, PNG, WAV, GIF, OBJ, PLY, or protobuf. You can then use `ls`, `cat`, `cp`, `grep`, pandas,
-NumPy, or any other tool on your training logs, without TensorBoard and without TensorFlow.
+tboardfs shows TensorBoard event files (`events.out.tfevents*`) as a read-only directory tree. Browse the typed view to
+read scalars as tables, images as images, and tensors as NumPy arrays. Use the separate `raw` view to read the original
+TFRecord frames, including records with no typed representation. Neither view needs TensorFlow or TensorBoard.
 
 ```console
 $ tboardfs runs mnt
@@ -43,7 +42,8 @@ There are two ways to use it:
 
 tboardfs needs Python 3.12 or later, and these system libraries:
 
-- FUSE (libfuse 2 or 3, with `fusermount`) for filesystem mode. `tboardfs-file` does not need FUSE.
+- Mounting requires FUSE, permission to use `/dev/fuse` on Linux, and a working `fusermount` or `fusermount3`. Use
+  `tboardfs-file` where mount privileges are unavailable.
 - libmagic, which finds the file type of images, audio and other stored files.
 
 On Debian or Ubuntu, for example:
@@ -88,7 +88,7 @@ tboardfs runs in the background by default. With `--foreground`, it stays in the
 | -- | -- | -- |
 | `--scalar-format LIST` | `json,tsv,npz` | Comma-separated table formats for scalars, histograms and distributions: `json`, `tsv`, `csv`, `npz`. |
 | `--step-digits N` | `6` | Zero-padding width of step file names, from 1 to 20. |
-| `--refresh-age-seconds S` | `60` | How old the data can get before the next file operation checks the source again. `inf` never checks again. |
+| `--refresh-age-seconds S` | `150` | Minimum interval between local searches for new files and directories. Use `0` for immediate discovery or `inf` to freeze each directory after first access. |
 | `--cache-size-mb N` | `1024` | Memory for rendered files. `0` turns the cache off. |
 | `--root-owner` / `--user-owner` | `--root-owner` | Owner of all files and directories: root, or the user who mounts. |
 | `--foreground` / `--background` | `--background` | Stay in the terminal, or detach. |
@@ -100,19 +100,28 @@ data; use `--logfile` or `--foreground` when you need them.
 
 ### Live Training Runs
 
-A mount shows new events while a training run writes them. When the data is older than `--refresh-age-seconds`, the next
-file operation checks the source again. A check lists each directory once, and reads only the event files whose device,
-inode, size, mtime or ctime changed. A file that grew is read from the position where the last read stopped. On a
-network filesystem, a larger value makes fewer round trips.
+Listing a directory discovers its children without indexing every descendant. Opening a path checks the known event
+files in the active run for changes and deletions, even within the discovery interval. New event files, subdirectories
+and sidecars become visible on local discovery; an idle run does not need a background scan. `inf` disables subsequent
+checks in a directory after its first access.
+
+Directory timestamps reflect discovered content, not files in unvisited subdirectories.
+
+Writers should append complete frames and replace the file when rewriting history. tboardfs resumes at the end of the
+last complete frame and checks that frame before reusing its index. A changed file identity, truncation or invalid
+checkpoint causes a fresh index. Identity uses device and inode plus birth time where available; Unix `ctime` is not
+creation time. This scheme does not detect all changes to earlier records in a growing file.
 
 Each open file keeps the content it had when it was opened, so a read never mixes two versions. Open the file again to
-see new data.
+see new data. If a raw frame, image or graph changes before its first read, tboardfs validates the indexed source rather
+than returning unrelated replacement bytes.
 
 ### Memory and Caching
 
 Rendered files are kept in memory, so `ls -l` followed by `cat` renders a file once. When the cache goes over
 `--cache-size-mb`, the least recently used files are dropped until half the limit is left. New events in a run make only
-the files of that run render again.
+the files of that run render again. The limit applies to rendered bytes, not to indexes, directory entries, or bytes
+pinned by open handles.
 
 ### Permissions and Memory Maps
 
@@ -138,9 +147,11 @@ SOURCE is one event file, a run directory, or a log directory.
 | -- | -- |
 | `list SOURCE [PREFIX]` | Print the virtual file paths below PREFIX, one per line. |
 | `get SOURCE VPATH -o OUTPUT` | Write one virtual file to OUTPUT. `-o -` writes it to stdout. |
-| `copy-all SOURCE OUTDIR` | Copy the full virtual tree into OUTDIR. |
+| `copy-all SOURCE OUTDIR` | Copy the selected view into OUTDIR. |
 
-All three commands accept `--scalar-format` and `--step-digits`, with the same meaning as in filesystem mode.
+All three commands accept `--scalar-format` and `--step-digits`, with the same meaning as in filesystem mode. `list` and
+`copy-all` default to typed files. Use `--view raw` for complete frames or `--view both` for both views. `list` with an
+explicit raw prefix and `get` with an explicit raw path can select a frame directly.
 
 ```bash
 tboardfs-file list events.out.tfevents.123
@@ -149,6 +160,8 @@ tboardfs-file get events.out.tfevents.123 /scalars/loss.json -o -
 tboardfs-file get events.out.tfevents.123 images/sample/000001.png -o sample.png
 tboardfs-file get events.out.tfevents.123 scalars/loss.tsv -o exported/
 tboardfs-file copy-all runs exported-runs --skip-existing
+tboardfs-file copy-all --view raw events.out.tfevents.123 frames
+cat frames/raw/events.out.tfevents.123/*.tfrecord > reconstructed.events
 ```
 
 - A virtual path can start with or without `/`.
@@ -158,6 +171,8 @@ tboardfs-file copy-all runs exported-runs --skip-existing
 - `copy-all` copies the files in sorted virtual-path order. When it finds a file that already exists, it stops, and
   tells which files it copied and which path stopped it. `-f/--force` overwrites existing files. `-s/--skip-existing`
   keeps existing files, writes a warning for each, and copies the rest. You cannot use both.
+- Both commands refuse to write through destination symlinks. They publish each complete file atomically, not the entire
+  export as one transaction.
 
 Only file data and file lists go to stdout, so you can pipe them. Messages, warnings and errors go to stderr.
 
@@ -178,44 +193,41 @@ MOUNTPOINT/
     └── ...
 ```
 
-When SOURCE is itself a run directory, its tabs are at the root of the mount. Each run has all 16 tab directories of the
-table in [Exported Data](#exported-data); a tab without data is empty. When a run has several event files, for example
-after a restart, tboardfs merges them into one run.
+When SOURCE is a run, its 16 typed tabs and its `raw` directory appear at the mount root. A typed tab without data is
+empty. Multiple event files in a run contribute to the same typed tabs but retain separate directories under `raw`.
 
 ### Tags and Steps
 
 - A tag is a path below its tab: the tag `train/loss` is `scalars/train/loss.json`.
-- Empty parts of a tag are left out, and a tag without a name is `untagged`.
-- tboardfs writes `.` and `..`, backslashes and control characters in a tag as `%XX` escapes, so a tag cannot point
-  outside its directory.
+- Each empty component is `~empty`, including a wholly empty tag. Thus `a//b` becomes `a/~empty/b`, distinct from `a/b`.
+- Literal `%` and `~` are `%25` and `%7E`. The reserved components `.` and `..`, backslashes, control characters and the
+  reserved name-map filename use percent escapes.
 - Data with one value for each step has one file per step. The file name is the step, zero-padded to `--step-digits`
   digits, such as `000010.png`.
 - An event without a step field is at step 0, as in TensorBoard.
 
 ### Name Conflicts
 
-When two entries get the same path, tboardfs keeps both: it adds `~2` (then `~3`, and so on) to one of them, and logs a
-warning once.
+Ordinary names keep their spelling. This naming scheme replaces the earlier lossy scheme; scripts that addressed unusual
+tags or conflicting names must use the new paths. Decode percent escapes only after splitting the virtual path into
+components.
 
-- When two tags of a run give the same path, such as `a/b` and `a//b`, the tag that the path spells keeps it. The other
-  tag gets `~2` on its last part, in every tab.
 - When a tag directory has the name of a file, such as the tag `loss.json/x` beside `scalars/loss.json`, the directory
   becomes `loss.json~2/`, and the file keeps its name.
 - When a run inside another run has the name of a tab, such as the run `exp/scalars`, it becomes `exp/scalars~2/`.
   `exp/scalars/` keeps only the scalars of `exp`.
-- A directory that has the name `scalars~2` on disk keeps that name; the renamed directory then gets `~3`.
-
-The only exception is two files from the run directory (projector or profile files) at one path: the first file stays,
-and tboardfs logs a warning.
+- A literal directory name `scalars~2` becomes `scalars%7E2`, distinct from the generated `scalars~2`.
+- Distinct sidecars at the same virtual path receive deterministic suffixes rather than hiding one file.
+- A component longer than the host limit is shortened to at most 255 UTF-8 bytes. In an affected directory,
+  `.tboardfs-names.json` maps shortened spellings to their original names.
 
 ### Symbolic Links
 
-Symlinked directories in SOURCE are followed, so a run kept elsewhere and linked into the log directory is a run under
-the name of the link. A directory that several links reach is shown once, under the first path in sorted order. Link
-loops end. A projector or profile file of a linked run can point into its real run directory; other links out of SOURCE
-are not shown.
-
-Do not make a link from inside SOURCE to the mountpoint: a read of that link calls back into the mount and stops it.
+Treat SOURCE and the files it links to as trusted input for the account running tboardfs. Links to event files, run
+directories, and sidecars may leave SOURCE or cross onto a remote filesystem. Traversal skips ancestor loops and links
+back into the active mountpoint. Do not give an untrusted writer control of a source directory when the mounting account
+can read sensitive files. Sibling links to one directory use the first name in sorted order. The same source can appear
+under different branches because tboardfs does not search idle branches to eliminate aliases.
 
 ## Exported Data
 
@@ -237,13 +249,15 @@ Do not make a link from inside SOURCE to the mountpoint: a read of that link cal
 | `projector` | files of the run directory | Embedding projector files |
 | `profile` | files of the run directory | Profiler files |
 | `plugins` | `<plugin>/<tag>/<step>.json` | Data of other plugins |
+| `raw` | `<event-file>/<20-digit-byte-offset>.tfrecord` | One complete frame: header, payload and footer, in source order |
 
 `--scalar-format` selects the table formats of scalars, histograms and distributions. The default is `json,tsv,npz`;
 `csv` is also available.
 
 ### Scalars
 
-Each scalar tag is one table with all its steps, in step order.
+Each scalar tag is one table, sorted by integer step without loss of precision beyond $2^{53}$. Equal-step rows keep
+their producer order.
 
 | Column | Meaning |
 | -- | -- |
@@ -258,14 +272,15 @@ Each scalar tag is one table with all its steps, in step order.
   (`null` in JSON, `nan` in TSV and CSV).
 - In the `.npz` file, each column is an array with the same name. `value` keeps the stored type: float32 for TensorFlow
   1 and PyTorch scalars, or the dtype of a tensor scalar, such as float64 or int64.
-- A tensor summary with one value is a scalar.
+- A supported one-value numeric tensor without a more specific plugin can be a scalar.
 
 ### Histograms and Distributions
 
 A histogram table has one row per bucket, with the columns `step`, `epoch`, `wall_time`, `relative_time`, `bucket_left`,
 `bucket_right` and `count`. TensorFlow 1 and TensorFlow 2 histograms give the same table. As in TensorBoard, a
 TensorFlow 1 histogram runs from its minimum to its maximum, without the empty buckets at its two ends. A histogram of
-no values has no step file.
+no values has no step file. Two observations with the same tag, step and timestamp retain separate bucket groups and
+separate sets of percentiles in the per-step tables.
 
 A distribution table has the values that the TensorBoard Distributions tab shows, with the columns `step`, `epoch`,
 `wall_time`, `relative_time`, `percentile` and `value`. The 9 percentiles are 0, 6.68, 15.87, 30.85, 50, 69.15, 84.13,
@@ -283,7 +298,9 @@ The `.json` and `.tsv` tables have one row per threshold, with the columns `thre
 
 These files are the stored bytes, with the extension of their content type. When a TensorFlow 2 summary holds more than
 one image or audio clip at one step, each one is a file `<step>_<i>`, such as `000001_0.png` and `000001_1.png`. GIF
-images, which tensorboardX and PyTorch `add_video` write, are under `videos`.
+images, which tensorboardX and PyTorch `add_video` write, are under `videos`. Repeated values with the same tag in one
+event retain their own payloads. When a writer omits repeated plugin metadata for a tag, tboardfs uses the effective
+metadata from earlier records.
 
 ### Text
 
@@ -310,15 +327,18 @@ meshes by the mesh name only, and thus mixes `train/cloud` and `val/cloud`; tboa
 
 ### Tensors
 
-Each tensor summary is a `.npy` file, and a `.json` file with its `shape`, `dtype` and `values`.
+A supported tensor has a `.npy` preview and a `.json` preview with its `shape`, `dtype` and `values`.
 
 - Every numeric TensorFlow dtype that NumPy has keeps its dtype, including float16, int8, int16, uint16 and complex.
 - NumPy has no bfloat16, so bfloat16 tensors become float32; this is exact.
 - Float8 and 4-bit tensors are not decoded.
 - String tensors are NumPy text arrays (dtype `U`), so `np.load` reads them without `allow_pickle`.
 - A numeric tensor without a plugin name is also a tensor here.
-- A tensor of 1 KiB or more also has its raw bytes as a file with the extension of its content type (`.bin` when the
-  type is not known). A large histogram, PR curve, mesh or text tensor is only in its own tab.
+- A single repeated-field value can fill the declared shape up to 1 KiB of expanded data. Shapes requiring more
+  expansion do not get an array preview.
+- Large binary tensor fields can also have a content-typed file; `.bin` means unknown content type. These previews
+  contain field values, not the enclosing record. Use `raw` for byte-exact recovery, including unsupported types and
+  plugin metadata.
 
 ### HParams
 
@@ -403,16 +423,20 @@ steps, values = table["step"], table["value"]
 
 A resumed run hides the rows it replaces, as TensorBoard does. When a writer marks a restart at step S (a
 `SessionLog.START` event, for example from PyTorch `SummaryWriter(purge_step=S)`), the rows written before it at step S
-or later are not shown. Graphs stay. This applies to event files with file version 2 or later, which all current writers
-produce.
+or later are not shown in the typed tables. Graphs and complete raw frames stay. Restart filtering applies to file
+version 2 or later.
 
 ## Damaged and Unsupported Data
 
-tboardfs shows what it can read and leaves out what it cannot.
+Frame verification is independent of typed conversion. tboardfs checks both masked CRC32C fields and rejects payload
+lengths above 1 GiB before reading the payload. CRC32C detects accidental damage; it does not authenticate the producer.
 
-- A record that does not decode is skipped, with a warning; the other records of the file stay.
-- A damaged record frame stops the read of that file, with a warning; the records before it stay.
-- An incomplete record at the end of a file is not shown until the writer completes it.
+- **Single event file:** `list`, `get` and `copy-all` fail on a corrupt frame or an incomplete tail. No single-file
+  salvage option is available.
+- **Mount or directory source:** a bad frame stops that file at the last verified frame. Other source files remain
+  readable. An incomplete live tail is retried after the file changes.
+- A verified frame whose payload cannot be decoded still appears under `raw`. Concatenating the frames of a stable,
+  fully verified source in filename order reproduces the entire event file.
 - A value that tboardfs cannot convert has no file, and tboardfs logs a warning once. Examples are an hparams or mesh
   record whose plugin data does not decode, a custom scalar layout that does not decode, and a malformed graph,
   `RunMetadata` or meta graph. The other values of the same event stay.

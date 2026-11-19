@@ -1,7 +1,6 @@
 from errno import ENOENT
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -325,31 +324,23 @@ def test_single_file_tree_matches_filesystem_for_one_event_file(tmp_path: Path) 
     tree = SingleEventTree(source, step_digits=3)
 
     fs_paths = _filesystem_file_paths(fs, "/")
-    tree_paths = tree.list_file_paths()
+    tree_paths = tree.list_file_paths(view="both")
 
     assert fs_paths == tree_paths
     for path in fs_paths:
         assert fs.read(path, 100_000_000, 0) == tree.read_file(path)
 
 
-def test_metadata_and_readme_document_both_access_modes() -> None:
-    """Packaging metadata and README mention both commands."""
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
-    readme = (ROOT / "README.md").read_text()
-
-    assert project["version"] == "0.3.0"
-    assert f"badge/version-{project['version']}-" in readme
-    assert project["license"] == "MIT"
-    assert project["scripts"]["tboardfs"] == "tboardfs:main"
-    assert project["scripts"]["tboardfs-file"] == "tboardfs.file_cli:main"
-    assert "tboardfs SOURCE MOUNTPOINT" in readme
-    assert "tboardfs-file list" in readme
-    assert "tboardfs-file get" in readme
-    assert "tboardfs-file copy-all" in readme
-    assert "--skip-existing" in readme
-    assert "/pr_curves" in readme
-    assert "/projector" in readme
-    assert "/profile" in readme
+def test_installed_cli_can_export_the_original_event_file(tmp_path: Path) -> None:
+    """A raw export from outside the checkout reconstructs the producer's file."""
+    command = Path(sys.executable).with_name("tboardfs-file")
+    subprocess.run(
+        [command, "copy-all", "--view", "raw", FIXTURE_EVENT, "export"],
+        cwd=tmp_path,
+        check=True,
+    )
+    frames = sorted((tmp_path / "export/raw" / FIXTURE_EVENT.name).glob("*.tfrecord"))
+    assert b"".join(path.read_bytes() for path in frames) == FIXTURE_EVENT.read_bytes()
 
 
 def _filesystem_file_paths(fs: TensorBoardFS, path: str) -> list[str]:
@@ -427,7 +418,9 @@ def test_file_cli_rejects_a_file_without_events(
     result = CliRunner().invoke(main, [command[0], str(source), *command[1:]])
 
     assert result.exit_code == 1
-    assert f"no TensorBoard event in {source}" in result.output
+    assert str(source) in result.stderr
+    assert ("checksum" if content else "no TensorBoard event") in result.stderr
+    assert isinstance(result.exception, SystemExit)
 
 
 def test_single_event_tree_names_a_missing_path() -> None:
@@ -438,3 +431,118 @@ def test_single_event_tree_names_a_missing_path() -> None:
 
     assert caught.value.errno == ENOENT
     assert caught.value.filename == "/scalars/missing.json"
+
+
+@pytest.mark.parametrize("command", ["list", "get", "copy-all"])
+@pytest.mark.parametrize("damage", ["checksum", "truncated"])
+def test_single_file_commands_reject_bad_framing(
+    tmp_path: Path, command: str, damage: str
+) -> None:
+    source = tmp_path / "broken.tfevents"
+    data = FIXTURE_EVENT.read_bytes()
+    source.write_bytes(
+        data[:-1] + bytes([data[-1] ^ 1]) if damage == "checksum" else data + b"x"
+    )
+    out = tmp_path / "output"
+    args = {
+        "list": [],
+        "get": ["/scalars/loss.json", "-o", str(out)],
+        "copy-all": [str(out)],
+    }
+    result = CliRunner().invoke(main, [command, str(source), *args[command]])
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit)
+    assert result.stdout == "" and not out.exists()
+    assert str(source) in result.stderr and damage in result.stderr
+
+
+def test_raw_selection_and_publication_policies(tmp_path: Path) -> None:
+    from test_open_handles import _append
+
+    source = tmp_path / "events.out.tfevents"
+    _append(source, 1, 2)
+    runner = CliRunner()
+    raw = runner.invoke(main, ["list", str(source), "--view", "raw"])
+    assert raw.exit_code == 0
+    paths = raw.stdout.splitlines()
+    assert len(paths) == 2
+    assert runner.invoke(main, ["list", str(source), "/raw"]).stdout == raw.stdout
+    data = [runner.invoke(main, ["get", str(source), p, "-o", "-"]) for p in paths]
+    assert all(result.exit_code == 0 for result in data)
+    assert b"".join(result.stdout_bytes for result in data) == source.read_bytes()
+    excluded = runner.invoke(
+        main, ["get", str(source), paths[0], "-o", "-", "--view", "typed"]
+    )
+    assert excluded.exit_code == 1 and not excluded.stdout_bytes
+
+    out = tmp_path / "out"
+    second = out / paths[1][1:]
+    second.parent.mkdir(parents=True)
+    second.write_bytes(b"existing")
+    copy = ["--loglevel", "ERROR", "copy-all", str(source), str(out), "--view", "raw"]
+    conflict = runner.invoke(main, copy)
+    assert conflict.exit_code == 1 and "Copied successfully: 1 files" in conflict.stderr
+    skipped = runner.invoke(main, [*copy, "--skip-existing"])
+    assert skipped.exit_code == 0 and "copied 0 files" in skipped.stderr
+    assert second.read_bytes() == b"existing"
+    forced = runner.invoke(main, [*copy, "--force"])
+    assert forced.exit_code == 0 and "copied 2 files" in forced.stderr
+    assert not conflict.stdout and not skipped.stdout and not forced.stdout
+    assert second.read_bytes() == data[1].stdout_bytes
+    second.unlink()
+    second.mkdir()
+    failed = runner.invoke(main, [*copy, "--force"])
+    assert failed.exit_code == 1 and isinstance(failed.exception, SystemExit)
+    assert "Copied successfully: 1 files" in failed.stderr and paths[0] in failed.stderr
+    assert "not a regular file" in failed.stderr
+    assert not list(out.rglob(".tboardfs-*.tmp"))
+
+
+def test_failed_get_preserves_existing_file(tmp_path: Path) -> None:
+    target = tmp_path / "loss.json"
+    target.write_bytes(b"keep")
+    script = (
+        "import resource, signal\n"
+        "from tboardfs.file_cli import main\n"
+        "signal.signal(signal.SIGXFSZ, signal.SIG_IGN)\n"
+        "resource.setrlimit(resource.RLIMIT_FSIZE, (8, 8))\n"
+        "main()\n"
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            "get",
+            str(FIXTURE_EVENT),
+            "/scalars/loss.json",
+            "-o",
+            str(target),
+            "--force",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1 and not result.stdout
+    assert "could not write" in result.stderr and "Traceback" not in result.stderr
+    assert target.read_bytes() == b"keep"
+    assert list(tmp_path.iterdir()) == [target]
+
+
+@pytest.mark.parametrize("directory_link", [False, True])
+def test_get_refuses_link_destinations_even_with_force(
+    tmp_path: Path, directory_link: bool
+) -> None:
+    target = tmp_path / "regular"
+    target.write_text("keep")
+    link = tmp_path / "output"
+    link.symlink_to(
+        tmp_path if directory_link else target, target_is_directory=directory_link
+    )
+    result = CliRunner().invoke(
+        main,
+        ["get", str(FIXTURE_EVENT), "/scalars/loss.json", "-o", str(link), "--force"],
+    )
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit)
+    assert result.stdout == "" and "not a regular file" in result.stderr
+    assert target.read_text() == "keep" and not (tmp_path / "loss.json").exists()

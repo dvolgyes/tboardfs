@@ -83,10 +83,10 @@ def test_mount_cli_foreground_warns_that_background_is_preferred(
     assert "foreground mode is recommended only for testing" in result.stderr
 
 
-def test_mount_cli_foreground_logs_when_parsing_finishes(
+def test_foreground_reports_only_the_accessed_run(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    """Foreground mode reports when event-file parsing is complete."""
+    """Listing one run reports its parse without parsing sibling runs."""
     mountpoint = tmp_path / "mnt"
     mountpoint.mkdir()
 
@@ -94,7 +94,7 @@ def test_mount_cli_foreground_logs_when_parsing_finishes(
         """Trigger the first FUSE lookup without mounting."""
         del kwargs
         filesystem = args[0]
-        filesystem.readdir("/")
+        filesystem.readdir("/tensorboard/scalars")
 
     monkeypatch.setattr(cli, "FUSE", capture_fuse)
 
@@ -110,7 +110,10 @@ def test_mount_cli_foreground_logs_when_parsing_finishes(
     )
 
     assert result.exit_code == 0
-    assert "finished parsing TensorBoard files" in result.stderr
+    assert str(ROOT / "test-logs/tensorboard/events.out.tfevents.") in result.stderr
+    assert (
+        str(ROOT / "test-logs/tensorboardx/events.out.tfevents.") not in result.stderr
+    )
 
 
 @pytest.mark.parametrize("mountpoint", ["runs", "runs/mnt", "runs/a/../mnt"])

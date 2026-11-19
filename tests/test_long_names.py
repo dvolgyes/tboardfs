@@ -1,5 +1,6 @@
 """Each name fits the 255-byte limit of the kernel, and different names stay different."""
 
+import json
 from pathlib import Path
 
 from tboardfs import TensorBoardFS
@@ -43,3 +44,24 @@ def test_long_tags_give_short_names_that_differ(tmp_path: Path) -> None:
     (image_dir,) = fs.readdir("/images")[2:]
     assert image_dir.startswith("a" * 200)
     assert fs.read(f"/images/{image_dir}/000001.png", 1 << 20, 0) == PNG
+    originals = json.loads(fs.read("/.tboardfs-names.json", 1 << 20, 0))
+    assert originals[image_dir] == LONG
+    assert {originals[name] for name in scalars} == {
+        LONG + "1.json",
+        LONG + "2.json",
+        "é" * 200 + ".json",
+    }
+
+
+def test_run_manifest_combines_shortened_child_and_tag_names(tmp_path: Path) -> None:
+    child = "%" * 100
+    _log(tmp_path, [LONG], "ordinary")
+    _log(tmp_path / child, ["child_value"], "ordinary")
+    fs = TensorBoardFS(tmp_path, scalar_formats="json")
+    manifest = json.loads(fs.read("/.tboardfs-names.json", 1 << 20, 0))
+    (virtual_child,) = (
+        name for name, original in manifest.items() if original == child
+    )
+    (virtual_tag,) = fs.readdir("/scalars")[2:]
+    assert manifest[virtual_tag] == LONG + ".json"
+    assert fs.read(f"/{virtual_child}/scalars/child_value.json", 1 << 20, 0)

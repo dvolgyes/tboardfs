@@ -1,3 +1,5 @@
+"""Configure command diagnostics separately from exported stdout data."""
+
 from pathlib import Path
 import sys
 
@@ -14,15 +16,30 @@ from tboardfs.file_cli_commands import register_file_cli_commands
 @LOGLEVEL
 def main(logfile: str | None, loglevel: str) -> None:
     """Inspect a TensorBoard event file or log directory without FUSE."""
-    _configure_logging(Path(logfile) if logfile is not None else None, loglevel)
+    try:
+        _configure_logging(Path(logfile) if logfile is not None else None, loglevel)
+    except OSError as error:
+        raise click.ClickException(
+            f"could not open logfile {logfile}: {error}"
+        ) from error
 
 
 def _configure_logging(logfile: Path | None, loglevel: str) -> None:
     """Configure loguru for non-data CLI output."""
     logger.remove()
-    logger.add(sys.stderr, level=loglevel.upper(), format=LOG_FORMAT)
-    if logfile is not None:
-        logger.add(logfile, level=loglevel.upper(), format=LOG_FORMAT)
+    minimum = logger.level(loglevel.upper()).no
+
+    for sink in (sys.stderr, logfile):
+        if sink is not None:
+            logger.add(
+                sink,
+                level=0,
+                filter=lambda record: (
+                    bool(record["extra"].get("command_status"))
+                    or record["level"].no >= minimum
+                ),
+                format=LOG_FORMAT,
+            )
 
 
 register_file_cli_commands(main)

@@ -75,6 +75,25 @@ def test_hparams_yaml_of_a_run_is_in_the_hparams_tab(tmp_path: Path) -> None:
     assert fs.read("/hparams/hparams.yaml", 100, 0) == b"lr: 0.1\n"
 
 
+def test_group_sidecars_change_owner_when_nested_run_appears(tmp_path: Path) -> None:
+    _append(tmp_path / EVENTS, 0)
+    group = tmp_path / "group"
+    profile = group / "inner" / "profile"
+    profile.mkdir(parents=True)
+    (profile / "trace").write_bytes(b"trace")
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs.readdir("/group/inner")
+    assert fs.read("/profile/trace", 20, 0) == b"trace"
+
+    event = group / EVENTS
+    _append(event, 0)
+    assert fs.read("/group/profile/trace", 20, 0) == b"trace"
+    assert "trace" not in fs.readdir("/profile")
+    event.unlink()
+    fs.readdir("/group")
+    assert fs.read("/profile/trace", 20, 0) == b"trace"
+
+
 @pytest.mark.skipif(os.geteuid() == 0, reason="root can search any folder")
 @pytest.mark.parametrize(
     "name", ["hparams.yaml", "readme.txt", "events.out.tfevents.2.host"]

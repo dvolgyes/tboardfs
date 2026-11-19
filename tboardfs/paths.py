@@ -1,16 +1,19 @@
 from fnmatch import fnmatchcase
+import hashlib
 import os
 from pathlib import Path
 import posixpath
 from typing import Any
+from urllib.parse import unquote
 
 import numpy as np
 
 from tboardfs.constants import SCALAR_FORMATS, TENSORBOARD_EVENT_GLOB
 
 _UNSAFE_PATH_CHARS = frozenset(
-    [chr(code) for code in range(0x20)] + ["\\", "/", "\x7f"]
+    [chr(code) for code in range(0x20)] + ["\\", "/", "\x7f", "%", "~"]
 )
+NAME_MAP = ".tboardfs-names.json"
 
 
 def find_tensorboard_files(directory: str | Path) -> list[Path]:
@@ -138,23 +141,67 @@ class _Paths:
         return node
 
     @staticmethod
-    def tag_dir_parts(tag: str) -> tuple[str, ...]:
-        """Preserve TensorBoard slash hierarchy in a virtual path."""
-        parts = tuple(_Paths.safe_component(part) for part in tag.split("/") if part)
-        return parts or ("untagged",)
+    def tag_dir_parts(
+        tag: str, *, name_map: dict[str, str] | None = None
+    ) -> tuple[str, ...]:
+        """Preserve every slash-separated tag component."""
+        return tuple(
+            _Paths.safe_component(part, name_map=name_map) for part in tag.split("/")
+        )
 
     @staticmethod
-    def safe_component(name: str) -> str:
-        """Return one virtual path component that cannot traverse or split.
-
-        Dot-only names, backslashes, and control characters are percent-escaped,
-        so untrusted tags and plugin names stay inside their parent directory.
-        """
-        if name in {".", ".."}:
-            return "%2E" * len(name)
-        return "".join(
-            f"%{ord(ch):02X}" if ch in _UNSAFE_PATH_CHARS else ch for ch in name
+    def safe_component(name: str, *, name_map: dict[str, str] | None = None) -> str:
+        """Encode one component and record its original name when shortened."""
+        if not name:
+            return "~empty"
+        if name in {".", "..", NAME_MAP}:
+            return "%2E" + name[1:].replace(".", "%2E")
+        encoded = "".join(
+            f"%{ord(ch):02X}"
+            if ch in _UNSAFE_PATH_CHARS
+            else f"%{ord(ch) - 0xDC00:02X}"
+            if 0xDC80 <= ord(ch) <= 0xDCFF
+            else ch
+            for ch in name
         )
+        return _Paths.fit(encoded, name, name_map)
+
+    @staticmethod
+    def fit(encoded: str, original: str, name_map: dict[str, str] | None) -> str:
+        """Shorten a component to 255 bytes while retaining its extension."""
+        if len(encoded) <= 63:
+            return encoded
+        data = encoded.encode("utf-8")
+        if len(data) <= 255:
+            return encoded
+        stem, dot, extension = encoded.rpartition(".")
+        if not dot or len(extension) > 8:
+            stem, dot, extension = encoded, "", ""
+        tail = f"~{hashlib.sha256(data).hexdigest()[:32]}{dot}{extension}"
+        budget = 255 - len(tail.encode())
+        shortened = stem.encode()[:budget].decode("utf-8", "ignore") + tail
+        if (
+            name_map is not None
+            and name_map.setdefault(shortened, original) != original
+        ):
+            raise ValueError(f"Conflicting originals for shortened name {shortened!r}")
+        return shortened
+
+    @staticmethod
+    def decode_component(
+        component: str, *, name_map: dict[str, str] | None = None
+    ) -> str:
+        """Recover an original component from its virtual name and optional map."""
+        if name_map is not None and component in name_map:
+            return name_map[component]
+        base, marker, suffix = component.rpartition("~")
+        if marker and suffix.isascii() and suffix.isdecimal():
+            component = base
+            if name_map is not None and component in name_map:
+                return name_map[component]
+        if component == "~empty":
+            return ""
+        return unquote(component, errors="surrogateescape")
 
     @staticmethod
     def step_name(step: object, digits: int) -> str:

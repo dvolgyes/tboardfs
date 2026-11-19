@@ -92,3 +92,46 @@ def test_lightning_rows_have_the_epoch_of_their_step() -> None:
         (3, 1.0),
     ]
     assert _epochs(fs, "/scalars/val_loss.json") == [(1, 0.0), (3, 1.0)]
+
+
+def test_large_steps_sort_stably_after_epoch_carry_and_append(tmp_path: Path) -> None:
+    first = 2**53
+    (tmp_path / "events.out.tfevents.0").write_bytes(
+        _scalar(first + 1, "loss", 1) + _scalar(first, "epoch", 4)
+    )
+    later = tmp_path / "events.out.tfevents.1"
+    later.write_bytes(
+        _scalar(first - 1, "loss", 2)
+        + _histogram(first - 1)
+        + _scalar(first + 1, "epoch", 5)
+        + _scalar(first, "loss", 3)
+    )
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+
+    def rows() -> list[tuple[int, float, float]]:
+        data = json.loads(fs.read("/scalars/loss.json", 1 << 20, 0))
+        return [(row["step"], row["epoch"], row["value"]) for row in data]
+
+    assert rows() == [(first - 1, 4, 2), (first, 4, 3), (first + 1, 5, 1)]
+    assert _epochs(fs, f"/histograms/weights/{first - 1}.json") == [(first - 1, 4)]
+    with later.open("ab") as handle:
+        handle.write(_scalar(first + 1, "loss", 4) + _scalar(first + 1, "epoch", 6))
+    assert rows() == [
+        (first - 1, 4, 2),
+        (first, 4, 3),
+        (first + 1, 6, 1),
+        (first + 1, 6, 4),
+    ]
+
+
+def test_logged_nan_epoch_ends_cross_file_carry(tmp_path: Path) -> None:
+    (tmp_path / "events.out.tfevents.0").write_bytes(_scalar(1, "epoch", 4))
+    (tmp_path / "events.out.tfevents.1").write_bytes(
+        _scalar(2, "loss", 1)
+        + _scalar(3, "epoch", float("nan"))
+        + _scalar(4, "loss", 2)
+    )
+    assert _epochs(TensorBoardFS(tmp_path), "/scalars/loss.json") == [
+        (2, 4),
+        (4, None),
+    ]

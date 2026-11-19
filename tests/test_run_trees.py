@@ -40,7 +40,7 @@ def test_growing_run_rebuilds_only_its_own_tree(
     """New records in one run do not rebuild the trees of other runs."""
     run_a, _ = _two_runs(tmp_path)
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
-    fs.readdir("/")
+    fs.virtual_tree()
     original = tboardfs.filesystem.build_run_tree
     built: list[tuple[str, ...]] = []
 
@@ -61,17 +61,17 @@ def test_run_versions_are_unique_and_change_with_the_run(tmp_path: Path) -> None
     """Only a changed run gets a new version; a re-created run gets an unused one."""
     run_a, run_b = _two_runs(tmp_path)
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
-    fs.readdir("/")
-    before = {parts: run.version for parts, run in fs._state.runs.items()}
+    fs.virtual_tree()
+    before = {parts: run.version for parts, run in fs._state.runs.items() if parts}
     seen = set(before.values())
 
     _append(run_a, 1)
-    fs.readdir("/")
-    after = {parts: run.version for parts, run in fs._state.runs.items()}
+    fs.readdir("/run_a")
+    after = {parts: run.version for parts, run in fs._state.runs.items() if parts}
     run_b.unlink()
-    fs.readdir("/")
+    fs.readdir("/run_b")
     _append(run_b, 0)
-    fs.readdir("/")
+    fs.readdir("/run_b")
     recreated = fs._state.runs[("run_b",)].version
 
     assert len(seen) == 2

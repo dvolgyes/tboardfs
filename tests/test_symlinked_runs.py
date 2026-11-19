@@ -41,8 +41,8 @@ def test_sidecars_of_a_linked_run_are_listed(tmp_path: Path) -> None:
     assert fs.read("/link/projector/projector_config.pbtxt", 100, 0) == b"config"
 
 
-def test_sidecar_links_out_of_a_linked_run_stay_hidden(tmp_path: Path) -> None:
-    """Following a run link does not open other paths of its target."""
+def test_sidecar_links_of_a_remote_run_are_readable(tmp_path: Path) -> None:
+    """Trusted run sidecars can link to separately stored data."""
     run = _run_dir(tmp_path / "elsewhere" / "run")
     (tmp_path / "secret").write_text("secret")
     (run / "projector").mkdir()
@@ -52,7 +52,7 @@ def test_sidecar_links_out_of_a_linked_run_stay_hidden(tmp_path: Path) -> None:
 
     fs = TensorBoardFS(tmp_path / "logs")
 
-    assert "/link/projector/leak.tsv" not in _files(fs)
+    assert fs.read("/link/projector/leak.tsv", 16, 0) == b"secret"
 
 
 def test_a_link_loop_ends(tmp_path: Path) -> None:
@@ -75,6 +75,9 @@ def test_two_links_to_one_run_give_one_run(tmp_path: Path) -> None:
     assert find_tensorboard_files(tmp_path / "logs") == [
         tmp_path / "logs" / "a" / EVENTS
     ]
+    fs = TensorBoardFS(tmp_path / "logs")
+    assert fs.readdir("/")[2:] == ["a"]
+    assert fs.read("/a/scalars/loss.json", 1 << 20, 0)
 
 
 def test_two_link_loops_end_quickly(tmp_path: Path) -> None:
@@ -102,3 +105,17 @@ def test_a_dangling_event_file_link_is_skipped(tmp_path: Path) -> None:
     assert find_tensorboard_files(tmp_path / "logs") == [
         tmp_path / "logs" / "run" / EVENTS
     ]
+
+
+def test_a_link_into_the_mount_is_not_traversed(tmp_path: Path) -> None:
+    source = tmp_path / "logs"
+    mount = tmp_path / "mount"
+    target = _run_dir(mount / "nested")
+    _run_dir(source / "good")
+    (source / "bad").symlink_to(target)
+    (source / "good" / "plugins").symlink_to(mount)
+    fs = TensorBoardFS(source, mountpoint=mount)
+
+    assert fs.readdir("/")[2:] == ["good"]
+    assert fs.readdir("/good/profile")[2:] == []
+    assert "bad" not in fs.virtual_tree()["children"]

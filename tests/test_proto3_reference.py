@@ -99,10 +99,10 @@ def test_proto3_defaults_read_as_tensorboard(
     """Each scalar, histogram and tensor has TensorBoard's values.
 
     A tensor with one number is a scalar in tboardfs, a string tensor of the
-    text plugin is a text file, and a value without a tag is "untagged".
+    text plugin is a text file, and a value without a tag is "~empty".
     """
     fs = TensorBoardFS(LOGS / run)
-    tag = tag or "untagged"
+    tag = tag or "~empty"
 
     if kind == "scalars":
         rows = _json(fs, f"/scalars/{tag}.json")

@@ -1,4 +1,3 @@
-import math
 import struct
 from typing import Any
 
@@ -7,7 +6,7 @@ import numpy as np
 
 from tboardfs.constants import DT_STRING, LARGE_TENSOR_THRESHOLD, PLUGIN_TAB
 from tboardfs.model import Scalar
-from tboardfs.tensor import tensor_to_array
+from tboardfs.tensor import _MAX_NUMPY_DIMS, tensor_to_array
 
 
 def detect_extension(blob: bytes | None) -> str:
@@ -33,7 +32,10 @@ class _Classifier:
             return Scalar(value["simple_value"], np.dtype("float32"))
 
         tensor = value.get("tensor")
-        if not tensor or math.prod(tensor.get("shape") or []) != 1:
+        if not tensor:
+            return None
+        shape = tensor.get("shape", ())
+        if len(shape) > _MAX_NUMPY_DIMS or any(dim != 1 for dim in shape):
             return None
 
         scalar = _Classifier.common_scalar(tensor)
@@ -52,9 +54,7 @@ class _Classifier:
         values = tensor.get("values", {})
         content = tensor.get("tensor_content")
         if content:
-            scalar = _Classifier.tensor_content_scalar(dtype, content)
-            if scalar is not None:
-                return scalar
+            return _Classifier.tensor_content_scalar(dtype, content)
 
         # dtype id: (TensorProto repeated field number, NumPy dtype)
         fields = {
@@ -69,7 +69,7 @@ class _Classifier:
         if dtype not in fields:
             return None
         field, np_dtype = fields[dtype]
-        if not values.get(field):
+        if len(values.get(field, ())) != 1:
             return None
         return Scalar(values[field][0], np.dtype(np_dtype))
 
@@ -157,8 +157,6 @@ class _Classifier:
         tensor = value.get("tensor") or {}
         if tensor.get("tensor_content"):
             return bytes(tensor["tensor_content"])
-        if tensor.get("string_val"):
-            return bytes(tensor["string_val"][0])
         return None
 
     @staticmethod
@@ -167,8 +165,8 @@ class _Classifier:
         plugin_name = value.get("plugin_name") or _Classifier.unnamed_plugin(value)
         if not plugin_name:
             return None
-        if str(plugin_name).lower() in {"video", "videos"} and _Classifier.binary_blob(
-            value
+        if str(plugin_name).lower() in {"video", "videos"} and (
+            _Classifier.binary_blob(value) or value.get("tensor", {}).get("string_val")
         ):
             return None
         payload = {"plugin_name": plugin_name, "tag": value.get("tag")}

@@ -31,7 +31,11 @@ def test_a_vector_without_plugin_name_is_a_tensor_file(tmp_path: Path) -> None:
 
     data = np.load(io.BytesIO(fs.read("/tensors/w/000003.npy", 1 << 20, 0)))
 
-    assert sorted(_files(fs)) == ["/tensors/w/000003.json", "/tensors/w/000003.npy"]
+    assert sorted(_files(fs)) == [
+        "/raw/events.out.tfevents.host/00000000000000000000.tfrecord",
+        "/tensors/w/000003.json",
+        "/tensors/w/000003.npy",
+    ]
     np.testing.assert_array_equal(data, np.asarray([[1, 2], [3, 4]], dtype="<f4"))
 
 

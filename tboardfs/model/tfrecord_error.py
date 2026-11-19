@@ -5,8 +5,8 @@ class TFRecordError(ValueError):
     """A TFRecord cannot be framed.
 
     Attributes:
-        corrupt: True when a header fails its checksum, so later framing is
-            unknown; false when the last record is only incomplete.
+        corrupt: True for a checksum mismatch or excessive frame size;
+            false when the last record is only incomplete.
     """
 
     corrupt: bool

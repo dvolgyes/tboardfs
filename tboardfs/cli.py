@@ -9,7 +9,11 @@ from loguru import logger
 from mfusepy import FUSE
 
 from tboardfs.cli_options import LOGLEVEL, SCALAR_FORMAT, STEP_DIGITS
-from tboardfs.constants import DEFAULT_CACHE_SIZE_MB, LOG_FORMAT
+from tboardfs.constants import (
+    DEFAULT_CACHE_SIZE_MB,
+    DEFAULT_DISCOVERY_SECONDS,
+    LOG_FORMAT,
+)
 from tboardfs.mounted import MountedTensorBoardFS
 from tboardfs.stdlib_logging import StdlibToLoguru
 
@@ -21,10 +25,10 @@ from tboardfs.stdlib_logging import StdlibToLoguru
 @click.option(
     "--refresh-age-seconds",
     type=click.FloatRange(min=0),
-    default=60.0,
+    default=DEFAULT_DISCOVERY_SECONDS,
     show_default=True,
     callback=lambda _ctx, _param, value: _number(value),
-    help="Minimum age of the data before it is read again; inf never reads it again.",
+    help="Interval for local discovery. Known event files are checked on access; inf freezes each directory after its first visit.",
 )
 @SCALAR_FORMAT
 @click.option(
@@ -75,6 +79,7 @@ def main(
 
     filesystem = MountedTensorBoardFS(
         source_path,
+        mountpoint=mountpoint_path,
         step_digits=cast(int, params["step_digits"]),
         refresh_age_seconds=cast(float, params["refresh_age_seconds"]),
         scalar_formats=cast(str, params["scalar_format"]),

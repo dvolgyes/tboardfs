@@ -1,6 +1,13 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
+
+from tboardfs.file_status import FileIdentity
+from tboardfs.frame_index import FrameIndex
+
+
+_UNINDEXED = FileIdentity(0, 0, None)
 
 
 @dataclass
@@ -9,7 +16,7 @@ class ParseProgress:
 
     :ivar processed_pos: byte offset parsed so far
     :ivar last_checked_size: source file size at last parse
-    :ivar identity: device, inode and first bytes of the parsed file
+    :ivar identity: device, inode and birth time if the filesystem supplies it
     :ivar first_time: wall time that relative times count from
     :ivar epoch: last epoch scalar, carried into appended rows
     :ivar checked_status: device, inode, size, mtime and ctime of the file
@@ -19,15 +26,10 @@ class ParseProgress:
 
     processed_pos: int = 0
     last_checked_size: int = 0
-    identity: tuple[int, int, bytes] = (0, 0, b"")
+    identity: FileIdentity = _UNINDEXED
     first_time: float | None = None
     epoch: object = np.nan
-    checked_status: tuple[int, ...] = ()
-
-    def continues_in(self, identity: tuple[int, int, bytes]) -> bool:
-        """Return true when ``identity`` names this file, possibly grown.
-
-        A replaced file can reuse the inode, so its first bytes must match too.
-        """
-        device, inode, head = self.identity
-        return identity[:2] == (device, inode) and identity[2].startswith(head)
+    checked_status: tuple[int | None, ...] = ()
+    initial_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    effective_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
+    frames: FrameIndex = field(default_factory=FrameIndex)

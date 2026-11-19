@@ -7,25 +7,23 @@ from tboardfs.classify import _Classifier
 from tboardfs.errors import fuse_error
 from tboardfs.model import BinaryEntry, GraphEntry, MetaGraphEntry
 from tboardfs.summary import parse_event
-from tboardfs.tensor_summary import _TensorSummary
+from tboardfs.indexed_frame import IndexedFrame
 
 
 def extract_binary_blob(entry: BinaryEntry) -> bytes:
     """Read one indexed binary blob from its source event record."""
     event = _source_event(entry)
-    for value in event.get("values", []):
-        if entry.part is not None:
-            if value.get("tag") == entry.tag and _TensorSummary.media_parts(value):
+    try:
+        value = event["values"][entry.value_ordinal]
+        if value["tag"] == entry.tag:
+            if entry.part is not None:
                 return bytes(value["tensor"]["string_val"][entry.part])
-            continue
-        if (
-            value.get("tag") == entry.tag
-            and _Classifier.binary_kind(value) == entry.kind
-        ):
             blob = _Classifier.binary_blob(value)
             if blob is not None:
                 return blob
-    raise fuse_error(EIO)  # the event file changed after indexing
+    except (IndexError, KeyError) as error:
+        raise fuse_error(EIO) from error
+    raise fuse_error(EIO)
 
 
 def _extract_graph_blob(entry: GraphEntry) -> bytes:
@@ -39,17 +37,9 @@ def _extract_graph_blob(entry: GraphEntry) -> bytes:
 
 
 def _source_event(entry: BinaryEntry | GraphEntry) -> dict[str, Any]:
-    """Parse the indexed record of an entry, or raise EIO when it is gone.
-
-    The event file can change in place after it was indexed, so the bytes at
-    the indexed offset may be short or may not be an Event any more.
-    """
-    with entry.source_path.open("rb") as handle:
-        handle.seek(entry.payload_offset)
-        payload = handle.read(entry.payload_size)
-    if len(payload) != entry.payload_size:
-        raise fuse_error(EIO)
+    """Parse the original indexed event, or report EIO if the frame changed."""
+    record = IndexedFrame.read(entry.source_path, entry.frame)
     try:
-        return parse_event(payload)
+        return parse_event(record.payload)
     except DecodeError:
         raise fuse_error(EIO) from None

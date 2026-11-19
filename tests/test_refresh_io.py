@@ -82,17 +82,29 @@ def test_a_grown_event_file_is_read_again(
     assert len(after) > len(before)
 
 
-def test_a_refresh_lists_each_run_directory_once(
+def test_root_and_active_run_do_not_read_idle_subtrees(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _runs(tmp_path, "a", "b")
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
-    fs.readdir("/")
+    names = [f"run{i:02}" for i in range(32)]
+    active, *idle = _runs(tmp_path, *names)
+    for event in (active, *idle):
+        profile = event.parent / "plugins" / "profile"
+        profile.mkdir(parents=True)
+        (profile / "trace").write_bytes(b"trace")
     listed = _spy_listings(monkeypatch)
+    opened = _spy_opens(monkeypatch)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    assert fs.readdir("/")[2:] == names
+    assert listed == [tmp_path]
+    assert opened == []
 
-    fs.readdir("/")
-
-    assert sorted(listed) == [tmp_path, tmp_path / "a", tmp_path / "b"]
+    assert fs.read("/run00/profile/trace", 16, 0) == b"trace"
+    _append(idle[-1], 1)
+    opened.clear()
+    listed.clear()
+    fs.readdir("/run00/scalars")
+    assert all(path.is_relative_to(active.parent) for path in listed)
+    assert not set(idle).intersection(opened)
 
 
 def test_a_listing_of_an_earlier_discovery_is_not_reused(tmp_path: Path) -> None:
@@ -106,10 +118,10 @@ def test_a_listing_of_an_earlier_discovery_is_not_reused(tmp_path: Path) -> None
     assert "accuracy.json" in fs.readdir("/run/scalars")
 
 
-def test_a_rewrite_in_place_with_the_old_mtime_is_read_again(tmp_path: Path) -> None:
-    """A write changes the ctime, which no program can set back."""
+def test_a_historical_rewrite_requires_a_new_generation(tmp_path: Path) -> None:
+    """Append-only histories can be replaced atomically to publish rewrites."""
     event = tmp_path / EVENTS
-    event.write_bytes(_loss(0, 1.0))
+    event.write_bytes(_loss(0, 1.0) + _loss(1, 1.0))
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
     before = fs.read("/scalars/loss.json", 1 << 20, 0)
     times = event.stat()
@@ -118,6 +130,10 @@ def test_a_rewrite_in_place_with_the_old_mtime_is_read_again(tmp_path: Path) -> 
         handle.write(_loss(0, 2.0))
     os.utime(event, ns=(times.st_atime_ns, times.st_mtime_ns))
 
+    assert fs.read("/scalars/loss.json", 1 << 20, 0) == before
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(_loss(0, 2.0) + _loss(1, 1.0))
+    replacement.replace(event)
     assert fs.read("/scalars/loss.json", 1 << 20, 0) != before
 
 
@@ -134,3 +150,15 @@ def test_a_touched_event_file_is_opened_once(
     fs.readdir("/run/scalars")
 
     assert opened.count(event) == 1
+
+
+def test_stat_of_frozen_raw_frame_needs_no_source_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (event,) = _runs(tmp_path, "run")
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=float("inf"))
+    directory = f"/run/raw/{EVENTS}"
+    (filename,) = fs.readdir(directory)[2:]
+    opened = _spy_opens(monkeypatch)
+    assert fs.getattr(f"{directory}/{filename}")["st_size"] == event.stat().st_size
+    assert not opened

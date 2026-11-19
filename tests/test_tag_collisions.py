@@ -7,7 +7,11 @@ from loguru import logger
 import pytest
 
 from tboardfs import TensorBoardFS
+from tboardfs.file_tree import SingleEventTree
+from tboardfs.model import RunCache, SidecarEntry
 from tboardfs.proto import compat_pb2
+from tboardfs.render_node import render_node
+from tboardfs.run_tree import build_run_tree
 
 from test_incremental_parse import _files, _frame
 
@@ -31,12 +35,12 @@ def _json(fs: TensorBoardFS, path: str) -> object:
 
 
 def test_an_empty_tag_does_not_hide_the_untagged_tag(tmp_path: Path) -> None:
-    """The tag that the path spells keeps it; the empty tag gets a suffix."""
+    """The empty-component marker and an ordinary tag remain independent."""
     _write(tmp_path, _scalars(1, **{"untagged": 1.0, "": 2.0}))
     fs = TensorBoardFS(tmp_path)
 
     assert [row["value"] for row in _json(fs, "/scalars/untagged.json")] == [1.0]
-    assert [row["value"] for row in _json(fs, "/scalars/untagged~2.json")] == [2.0]
+    assert [row["value"] for row in _json(fs, "/scalars/~empty.json")] == [2.0]
 
 
 def test_tags_that_differ_in_slashes_keep_their_own_files(tmp_path: Path) -> None:
@@ -52,7 +56,7 @@ def test_tags_that_differ_in_slashes_keep_their_own_files(tmp_path: Path) -> Non
     fs = TensorBoardFS(tmp_path)
 
     assert _json(fs, "/tensors/a/b/000001.json")["values"] == [1.0, 1.0]  # type: ignore[index]
-    assert _json(fs, "/tensors/a/b~2/000001.json")["values"] == [2.0, 2.0]  # type: ignore[index]
+    assert _json(fs, "/tensors/a/~empty/b/000001.json")["values"] == [2.0, 2.0]  # type: ignore[index]
 
 
 def test_a_renamed_tag_has_the_same_name_in_every_tab(tmp_path: Path) -> None:
@@ -67,7 +71,7 @@ def test_a_renamed_tag_has_the_same_name_in_every_tab(tmp_path: Path) -> None:
 
     histograms = [path for path in _files(fs) if path.startswith("/histograms/")]
     assert histograms
-    assert all(path.startswith("/histograms/untagged~2/") for path in histograms)
+    assert all(path.startswith("/histograms/~empty/") for path in histograms)
 
 
 @pytest.fixture
@@ -79,22 +83,23 @@ def warnings() -> list[str]:
     logger.remove(sink)
 
 
-def test_a_collision_is_logged_once_per_run(
+def test_a_file_directory_collision_is_logged_once_per_run(
     tmp_path: Path, warnings: list[str]
 ) -> None:
-    """The warning names both tags, and a growing run does not repeat it."""
-    _write(tmp_path, _scalars(1, **{"untagged": 1.0, "": 2.0}))
+    """An append does not repeat a tag's existing rename warning."""
+    _write(tmp_path, _scalars(1, **{"loss": 1.0, "loss.json/x": 2.0}))
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
-    first = list(_files(fs))
-    _write(tmp_path, _scalars(2, **{"untagged": 3.0, "": 4.0}))
-    second = list(_files(fs))
+    first = [path for path in _files(fs) if path.startswith("/scalars/")]
+    _write(tmp_path, _scalars(2, **{"loss": 3.0, "loss.json/x": 4.0}))
+    second = [path for path in _files(fs) if path.startswith("/scalars/")]
 
     assert first == second
-    assert [row["value"] for row in _json(fs, "/scalars/untagged~2.json")] == [2.0, 4.0]
+    assert [row["value"] for row in _json(fs, "/scalars/loss.json~2/x.json")] == [
+        2.0,
+        4.0,
+    ]
     assert len(warnings) == 1
-    assert "'untagged'" in warnings[0]
-    assert "''" in warnings[0]
-    assert "untagged~2" in warnings[0]
+    assert "'loss.json/x'" in warnings[0]
 
 
 def _tensors(step: int, *tags: str) -> bytes:
@@ -156,18 +161,77 @@ def test_a_file_conflict_in_one_run_does_not_hide_other_runs(
     assert "tensors/b/000001.json" in warnings[0]
 
 
-def test_a_clash_without_a_tag_leaves_one_file_out(
-    tmp_path: Path, warnings: list[str]
-) -> None:
-    """Two profile sidecars meet at profile/a; no suffix can separate them."""
+def test_a_fixed_file_directory_clash_keeps_both(tmp_path: Path) -> None:
+    """A trimmed profile directory and a same-name file remain readable."""
     _write(tmp_path, _scalars(1, value=1.0))
     (tmp_path / "plugins" / "profile").mkdir(parents=True)
     (tmp_path / "plugins" / "profile" / "a").write_text("file")
     (tmp_path / "x" / "profile" / "a").mkdir(parents=True)
     (tmp_path / "x" / "profile" / "a" / "c").write_text("below")
     fs = TensorBoardFS(tmp_path)
+    fs.readdir("/x")
 
-    assert fs.read("/profile/a", 100, 0) == b"file"
+    assert fs.read("/profile/a~2", 100, 0) == b"file"
+    assert fs.read("/profile/a/c", 100, 0) == b"below"
     assert [row["value"] for row in _json(fs, "/scalars/value.json")] == [1.0]
-    assert len(warnings) == 1
-    assert "'profile/a/c' is left out" in warnings[0]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_equal_sidecar_leaves_and_plugin_roots(tmp_path: Path, reverse: bool) -> None:
+    event = compat_pb2.Event(wall_time=1, step=1)
+    plugins = ["\\", "%5C"]
+    paths = ["plugins/profile", "profile"]
+    if reverse:
+        plugins.reverse()
+        paths.reverse()
+    for plugin in plugins:
+        value = event.summary.value.add(tag="tag")
+        value.metadata.plugin_data.plugin_name = plugin
+        value.metadata.plugin_data.content = plugin.encode()
+        value.tensor.dtype = DT_FLOAT
+        value.tensor.float_val.append(1)
+    _write(tmp_path, _frame(event))
+    entries = []
+    for path in paths:
+        directory = tmp_path / path
+        directory.mkdir(parents=True)
+        (directory / "trace.txt").write_text(path)
+        source = directory / "trace.txt"
+        stat = source.stat()
+        entries.append(
+            SidecarEntry(
+                source, "profile", ("trace.txt",), stat.st_size, stat.st_mtime_ns
+            )
+        )
+    run = RunCache((), sidecars=tuple(entries))
+    nodes = build_run_tree(run, ("json",), 6)["children"]["profile"]["children"]
+    assert render_node(nodes["trace.txt"]) == b"plugins/profile"
+    assert render_node(nodes["trace.txt~2"]) == b"profile"
+    fs = TensorBoardFS(tmp_path)
+    assert fs.read("/profile/trace.txt", 100, 0) == b"plugins/profile"
+    assert fs.read("/profile/trace.txt~2", 100, 0) == b"profile"
+    for name, plugin in [("%5C", "\\"), ("%255C", "%5C")]:
+        assert _json(fs, f"/plugins/{name}/tag/000001.json")["plugin_name"] == plugin
+
+
+def test_unusual_tags_list_read_and_copy_without_loss(tmp_path: Path) -> None:
+    tags = {
+        "/a//": "~empty/a/~empty/~empty",
+        "~empty": "%7Eempty",
+        ".": "%2E",
+        "..": "%2E%2E",
+        "%2E": "%252E",
+        "literal~2": "literal%7E2",
+        "\n": "%0A",
+    }
+    _write(tmp_path, _scalars(1, **dict.fromkeys(tags, 1.0)))
+    tree = SingleEventTree(tmp_path / "events.out.tfevents.host", scalar_format="json")
+    fs = TensorBoardFS(tmp_path, scalar_formats="json")
+    paths = [f"/scalars/{name}.json" for name in tags.values()]
+    assert tree.list_file_paths() == sorted(paths)
+    destination = tmp_path / "out"
+    tree.copy_all(destination)
+    for path in paths:
+        data = tree.read_file(path)
+        assert data == fs.read(path, 1 << 20, 0)
+        assert data == (destination / path.lstrip("/")).read_bytes()

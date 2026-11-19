@@ -5,6 +5,8 @@ from typing import Any
 
 from loguru import logger
 
+from tboardfs.paths import NAME_MAP, _Paths
+
 
 class RunPlaces:
     """Place the directory trees of all runs in one virtual tree.
@@ -39,9 +41,7 @@ class RunPlaces:
                 not changed.
         """
         root: dict[str, Any] = {"type": "dir", "children": {}}
-        folders = {
-            parts[:end] for parts in run_trees for end in range(1, len(parts) + 1)
-        }
+        maps: dict[tuple[str, ...], dict[str, str]] = {}
         dirs: dict[tuple[str, ...], dict[str, Any]] = {(): root}
         paths: dict[tuple[str, ...], tuple[str, ...]] = {(): ()}
         renamed: dict[tuple[str, ...], tuple[str, ...]] = {}
@@ -53,30 +53,34 @@ class RunPlaces:
                 if prefix in dirs:
                     continue
                 parent = dirs[prefix[:-1]]
-                name = RunPlaces.free_name(prefix, parent, folders)
+                names = maps.setdefault(prefix[:-1], {})
+                component = _Paths.safe_component(prefix[-1], name_map=names)
+                name = RunPlaces.free_name(component, parent)
                 dirs[prefix] = {"type": "dir", "children": {}}
                 parent["children"][name] = dirs[prefix]
                 paths[prefix] = (*paths[prefix[:-1]], name)
-                if name != prefix[-1]:
+                if name != component:
                     renamed[prefix] = paths[prefix]
             dirs[run_parts]["children"].update(run_trees[run_parts]["children"])
+        for parts, names in maps.items():
+            if names:
+                children = dirs[parts]["children"]
+                existing = children.get(NAME_MAP, {}).get("data", {})
+                children[NAME_MAP] = {"type": "name_map", "data": existing | names}
         self.log(renamed)
         self.disk_parts = {path: prefix for prefix, path in paths.items()}
         return root
 
     @staticmethod
     def free_name(
-        prefix: tuple[str, ...],
+        component: str,
         parent: dict[str, Any],
-        folders: set[tuple[str, ...]],
     ) -> str:
         """Return the name of a run folder that no entry of its parent has."""
-        name, number = prefix[-1], 1
-        while name in parent["children"] or (
-            number > 1 and (*prefix[:-1], name) in folders
-        ):
+        name, number = component, 1
+        while name in parent["children"]:
             number += 1
-            name = f"{prefix[-1]}~{number}"
+            name = f"{component}~{number}"
         return name
 
     def log(self, renamed: dict[tuple[str, ...], tuple[str, ...]]) -> None:
