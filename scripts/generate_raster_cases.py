@@ -135,6 +135,82 @@ class _RasterCases:
             tag = "apng" if image_format == "PNG" else image_format.lower()
             self._image(f"animated-{tag}", payload, 16, 8, 3)
 
+    def moving_scenes(self) -> None:
+        """Check the displayed canvas, not just the encoder's patch rectangles."""
+        background = np.full((32, 48, 3), (32, 64, 96), dtype=np.uint8)
+        background[20:] = (64, 96, 48)
+        background[4:10, 28:36] = (240, 224, 144)
+        positions = (2, 18, 36)
+        frames = []
+        for x in positions:
+            scene = background.copy()
+            scene[14:22, x : x + 8] = (224, 144, 48)
+            scene[16:18, x + 4 : x + 6] = (32, 32, 32)
+            frames.append(Image.fromarray(scene))
+
+        durations = [120, 240, 160]
+        for tag, fmt, options in (
+            ("gif", "GIF", {"disposal": [1, 2, 1], "optimize": True}),
+            (
+                "apng",
+                "PNG",
+                {"default_image": True, "disposal": [0, 2, 0], "blend": [0, 1, 1]},
+            ),
+            ("webp-lossless", "WEBP", {"lossless": True}),
+            ("webp-lossy", "WEBP", {"lossless": False, "quality": 90}),
+        ):
+            inputs = frames
+            if fmt == "PNG":
+                inputs = [
+                    Image.fromarray(background).convert("RGBA"),
+                    frames[0].convert("RGBA"),
+                ]
+                for x, frame in zip(positions[1:], frames[1:], strict=True):
+                    overlay = Image.new("RGBA", (48, 32))
+                    for left in (positions[0], x):
+                        box = (left, 14, left + 8, 22)
+                        overlay.paste(frame.crop(box), box)
+                    inputs.append(overlay)
+            encoded = BytesIO()
+            inputs[0].save(
+                encoded,
+                format=fmt,
+                save_all=True,
+                append_images=inputs[1:],
+                duration=durations,
+                loop=0,
+                **options,
+            )
+            with Image.open(encoded) as decoded:
+                poster = int(fmt == "PNG")
+                if decoded.n_frames != len(frames) + poster:
+                    raise ValueError(f"{tag}: animation or poster frame count changed")
+                if poster:
+                    np.testing.assert_array_equal(decoded.convert("RGB"), background)
+                for i, expected in enumerate(frames):
+                    decoded.seek(i + poster)
+                    actual = np.asarray(decoded.convert("RGB"))
+                    if decoded.info["duration"] != durations[i]:
+                        raise ValueError(f"{tag}: frame {i} duration changed")
+                    if tag == "webp-lossy":
+                        error = np.abs(actual.astype(int) - np.asarray(expected))
+                        if error.mean() >= 5 or np.percentile(error, 99) >= 55:
+                            raise ValueError(
+                                f"{tag}: frame {i} exceeded the canvas error limit"
+                            )
+                        for y, x in [(19, positions[i] + 3), (7, 32), (27, 8)]:
+                            if error[y, x].max() >= 25:
+                                raise ValueError(
+                                    f"{tag}: frame {i} landmark at {(x, y)} changed"
+                                )
+                    else:
+                        np.testing.assert_array_equal(
+                            actual, np.asarray(expected), err_msg=f"{tag} frame {i}"
+                        )
+            self._image(
+                f"moving-{tag}", encoded.getvalue(), 48, 32, 4 if fmt == "PNG" else 3
+            )
+
     def _image(
         self, tag: str, payload: bytes, width: int, height: int, channels: int
     ) -> None:
@@ -144,16 +220,16 @@ class _RasterCases:
         image.colorspace = channels
         image.encoded_image_string = payload
 
-    def write(self, output: Path) -> None:
+    def write(self, output: Path, name: str) -> None:
         """Write generated summaries into one TensorBoard event file."""
         event = event_pb2.Event(step=1, wall_time=1.0)
         event.summary.CopyFrom(self.summary)
-        writer = EventFileWriter(str(output))
+        writer = EventFileWriter(str(output), filename_suffix=f".{name}.generating")
         writer.add_event(event)
         writer.flush()
         writer.close()
-        generated = next(output.glob("events.out.tfevents.*"))
-        generated.replace(output / "events.out.tfevents.rasters")
+        (generated,) = output.glob(f"events.out.tfevents.*.{name}.generating")
+        generated.replace(output / f"events.out.tfevents.{name}")
 
 
 def main() -> None:
@@ -168,7 +244,10 @@ def main() -> None:
     cases.pngs()
     cases.jpegs()
     cases.animations()
-    cases.write(output)
+    cases.write(output, "rasters")
+    scenes = _RasterCases()
+    scenes.moving_scenes()
+    scenes.write(output, "moving-scenes")
 
 
 if __name__ == "__main__":

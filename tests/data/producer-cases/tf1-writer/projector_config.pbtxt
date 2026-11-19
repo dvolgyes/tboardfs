@@ -1,0 +1,5 @@
+embeddings {
+  tensor_name: "triangle"
+  metadata_path: "labels.tsv"
+  tensor_path: "vectors.tsv"
+}

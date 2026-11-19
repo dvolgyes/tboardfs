@@ -1,0 +1,10 @@
+embeddings {
+  tensor_name: "features:00008"
+  metadata_path: "00008/features/metadata.tsv"
+  sprite {
+    image_path: "00008/features/sprite.png"
+    single_image_dim: 32
+    single_image_dim: 24
+  }
+  tensor_path: "00008/features/tensors.tsv"
+}

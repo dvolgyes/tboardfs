@@ -79,6 +79,8 @@ class _SummaryParser:
         elif kind == "audio":
             value["audio"] = _SummaryParser.parse_audio(message.audio)
         elif kind == "tensor":
+            if not message.tag:
+                value["tag"] = message.node_name
             value["tensor"] = _SummaryParser.parse_tensor(message.tensor)
         if message.HasField("metadata"):
             value.update(_SummaryParser.parse_summary_metadata(message.metadata))

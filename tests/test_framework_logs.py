@@ -75,3 +75,31 @@ def test_lightning_metrics_hparams_and_media(fs: TensorBoardFS) -> None:
     ]
     profile = fs.read(f"{run}/graphs/step1/000.run_metadata.pbtxt", 1 << 20, 0)
     assert profile.startswith(b"step_stats {\n  dev_stats {\n")
+
+
+def test_lightning_text_and_weight_percentiles(fs: TensorBoardFS) -> None:
+    """Compare the sparse two-weight histogram to TensorBoard's reference reader."""
+    run = "/lightning/version_0"
+    assert fs.read(f"{run}/text/note/text_summary/001.txt", 256, 0) == b"epoch **1**"
+    buckets = _json(fs, f"{run}/histograms/layer/weight/001.json")
+    assert [row["count"] for row in buckets if row["count"]] == [1, 1]
+    dist = _json(fs, f"{run}/distributions/layer/weight/001.json")
+    np.testing.assert_array_equal(
+        [r["percentile"] for r in dist],
+        [0, 6.68, 15.87, 30.85, 50, 69.15, 84.13, 93.32, 100],
+    )
+    np.testing.assert_allclose(
+        [r["value"] for r in dist],
+        [
+            0.37501847743988037,
+            0.3768866772633304,
+            0.3794568503737355,
+            0.38364631644488545,
+            0.7580548669750213,
+            0.7676680901639027,
+            0.775187990078756,
+            0.779801333217441,
+            0.7831546664237976,
+        ],
+        rtol=1e-7,
+    )

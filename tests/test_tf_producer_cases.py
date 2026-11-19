@@ -3,7 +3,6 @@
 from io import BytesIO
 import json
 from pathlib import Path
-import struct
 import wave
 
 import numpy as np
@@ -86,15 +85,26 @@ def test_tf2_batched_media_and_metadata_reuse() -> None:
             "000003",
         )
     ] == [first, second, second]
-    for item, expected in enumerate([(-16384, 8192, 16384), (0, -8192, 24576)]):
+    for item, (frequency, amplitude) in enumerate([(250, 0.5), (500, 0.75)]):
         blob = fs.read(f"/audio/tone/000002_{item}.wav", 4096, 0)
         with wave.open(BytesIO(blob)) as wav:
-            assert (wav.getnchannels(), wav.getframerate(), wav.getnframes()) == (
-                1,
-                8000,
-                3,
-            )
-            assert struct.unpack("<3h", wav.readframes(3)) == expected
+            assert (
+                wav.getnchannels(),
+                wav.getframerate(),
+                wav.getsampwidth(),
+                wav.getnframes(),
+            ) == (1, 8000, 2, 2000)
+            pcm = np.frombuffer(wav.readframes(2000), dtype="<i2")
+        expected = (
+            amplitude * 32768 * np.sin(np.arange(2000) * (2 * np.pi * frequency / 8000))
+        )
+        np.testing.assert_allclose(pcm, expected, atol=0.51, rtol=0)
+        quarter_period = 8000 // (4 * frequency)
+        assert pcm[[0, quarter_period, 3 * quarter_period]].tolist() == [
+            0,
+            int(amplitude * 32768),
+            -int(amplitude * 32768),
+        ]
 
 
 def test_tf2_exact_steps_matrix_and_histogram() -> None:

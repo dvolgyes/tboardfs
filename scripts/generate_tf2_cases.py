@@ -6,6 +6,7 @@
 """Generate a compact TF2 event file with batched media and exact integer steps."""
 
 import argparse
+from math import tau
 from pathlib import Path
 import tempfile
 
@@ -26,9 +27,14 @@ def _write(output: Path) -> Path:
                 tf.summary.write(
                     "tiles", tf.stack([b"2", b"2", tf.io.encode_png(pixels[1])]), step=3
                 )
-                samples = tf.constant(
-                    [[[-0.5], [0.25], [0.5]], [[0.0], [-0.25], [0.75]]]
+                times = tf.range(2000, dtype=tf.float64) / 8000
+                tones = tf.stack(
+                    [
+                        amplitude * tf.sin(times * (tau * frequency))
+                        for frequency, amplitude in [(250, 0.5), (500, 0.75)]
+                    ]
                 )
+                samples = tf.cast(tones[:, :, None], tf.float32)
                 tf.summary.audio("tone", samples, 8000, step=2, max_outputs=2)
                 tf.summary.histogram(
                     "spread", [0.0, 0.25, 1.75, 2.0], step=2, buckets=2

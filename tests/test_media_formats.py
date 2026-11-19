@@ -5,6 +5,7 @@ from pathlib import Path
 import struct
 import wave
 
+import numpy as np
 import pytest
 
 from tboardfs import TensorBoardFS
@@ -89,14 +90,27 @@ def test_wav_headers_and_interleaved_pcm(
 ) -> None:
     tag = f"pcm{8 * width}"
     audio = values[tag].audio
-    blob = fs.read(f"/audio/{tag}/000001.wav", 65536, 0)
+    blob = fs.read(f"/audio/{tag}/000001.wav", len(audio.encoded_audio_string) + 1, 0)
     metadata = (audio.num_channels, audio.sample_rate, audio.length_frames)
-    assert metadata == (channels, rate, 3)
+    assert metadata == (channels, rate, rate // 4)
     assert audio.content_type == "audio/wav"
     assert blob == audio.encoded_audio_string
     with wave.open(BytesIO(blob)) as wav:
-        assert wav.getparams()[:4] == (channels, width, rate, 3)
-        assert wav.readframes(3) == bytes(range(3 * channels * width))
+        assert wav.getparams()[:4] == (channels, width, rate, rate // 4)
+        pcm = wav.readframes(rate // 4)
+    samples = np.array(
+        [
+            int.from_bytes(pcm[i : i + width], "little", signed=width > 1)
+            for i in range(0, len(pcm), width)
+        ]
+    ).reshape(-1, channels)
+    if width == 1:
+        samples -= 128
+    for index, hz in enumerate((440, 660)[:channels]):
+        signal = samples[:, index] / (1 << (width * 8 - 1))
+        assert np.mean(signal**2) == pytest.approx(0.125, abs=0.001)
+        spectrum = np.abs(np.fft.rfft(signal))
+        assert np.argmax(spectrum) * rate / len(signal) == hz
 
 
 @pytest.mark.parametrize(
@@ -114,8 +128,22 @@ def test_custom_encoded_audio(
 ) -> None:
     audio = values[tag].audio
     assert audio.content_type == mime
-    blob = fs.read(f"/audio/{tag}/000001.{suffix}", 65536, 0)
+    blob = fs.read(
+        f"/audio/{tag}/000001.{suffix}", len(audio.encoded_audio_string) + 1, 0
+    )
     assert blob == audio.encoded_audio_string
+    if tag != "riff-midi":
+        assert (audio.sample_rate, audio.num_channels, audio.length_frames) == (
+            16000,
+            1,
+            4000,
+        )
+    else:
+        assert blob[8:16] == b"RMIDdata"
+        assert blob[20:24] == b"MThd"
+        assert blob[32:34] == b"\x00\x60"
+        assert blob[34:42] == b"MTrk\x00\x00\x00\x0c"
+        assert blob[42:] == bytes.fromhex("00 90 45 60 30 80 45 00 00 ff 2f 00")
 
 
 @pytest.mark.parametrize("tag", ["mp4", "mov", "avi", "webm", "mkv", "ogg"])
@@ -138,7 +166,7 @@ def test_rank_one_audio_exports_every_unlabelled_clip(
         values[f"pcm{bits}"].audio.encoded_audio_string for bits in (8, 16, 24, 32)
     ]
     assert list(batch.tensor.string_val) == clips
-    assert [
-        fs.read(f"/audio/unlabelled/{name}", 65536, 0)
-        for name in fs.readdir("/audio/unlabelled")[2:]
-    ] == clips
+    for index, clip in enumerate(clips):
+        assert (
+            fs.read(f"/audio/unlabelled/000001_{index}.wav", len(clip) + 1, 0) == clip
+        )

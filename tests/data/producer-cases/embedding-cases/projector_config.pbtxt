@@ -1,0 +1,28 @@
+embeddings {
+tensor_name: "sky/positions:00000"
+tensor_path: "00000/sky%2fpositions/tensors.tsv"
+}
+embeddings {
+tensor_name: "catalog:00002"
+tensor_path: "00002/catalog/tensors.tsv"
+metadata_path: "00002/catalog/metadata.tsv"
+}
+embeddings {
+tensor_name: "finder:00004"
+tensor_path: "00004/finder/tensors.tsv"
+sprite {
+image_path: "00004/finder/sprite.png"
+single_image_dim: 16
+single_image_dim: 16
+}
+}
+embeddings {
+tensor_name: "sky/positions:00007"
+tensor_path: "00007/sky%2fpositions/tensors.tsv"
+metadata_path: "00007/sky%2fpositions/metadata.tsv"
+sprite {
+image_path: "00007/sky%2fpositions/sprite.png"
+single_image_dim: 16
+single_image_dim: 16
+}
+}

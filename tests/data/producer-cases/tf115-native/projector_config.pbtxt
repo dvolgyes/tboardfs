@@ -1,0 +1,5 @@
+embeddings {
+  tensor_name: "corners"
+  metadata_path: "labels.tsv"
+  tensor_path: "points.tsv"
+}

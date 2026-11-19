@@ -6,6 +6,8 @@ import struct
 import pytest
 
 from tboardfs import TensorBoardFS
+from tboardfs.proto import compat_pb2
+from tboardfs.tfrecord import iter_tfrecords
 from test_tf_producer_cases import CORPUS, _events
 
 
@@ -155,3 +157,80 @@ def test_two_timed_frames_survive_export(
     else:
         assert blob[:4] == b"RIFF" and blob[8:12] == b"WEBP"
         assert blob.count(b"ANMF") == 2
+
+
+@pytest.mark.parametrize(
+    ("name", "tab", "suffix", "digest"),
+    [
+        (
+            "gif",
+            "videos",
+            "gif",
+            "0a03f23f33db131c32bf77a137f061b673a47dbe5257c3df80db8a4caa9de6c3",
+        ),
+        (
+            "apng",
+            "images",
+            "png",
+            "e7cb308b4097cace9930c6bfdbf788a7e8191f02e506656953268333cab4577b",
+        ),
+        (
+            "webp-lossless",
+            "images",
+            "webp",
+            "4ea205fba35da66f649eb936198f2225ed013d83139deda410f61e42c6abf469",
+        ),
+        (
+            "webp-lossy",
+            "images",
+            "webp",
+            "62748eefdb15e58eb3836e8743f3398277d2876322f9cd15f877fcd4816ee537",
+        ),
+    ],
+)
+def test_composited_scene_export(
+    fs: TensorBoardFS, name: str, tab: str, suffix: str, digest: str
+) -> None:
+    """Preserve the bytes, delays and patch controls of the decoded reference scenes."""
+    tag = f"moving-{name}"
+    blob = fs.read(f"/{tab}/{tag}/000001.{suffix}", 65536, 0)
+    with (CORPUS / "rasters/events.out.tfevents.moving-scenes").open("rb") as handle:
+        (original,) = (
+            v.image.encoded_image_string
+            for record in iter_tfrecords(handle)
+            for v in compat_pb2.Event.FromString(record.payload).summary.value
+            if v.tag == tag
+        )
+    assert blob == original
+    assert sha256(blob).hexdigest() == digest
+    if name == "gif":
+        controls = blob.split(b"\x21\xf9\x04")[1:]
+        assert [
+            (b[0] >> 2 & 7, int.from_bytes(b[1:3], "little")) for b in controls
+        ] == [(1, 12), (2, 24), (1, 16)]
+        assert all(b[4:6] == b"\x00\x2c" for b in controls)
+        assert [struct.unpack_from("<4H", b, 6) for b in controls] == [
+            (0, 0, 48, 32),
+            (2, 14, 24, 8),
+            (0, 0, 48, 32),
+        ]
+    elif name == "apng":
+        assert blob.index(b"IDAT") < blob.index(b"fcTL")
+        controls = [
+            struct.unpack_from(">IIIIIHHBB", b) for b in blob.split(b"fcTL")[1:]
+        ]
+        assert [c[1:5] for c in controls] == [(48, 32, 0, 0)] * 3
+        assert [c[5:] for c in controls] == [
+            (3, 25, 0, 0),
+            (6, 25, 2, 1),
+            (4, 25, 0, 1),
+        ]
+    else:
+        frames = blob.split(b"ANMF")[1:]
+        codec = b"VP8L" if name == "webp-lossless" else b"VP8 "
+        assert [b[20:24] for b in frames] == [codec] * 3
+        fields = [
+            [int.from_bytes(b[i : i + 3], "little") for i in range(4, 19, 3)]
+            for b in frames
+        ]
+        assert fields == [[0, 0, 47, 31, 120], [1, 7, 23, 7, 240], [9, 7, 25, 7, 160]]

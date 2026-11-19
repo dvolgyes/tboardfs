@@ -380,11 +380,15 @@ three inputs; tboardfs gives the graph with that one input.
 These files come from the run directory, not from the event files, so they are only available when SOURCE is a
 directory.
 
-- `projector` has `projector_config.pbtxt` and the other files of a `projector` directory. It also has the files that
-  the config names (`tensor_path`, `metadata_path`, sprite `image_path`, `bookmarks_path`), such as the
-  `<step>/<tag>/tensors.tsv` files of PyTorch and tensorboardX `add_embedding`, at the paths that the config uses. Only
-  relative paths to files of the run are followed, and only the first MiB of the config is read.
-- `profile` has the files below a `profile` directory of the run, such as `plugins/profile/...`.
+- `projector` contains the config, the files of a `projector` directory and the relative files named by `tensor_path`,
+  `metadata_path`, sprite `image_path` and `bookmarks_path`.
+- Only relative paths to files of the run are followed, and only the first MiB of the config is read.
+- `profile` contains the files below a `profile` directory of the run, such as `plugins/profile/...`.
+
+The config bytes are unchanged, but the exported filenames use the filesystem's path escaping.
+
+For example, TensorBoardX writes the tag `sky/positions` as `sky%2fpositions`, which exports as `sky%252fpositions`;
+restore that directory name before opening the copied config in TensorBoard.
 
 tboardfs copies profiler `.xplane.pb` files without decoding them; it does not extract checkpoint tensors or decode
 Debugger V2 dumps.
@@ -472,35 +476,131 @@ scripts/generate_geometry_cases.py --output samples/geometry
 | `generate_tensorboard_cases.py` | Native `EventFileWriter` source metadata, unknown-only event, opaque plugin metadata, colliding tags and equal-step rows |
 | `generate_tensorboardx_cases.py` | Two writer sessions, a restart marker, epoch joins and out-of-order steps |
 | `generate_geometry_cases.py` | TensorBoardX meshes and point clouds, raw histogram buckets and derived percentiles, weighted and precomputed PR curves |
+| `generate_geometry_scene.py` | Batched terrain surfaces and face-free range scans; checks vertex and color order, triangle connectivity and boundary edges in NPZ, OBJ and PLY |
+| `generate_embedding_cases.py` | Native TensorBoardX vectors alone, with labels, with a sprite, and with both; repeated observations change position and row order between steps |
+| `generate_projector_layouts.py` | A historical plugin-local TSV layout with no root config and a modern config that names binary float32 vectors; both preserve row and label order |
 | `generate_media_cases.py` | Legacy media fields and plugin tensors: image channels, static/animated GIF, audio sample widths, and native video containers |
-| `generate_raster_cases.py` | PNG color types and sample depths, baseline and progressive JPEG, and two-frame GIF/APNG/WebP with known colors and timings |
+| `generate_raster_cases.py` | PNG color types and sample depths, baseline and progressive JPEG, timed GIF/APNG/WebP pairs and moving sprites with partial frames, blending and disposal |
 | `generate_dtype_cases.py` | Both encodings of all 20 supported numeric/boolean dtype IDs, binary strings, and raw recovery of unsupported dtype IDs |
 | `generate_torch_cases.py` | CPU PyTorch scalar precision and actual `add_tensor` encodings, including records with no faithful NumPy preview |
 | `generate_plugin_cases.py` | Unicode text tables, HParams domains, margin/multiline custom charts, projector TSV/sprite/bookmarks, CPU profile and unknown plugin data |
 | `generate_auxiliary_cases.py` | Real checkpoint-backed projector config and six Debugger V2 streams beside an ordinary scalar; neither is mistaken for summary data |
 | `generate_writer_inputs.py` | TensorBoardX grouped scalar subruns, image grids and boxes, ONNX and OpenVINO inputs converted to `GraphDef` |
 | `generate_framing_cases.py` | Length and payload CRC failures, incomplete tails, and an over-limit header; these cases are generated during tests |
+| `generate_historical_cases.py` | Release-specific TensorBoard 1.15.0 and 2.0.0 summaries, projector assets, debugger statistics and historical profile protos, without TensorFlow |
+| `generate_tf115_native.py`, `generate_tf200_native.py` | Actual TensorFlow 1.15.0 graph/session and 2.0.0 eager writers: image pixels, audio samples, histogram percentiles and numeric tensors |
+| `generate_tf1_writer_formats.py`, `generate_tf2_plugin_formats.py` | TF1 graph-mode summaries, real session tracing, TF2 plugin PR curves and opaque tensor values on TensorFlow 2.21.0 |
+| `generate_torch_plugins.py`, `generate_tensorboardx_plugins.py` | Direct writer calls for model metrics, projector sprites, stereo or mono tones, and custom scalar layouts; PyTorch also writes animated GIF and a CPU trace |
+| `generate_torch_graph.py` | A CPU PyTorch model graph produced by `add_graph`; checks the linear-to-ReLU path, tensor shapes and tagged run metadata |
+| `generate_lightning_plugins.py` | Lightning metrics, PyTorch writer summaries including a mesh, cloud, sprite and animated GIF, and a Lightning CPU profiler capture |
+| `generate_legacy_tool_assets.py` | A TensorBoard 1.15 Beholder arrays capture and an example TPU operation hierarchy serialized with the official profile schema, not captured on TPU hardware |
+| `generate_legacy_text.py` | TF 1.2 stores two tables by `node_name`, but registers only one with the Text dashboard; a TensorBoard 1.15 reader checks the distinction |
+| `generate_encoded_media_cases.py` | Caller-encoded media supplied to multiple event writers; the offline tests reconstruct the exact files without storing duplicate payloads |
+| `generate_av_clips.py` | One second of motion and synchronized sound in six containers; the generator decodes both streams before recording its reference measurements |
+| `generate_audio_variants.py` | A 440 Hz tone encoded as ADTS AAC, AAC/M4A, ALAC/M4A, float WAV and PCM AIFF; tests check the file type and the decoded signal |
 
 ### Compatibility Scope
 
 - **Version marker:** `brain.Event:2` identifies the event format, not the TensorBoard or TensorFlow release.
-- **Historical comparison:** TensorBoard 1.15.0 and 2.0.0 produced identical bytes for the historical fixture.
-- **TF1 API:** `tf.compat.v1` on TensorFlow 2.21.0 wrote this fixture, not a TensorFlow 1.x runtime.
+- **Historical releases:** TensorBoard 1.15.0 and 2.0.0 produced identical event bytes for the original `tb115` fixture.
+  The `tf115-native` and `tf200-native` fixtures use the corresponding TensorFlow runtimes on CPython 3.7.
+- **TF1 compatibility API:** `tf1` and `tf1-writer` use graph mode on TensorFlow 2.21.0, independently of the actual
+  1.15.0 runtime.
 - **Modern writers:** the pinned format cases use TensorBoard 2.21.0, TensorBoardX 2.6.5 and CPU PyTorch 2.12.0.
+
+To regenerate historical TensorBoard helpers, select the release explicitly:
+
+```bash
+uv run --with tensorboard==1.15.0 --script scripts/generate_historical_cases.py --release 1.15.0 -o samples/history-115
+uv run --with tensorboard==2.0.0 --script scripts/generate_historical_cases.py --release 2.0.0 -o samples/history-200
+```
+
+For the native `generate_tf115_native.py` and `generate_tf200_native.py` writers, pass an existing CPython 3.7 to
+`uv run --python`.
+
+The cross-writer media generator takes `--source tests/data/producer-cases`, which supplies previously encoded and
+verified images and clips.
 
 Compare the upstream plugin inventories for
 [1.15.0](https://github.com/tensorflow/tensorboard/blob/1.15.0/tensorboard/default.py),
 [2.0.0](https://github.com/tensorflow/tensorboard/blob/2.0.0/tensorboard/default.py) and
 [2.21.0](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/default.py).
 
-A dashboard need not define a summary type: distributions derive from histograms, and Debugger V2 uses separate files.
+Not every dashboard defines a summary type:
+
+- Distributions derive from histogram buckets.
+- [Metrics/Time Series](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/plugins/metrics/metrics_plugin.py)
+  reads scalar, histogram and image series.
+- The historical
+  [What-If Tool](https://github.com/tensorflow/tensorboard/blob/1.15.0/tensorboard/plugins/interactive_inference/interactive_inference_plugin.py)
+  reads example datasets and returns predictions to the client; those examples are not training events.
+- Debugger V2 writes six separate streams rather than training summaries.
+
+High-level encoders and the event format impose different limits:
+
+- `add_video` in PyTorch and TensorBoardX encodes an animated GIF, whereas MP4 requires an explicitly supplied payload.
+- TensorBoardX 2.6.5 has no `add_tensor` method; its file-writer fixture tests all 18 numeric and Boolean types in its
+  schema in packed and repeated-field form.
+
+How to read the table:
+
+- **Native:** the named writer or its official plugin produced the data.
+- **Encoded:** the low-level writer preserved bytes supplied by the caller; this does not mean the writer has that
+  encoder.
+- **Delegated:** the call went through Lightning's PyTorch writer.
+- Historical encoded-media cases use each release's TensorBoard `RecordWriter`, separately from its native TensorFlow
+  examples.
+
+An additional TensorFlow 1.2.0 fixture on CPython 3.6 exercises the older practice of storing a tensor's series name in
+`node_name` when `tag` is empty.
+
+TensorBoard 1.15 uses `plugins/tensorboard_text/tensors.json` to select dashboard series; tboardfs exports both the
+registered and unregistered string tables.
+
+| Tested data | TF/TB 1.15.0 | TF/TB 2.0.0 | TF 2.21.0 graph mode | TF/TB 2.21.0 eager | TensorBoardX 2.6.5 | PyTorch 2.12.0 CPU | Lightning 2.6.6 |
+| -- | -- | -- | -- | -- | -- | -- | -- |
+| Scalars | Native | Native | Native | Native | Native, grouped subruns | Native, double precision | Native training metrics |
+| Histograms | Classic buckets | Tensor buckets | Classic buckets | Tensor buckets | Samples and raw buckets | Samples and raw buckets | Delegated model weights |
+| Distributions | Derived percentiles | Derived percentiles | Derived percentiles | Derived percentiles | Derived percentiles | Derived percentiles | Derived percentiles |
+| PR curves | Weighted | Weighted plugin op | Threshold counts | Weighted, unweighted and precomputed | Weighted and precomputed | Weighted and precomputed | Delegated weighted |
+| Meshes and point clouds | Surface and colored cloud | Surface and colored cloud | Triangle and colored cloud | Batched terrain and range scans | Tetrahedron and cloud | Triangle and colored cloud | Delegated surface and colored cloud |
+| Embeddings | Config and TSVs | Config and TSVs | Config and TSVs | Config, sidecars and checkpoint | Vectors, labels and sprites | Vectors, labels and sprites | Delegated vectors, labels and sprite |
+| Text | Native | Native | Vector | Unicode table | Native | Native | Delegated Markdown |
+| HParams | Experiment and trial | Experiment and trial | Plugin builders | Experiment and trial | Trial and metric | Child run and metric | Metrics and `hparams.yaml` |
+| Custom scalar layouts | Multiline | Multiline | Multiline | Margin and multiline | Margin and multiline | Margin and multiline | Delegated margin chart |
+| Graphs | Session graph | Eager trace | Session graph | Function and Keras graphs | Model, ONNX and OpenVINO imports | Traced model | Logger delegates model graph |
+| Still images | Native PNG; encoded alternatives | Native PNG; encoded alternatives | Native PNG; encoded alternatives | Batched PNG; encoded alternatives | PNG grids and boxes; encoded alternatives | PNG; encoded alternatives | Delegated PNG; encoded alternatives |
+| Animation | Encoded | Encoded | Encoded | Encoded | Native GIF; encoded alternatives | Native GIF; encoded alternatives | Delegated GIF; encoded alternatives |
+| Audio | WAV; encoded alternatives | WAV; encoded alternatives | WAV; encoded alternatives | Batched WAV; encoded alternatives | Stereo WAV; encoded alternatives | Mono WAV; encoded alternatives | Delegated WAV; encoded alternatives |
+| Video containers | Encoded | Encoded | Encoded | Encoded | Encoded | Encoded | Delegated encoded |
+| Generic tensors | Native float32; other wire types | Native float32; other wire types | Matrix and strings | Numeric, string, resource and variant; full wire matrix | 18 numeric/Boolean wire types, strings and resource | 12 native dtypes, three raw-only | Delegated float64 |
+| Profiler | Native CPU session trace | Native CPU `.trace` | Timed session and v1 timeline | CPU XPlane | Not supported by its writer | CPU trace excerpt | Native `PyTorchProfiler` |
+| TensorFlow Debugger | V1 numeric summary | V1 numeric summary | Native `tfdbg` tensor dump | Six Debugger V2 streams | Not supported by its writer | Not supported by its writer | Not supported by its logger |
+| Beholder | Native arrays capture and section metadata | Constructed frame sidecar | Not included in TB 2.21 | Not included in TB 2.21 | Not supported by its writer | Not supported by its writer | Not supported by its logger |
+
+For video with synchronized sound, the fixture uses H.264/AAC in MP4 and MOV, MPEG-4/PCM in AVI, VP9/Opus in WebM,
+H.264/FLAC in Matroska and Theora/Vorbis in Ogg.
+
+To export examples you can play or display, use new output filenames:
+
+```bash
+tboardfs-file get tests/data/producer-cases/av-clips /videos/mp4/000008.mp4 -o motion.mp4
+tboardfs-file get tests/data/producer-cases/rasters /images/moving-apng/000001.png -o motion.png
+tboardfs-file get tests/data/producer-cases/tensorboardx-plugins /audio/interval/000003.wav -o interval.wav
+tboardfs-file get tests/data/producer-cases/geometry-scene /meshes/terrain/000012.ply -o terrain.ply
+```
+
+The MP4 contains a moving square and a tone that changes pitch at the midpoint; the WAV contains 220 Hz in the left
+channel and 330 Hz in the right.
+
+The suite checks decoded content and byte preservation, not playback in a specific browser.
 
 | Media in a verified event | Filesystem result |
 | -- | -- |
 | PNG (gray, indexed, gray + alpha, RGB, RGBA), baseline/progressive JPEG, BMP, WebP | `images/`, with the detected extension |
 | Animated PNG and WebP | `images/<tag>/<step>.png` or `.webp`, including all frames |
 | Static and animated GIF, including an `images` plugin tensor | `videos/<tag>/<step>.gif`, with the original frames |
-| WAV (8-, 16-, 24-, 32-bit PCM), FLAC, MP3, Ogg/Vorbis, WebM/Opus | `audio/`, with the detected extension |
+| WAV (8-, 16-, 24-, 32-bit PCM and float32), MP3, FLAC, Ogg/Vorbis, WebM/Opus, ADTS AAC, AAC or ALAC in M4A, PCM AIFF | `audio/`, with the detected extension |
 | MP4, QuickTime, AVI, WebM, Matroska, Ogg/Theora in a custom `video` summary | `videos/`, with `.mp4`, `.mov`, `.avi`, `.webm`, `.mkv`, `.ogg` respectively |
 | TIFF or AVIF image, RIFF MIDI audio | `.bin` under the corresponding tab; no invented codec or lost bytes |
 

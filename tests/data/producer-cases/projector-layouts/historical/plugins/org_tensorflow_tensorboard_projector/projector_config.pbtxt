@@ -1,0 +1,7 @@
+embeddings {
+  tensor_name: "trees"
+  metadata_path: "trees_metadata.tsv"
+  tensor_shape: 3
+  tensor_shape: 2
+  tensor_path: "trees_values.tsv"
+}

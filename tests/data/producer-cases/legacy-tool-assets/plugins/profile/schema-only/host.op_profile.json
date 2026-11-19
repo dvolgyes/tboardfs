@@ -1,0 +1,54 @@
+{
+  "byProgram": {
+    "name": "schema-only-program",
+    "metrics": {
+      "time": 1.0,
+      "rawTime": 2000.0,
+      "flops": 0.0,
+      "memoryBandwidth": 0.0,
+      "rawFlops": 0.0,
+      "rawBytesAccessed": 0.0
+    },
+    "children": [
+      {
+        "name": "%dot.1",
+        "metrics": {
+          "time": 0.6,
+          "rawTime": 1200.0,
+          "flops": 0.0,
+          "memoryBandwidth": 0.0,
+          "rawFlops": 0.0,
+          "rawBytesAccessed": 0.0
+        },
+        "xla": {
+          "op": "dot",
+          "expression": "",
+          "provenance": "",
+          "category": ""
+        },
+        "children": [],
+        "numChildren": 0
+      },
+      {
+        "name": "%add.1",
+        "metrics": {
+          "time": 0.4,
+          "rawTime": 800.0,
+          "flops": 0.0,
+          "memoryBandwidth": 0.0,
+          "rawFlops": 0.0,
+          "rawBytesAccessed": 0.0
+        },
+        "xla": {
+          "op": "add",
+          "expression": "",
+          "provenance": "",
+          "category": ""
+        },
+        "children": [],
+        "numChildren": 0
+      }
+    ],
+    "numChildren": 2
+  }
+}

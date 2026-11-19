@@ -11,7 +11,10 @@
 import argparse
 from importlib.resources import files
 from io import BytesIO
+from itertools import pairwise
+import math
 from pathlib import Path
+import struct
 import tempfile
 import wave
 
@@ -81,6 +84,18 @@ class _MediaRun:
         batch.tensor.tensor_shape.dim.add(size=len(payloads) + 2)
         batch.tensor.string_val.extend((b"16", b"8", *payloads))
 
+    @staticmethod
+    def tone(channels: int, width: int, rate: int) -> bytes:
+        """Encode a quarter-second A4, with an E5 on the right when stereo."""
+        scale = 1 << (8 * width - 2)
+        bias = 128 if width == 1 else 0
+        pcm = bytearray()
+        for frame in range(rate // 4):
+            for hz in (440, 660)[:channels]:
+                sample = round(scale * math.sin(2 * math.pi * hz * frame / rate))
+                pcm.extend((sample + bias).to_bytes(width, "little", signed=width != 1))
+        return bytes(pcm)
+
     def wav(self) -> None:
         """Write PCM clips in legacy fields and one unlabelled audio tensor."""
         batch = self.summary.value.add(tag="unlabelled")
@@ -97,14 +112,16 @@ class _MediaRun:
             (2, 4, 48000),
         ):
             output = BytesIO()
-            frames = bytes(range(3 * channels * width))
+            frames = self.tone(channels, width, rate)
             with wave.open(output, "wb") as stream:
-                stream.setparams((channels, width, rate, 3, "NONE", "not compressed"))
+                stream.setparams(
+                    (channels, width, rate, rate // 4, "NONE", "not compressed")
+                )
                 stream.writeframes(frames)
             audio = self.summary.value.add(tag=f"pcm{width * 8}").audio
             audio.sample_rate = rate
             audio.num_channels = channels
-            audio.length_frames = 3
+            audio.length_frames = rate // 4
             audio.content_type = "audio/wav"
             audio.encoded_audio_string = output.getvalue()
             batch.tensor.string_val.append(audio.encoded_audio_string)
@@ -112,11 +129,14 @@ class _MediaRun:
 
     def compressed_audio(self) -> None:
         """Write native compressed clips and an unrecognized RIFF subtype."""
-        midi = bytes.fromhex("4d54686400000006000000010060 4d54726b00000004 00ff2f00")
+        midi = bytes.fromhex(
+            "4d54686400000006000000010060 4d54726b0000000c 00904560 30804500 00ff2f00"
+        )
         chunk = b"RMIDdata" + len(midi).to_bytes(4, "little") + midi
         audio = self.summary.value.add(tag="riff-midi").audio
         audio.content_type = "audio/mid"
         audio.encoded_audio_string = b"RIFF" + len(chunk).to_bytes(4, "little") + chunk
+        source = self.tone(1, 2, 16000)
         for suffix, codec, mime in (
             ("flac", "flac", "audio/flac"),
             ("mp3", "libmp3lame", "audio/mpeg"),
@@ -126,11 +146,25 @@ class _MediaRun:
             path = self.work / f"sample.{suffix}"
             self.pipeline().input("pipe:0", f="s16le", ar=16000, ac=1).output(
                 path, acodec=codec
-            ).execute(bytes(range(256)) * 8)
+            ).execute(source)
+            self.verify_compressed_tone(path)
             audio = self.summary.value.add(tag=f"audio-{suffix}").audio
             audio.content_type = mime
-            audio.sample_rate, audio.num_channels, audio.length_frames = 16000, 1, 1024
+            audio.sample_rate, audio.num_channels, audio.length_frames = 16000, 1, 4000
             audio.encoded_audio_string = path.read_bytes()
+
+    def verify_compressed_tone(self, path: Path) -> None:
+        """Check the duration and pitch after decoding at the original sample rate."""
+        decoded = (
+            self.pipeline().input(path).output("pipe:1", f="s16le", ar=16000).execute()
+        )
+        samples = struct.unpack(f"<{len(decoded) // 2}h", decoded)
+        if not 3900 <= len(samples) <= 4600:
+            raise ValueError(f"{path.name}: unexpected decoded duration")
+        middle = samples[1000:3000]
+        crossings = sum(left <= 0 < right for left, right in pairwise(middle))
+        if abs(crossings * 8 - 440) > 8 or max(middle) < 8192:
+            raise ValueError(f"{path.name}: expected a clearly audible 440-Hz tone")
 
     def pipeline(self) -> FFmpeg:
         """Start an encoding or decoding pipeline with the bundled FFmpeg."""

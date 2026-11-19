@@ -223,7 +223,7 @@ __marimo__/
 #Splats
 *.tif
 *.png
-!tests/data/producer-cases/plugins/assets/sprite.png
+!tests/data/producer-cases/**/sprite.png
 *.jpg
 *.splat
 *.las

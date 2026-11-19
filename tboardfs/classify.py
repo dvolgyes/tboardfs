@@ -198,13 +198,23 @@ class _Classifier:
         """Return a native extension when libmagic recognizes the payload."""
         mime = magic.from_buffer(blob, mime=True).lower()
         description = magic.from_buffer(blob).lower()
+        if description.startswith("mpeg adts, aac"):
+            return "aac"
+        if blob[4:12] == b"ftypM4A ":
+            return "m4a"
         mime_extensions = {
             "application/json": "json",
+            "audio/aac": "aac",
+            "audio/aiff": "aiff",
             "audio/flac": "flac",
+            "audio/mp4": "m4a",
             "audio/mpeg": "mp3",
             "audio/ogg": "ogg",
             "audio/wav": "wav",
             "audio/webm": "webm",
+            "audio/x-aiff": "aiff",
+            "audio/x-hx-aac-adts": "aac",
+            "audio/x-m4a": "m4a",
             "audio/x-flac": "flac",
             "audio/x-wav": "wav",
             "image/bmp": "bmp",
@@ -239,7 +249,7 @@ class _Classifier:
             ("webm", "webm"),
             ("mp4 base media", "mp4"),
             ("quicktime", "mov"),
-            ("mpeg adts", "mp3"),
+            ("mpeg adts, layer iii", "mp3"),
             ("flac audio", "flac"),
         )
         for needle, extension in description_extensions:

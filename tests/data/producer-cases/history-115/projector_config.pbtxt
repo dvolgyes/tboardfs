@@ -1,0 +1,5 @@
+embeddings {
+  tensor_name: "birds"
+  metadata_path: "birds.tsv"
+  tensor_path: "vectors.tsv"
+}
