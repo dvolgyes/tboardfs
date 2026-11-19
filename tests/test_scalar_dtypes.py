@@ -29,19 +29,31 @@ def _mount(tmp_path: Path, tensor: compat_pb2.TensorProto) -> TensorBoardFS:
         (4, "int_val", 200, 200, "uint8"),
         (5, "int_val", -300, -300, "int16"),
         (17, "int_val", 60000, 60000, "uint16"),
+        (2, "double_val", 1 + 2**-50, 1 + 2**-50, "float64"),
+        (9, "int64_val", -(2**60 + 1), -(2**60 + 1), "int64"),
+        (23, "uint64_val", 2**64 - 1, 2**64 - 1, "uint64"),
+        (10, "bool_val", True, True, "bool"),
+        (13, "int_val", -(2**31), -(2**31), "int32"),
     ],
 )
-def test_a_one_value_tensor_of_a_narrow_dtype_is_a_scalar(
-    tmp_path: Path, dtype: int, field: str, item: int, value: float, np_dtype: str
+def test_one_value_numeric_tensor_keeps_its_scalar_precision(
+    tmp_path: Path,
+    dtype: int,
+    field: str,
+    item: float | int,
+    value: float | int,
+    np_dtype: str,
 ) -> None:
     tensor = compat_pb2.TensorProto(dtype=dtype)
     getattr(tensor, field).append(item)
     fs = _mount(tmp_path, tensor)
 
     rows = json.loads(fs.read("/scalars/x.json", 1 << 20, 0))
-    archive = np.load(io.BytesIO(fs.read("/scalars/x.npz", 1 << 20, 0)))
     assert [row["value"] for row in rows] == [value]
-    assert archive["value"].dtype == np.dtype(np_dtype)
+    assert type(rows[0]["value"]) is type(value)
+    with np.load(io.BytesIO(fs.read("/scalars/x.npz", 1 << 20, 0))) as archive:
+        assert archive["value"].dtype == np.dtype(np_dtype)
+        assert archive["value"].tolist() == [value]
     assert fs.readdir("/tensors")[2:] == []
 
 

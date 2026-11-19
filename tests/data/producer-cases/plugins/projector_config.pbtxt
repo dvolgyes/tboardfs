@@ -1,0 +1,11 @@
+embeddings {
+  tensor_name: "vectors"
+  metadata_path: "assets/labels.tsv"
+  bookmarks_path: "assets/views.json"
+  sprite {
+    image_path: "assets/sprite.png"
+    single_image_dim: 1
+    single_image_dim: 1
+  }
+  tensor_path: "assets/vectors.tsv"
+}

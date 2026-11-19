@@ -207,6 +207,8 @@ class _Classifier:
             "audio/webm": "webm",
             "audio/x-flac": "flac",
             "audio/x-wav": "wav",
+            "image/bmp": "bmp",
+            "image/x-ms-bmp": "bmp",
             "image/gif": "gif",
             "image/jpeg": "jpg",
             "image/png": "png",
@@ -216,6 +218,7 @@ class _Classifier:
             "video/ogg": "ogg",
             "video/quicktime": "mov",
             "video/webm": "webm",
+            "video/x-matroska": "mkv",
             "video/x-msvideo": "avi",
         }
         if mime in mime_extensions:
@@ -230,13 +233,11 @@ class _Classifier:
             ("png image", "png"),
             ("jpeg image", "jpg"),
             ("gif image", "gif"),
-            ("riff", "wav"),
             ("wave audio", "wav"),
             ("ogg data", "ogg"),
             ("web/p image", "webp"),
             ("webm", "webm"),
-            ("matroska", "webm"),
-            ("iso media", "mp4"),
+            ("mp4 base media", "mp4"),
             ("quicktime", "mov"),
             ("mpeg adts", "mp3"),
             ("flac audio", "flac"),
@@ -259,6 +260,6 @@ class _Classifier:
             return "wav"
         if blob.startswith(b"OggS"):
             return "ogg"
-        if len(blob) >= 8 and blob[4:8] == b"ftyp":
+        if blob[4:8] == b"ftyp" and blob[8:12] in (b"mp41", b"mp42"):
             return "mp4"
         return None

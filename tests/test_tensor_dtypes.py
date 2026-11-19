@@ -15,7 +15,6 @@ from test_incremental_parse import _files, _frame
 
 # TensorProto field numbers from tensorflow/core/framework/tensor.proto.
 SCOMPLEX_VAL = 9
-DCOMPLEX_VAL = 12
 HALF_VAL = 13
 INT_VAL = 7
 
@@ -63,73 +62,44 @@ def _content(array: np.ndarray) -> bytes:
     return _packed(tensor_content, array.tobytes())
 
 
-HALF = np.array([1.5, -2.0, 65504.0], dtype="<f2")
-BF16_BITS = np.array([0x3FC0, 0xC000], dtype="<u2")  # 1.5, -2.0
+CORPUS = Path(__file__).parent / "data" / "producer-cases" / "dtypes"
 COMPLEX = np.array([1 + 2j, -3.5 - 0.5j])
 
-FIELD_CASES = [
-    ("half", 19, _packed(HALF_VAL, _varints(HALF.view("<u2").tolist())), HALF),
-    (
-        "bfloat16",
-        14,
-        _packed(HALF_VAL, _varints(BF16_BITS.tolist())),
-        np.array([1.5, -2.0], dtype="<f4"),
-    ),
-    ("int8", 6, _packed(INT_VAL, _varints([-128, 127])), np.array([-128, 127], "i1")),
-    ("int16", 5, _packed(INT_VAL, _varints([-32768, 7])), np.array([-32768, 7], "<i2")),
-    ("uint16", 17, _packed(INT_VAL, _varints([65535, 1])), np.array([65535, 1], "<u2")),
-    (
-        "complex64",
-        8,
-        _packed(SCOMPLEX_VAL, np.array([1, 2, -3.5, -0.5], "<f4").tobytes()),
-        COMPLEX.astype("<c8"),
-    ),
-    (
-        "complex128",
-        18,
-        _packed(DCOMPLEX_VAL, np.array([1, 2, -3.5, -0.5], "<f8").tobytes()),
-        COMPLEX.astype("<c16"),
-    ),
-]
-
 
 @pytest.mark.parametrize(
-    ("dtype", "wire", "expected"),
-    [case[1:] for case in FIELD_CASES],
-    ids=[case[0] for case in FIELD_CASES],
+    ("dtype", "storage", "values"),
+    [
+        (1, "<f4", [1.25, -2.5]),
+        (2, "<f8", [1 + 2**-50, -2.5]),
+        (3, "<i4", [-(2**31), 17]),
+        (4, "u1", [0, 255]),
+        (5, "<i2", [-32768, 7]),
+        (6, "i1", [-128, 127]),
+        (8, "<c8", COMPLEX.tolist()),
+        (9, "<i8", [-(2**63), 17]),
+        (10, "?", [False, True]),
+        (11, "i1", [-128, 127]),
+        (12, "u1", [0, 255]),
+        (13, "<i4", [-(2**31), 2**31 - 1]),
+        (14, "<f4", [1.5, -2.0]),
+        (15, "<i2", [-32768, 32767]),
+        (16, "<u2", [0, 65535]),
+        (17, "<u2", [65535, 1]),
+        (18, "<c16", COMPLEX.tolist()),
+        (19, "<f2", [1.5, -2, 65504]),
+        (22, "<u4", [0, 2**32 - 1]),
+        (23, "<u8", [0, 2**64 - 1]),
+    ],
 )
-def test_value_fields_decode_to_the_native_dtype(
-    tmp_path: Path, dtype: int, wire: bytes, expected: np.ndarray
+def test_both_tensor_encodings_keep_dtype_and_values(
+    dtype: int, storage: str, values: list[object]
 ) -> None:
-    """Values in the repeated fields keep their dtype; bfloat16 widens exactly."""
-    data = _npy(_log(tmp_path, dtype, [expected.size], wire))
-
-    assert data.dtype == expected.dtype
-    np.testing.assert_array_equal(data, expected)
-
-
-CONTENT_CASES = [
-    ("half", 19, HALF, HALF),
-    ("bfloat16", 14, BF16_BITS, np.array([1.5, -2.0], dtype="<f4")),
-    ("int8", 6, np.array([-1, 2], "i1"), np.array([-1, 2], "i1")),
-    ("complex64", 8, COMPLEX.astype("<c8"), COMPLEX.astype("<c8")),
-    ("complex128", 18, COMPLEX.astype("<c16"), COMPLEX.astype("<c16")),
-]
-
-
-@pytest.mark.parametrize(
-    ("dtype", "stored", "expected"),
-    [case[1:] for case in CONTENT_CASES],
-    ids=[case[0] for case in CONTENT_CASES],
-)
-def test_tensor_content_decodes_to_the_native_dtype(
-    tmp_path: Path, dtype: int, stored: np.ndarray, expected: np.ndarray
-) -> None:
-    """Packed tensor_content bytes use the same dtype mapping."""
-    data = _npy(_log(tmp_path, dtype, [stored.size], _content(stored)))
-
-    assert data.dtype == expected.dtype
-    np.testing.assert_array_equal(data, expected)
+    fs = TensorBoardFS(CORPUS)
+    for mode in ("fields", "content"):
+        path = f"/tensors/{mode}-{dtype}/000003.npy"
+        array = np.load(io.BytesIO(fs.read(path, 4096, 0)), allow_pickle=False)
+        assert array.dtype == np.dtype(storage)
+        assert array.tolist() == values
 
 
 def test_complex_json_values_are_real_imaginary_pairs(tmp_path: Path) -> None:
@@ -267,3 +237,24 @@ def test_a_dtype_that_numpy_cannot_hold_does_not_decode(dtype: int) -> None:
     tensor = {"dtype": dtype, "shape": [4], "tensor_content": b"\x01\x02\x03\x04"}
 
     assert tensor_to_array(tensor) is None
+
+
+def test_opaque_tensors_and_binary_strings_survive_raw_frame_export() -> None:
+    source = CORPUS / "events.out.tfevents.dtypes"
+    fs = TensorBoardFS(CORPUS)
+    frame = fs.read(f"/raw/{source.name}/{0:020d}.tfrecord", source.stat().st_size, 0)
+    assert frame == source.read_bytes()
+    event = compat_pb2.Event.FromString(frame[12:-4])
+    tensors = {value.tag: value.tensor for value in event.summary.value}
+    assert list(tensors["binary-string"].string_val) == [b"a\0b", b"\xff\xfe"]
+    assert tensors["opaque-20"].resource_handle_val[0].name == "weights"
+    variant = tensors["opaque-21"].variant_val[0]
+    assert (variant.metadata, variant.tensors[0].string_val[0]) == (
+        b"\0\xff",
+        b"nested\0bytes",
+    )
+    for dtype in [0, 20, 21, *range(24, 34), *range(101, 134), 999]:
+        assert tensors[f"opaque-{dtype}"].dtype == dtype
+    files = set(_files(fs))
+    assert "/tensors/fields-1/000003.npy" in files
+    assert not any("/opaque-" in path and path.endswith(".npy") for path in files)

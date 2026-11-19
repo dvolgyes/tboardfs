@@ -260,9 +260,9 @@ def test_a_large_image_is_only_an_image(tmp_path: Path) -> None:
 
 
 def test_a_malformed_audio_tensor_is_left_packed(tmp_path: Path) -> None:
-    """A 1-D audio tensor has no [audio, label] rows, so it stays one record."""
+    """A tensor missing one unlabelled clip stays packed."""
     event = compat_pb2.Event(wall_time=1.0, step=1)
-    tensor = _value(event, "aud", "audio", [3])
+    tensor = _value(event, "aud", "audio", [4])
     tensor.dtype = DT_STRING
     tensor.string_val.extend([b"RIFF0", b"RIFF1", b"RIFF2"])
     fs = _log(tmp_path, event)

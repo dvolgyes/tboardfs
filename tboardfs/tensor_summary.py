@@ -28,9 +28,9 @@ TAGGED_RUN_METADATA = "graph_tagged_run_metadata"
 class _TensorSummary:
     """Unpack the summaries that TF2 writers store as tensors.
 
-    An image tensor is [width, height, image_1, ..., image_k]. An audio tensor
-    has k rows of [encoded audio, label]. A histogram tensor has k rows of
-    [left, right, count]. TF1 writers use the image, audio and histo fields.
+    An image tensor is [width, height, image_1, ..., image_k]. Audio tensors
+    contain clips or rows of [clip, label]. Histogram rows contain left edge,
+    right edge and count. TF1 writers use the image, audio and histo fields.
     A graph tensor holds a Keras config or a RunMetadata as its first string.
     """
 
@@ -56,6 +56,8 @@ class _TensorSummary:
             return [("graphs", 0, GRAPH_PLUGINS[plugin][0])]
         if plugin == "images" and len(strings) >= 2:
             indices, kind = range(2, len(strings)), "images"
+        elif plugin == "audio" and shape == [len(strings)]:
+            indices, kind = range(len(strings)), "audio"
         elif plugin == "audio" and shape[1:] == [2] and len(strings) == 2 * shape[0]:
             indices, kind = range(0, len(strings), 2), "audio"
         else:

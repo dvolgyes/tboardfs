@@ -1,0 +1,4 @@
+model_checkpoint_path: "weights"
+embeddings {
+  tensor_name: "vectors"
+}

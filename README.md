@@ -296,11 +296,15 @@ The `.json` and `.tsv` tables have one row per threshold, with the columns `thre
 
 ### Images, Audio and Videos
 
-These files are the stored bytes, with the extension of their content type. When a TensorFlow 2 summary holds more than
-one image or audio clip at one step, each one is a file `<step>_<i>`, such as `000001_0.png` and `000001_1.png`. GIF
-images, which tensorboardX and PyTorch `add_video` write, are under `videos`. Repeated values with the same tag in one
-event retain their own payloads. When a writer omits repeated plugin metadata for a tag, tboardfs uses the effective
-metadata from earlier records.
+Media files contain the original bytes; tboardfs does not transcode them.
+
+- A multi-sample image or audio summary has one file per sample, such as `000001_0.png` and `000001_1.png`.
+- Audio tensors can hold a vector of clips or `[clip, label]` rows; the labels remain in the raw event.
+- Both single-frame and animated GIF images go under `videos/`.
+- TensorBoardX and PyTorch `add_video` write GIF image summaries rather than native video containers.
+- A custom `video` plugin can instead store a native video container.
+
+Repeated values with the same tag retain their own payloads even when a writer omits repeated plugin metadata.
 
 ### Text
 
@@ -329,9 +333,11 @@ meshes by the mesh name only, and thus mixes `train/cloud` and `val/cloud`; tboa
 
 A supported tensor has a `.npy` preview and a `.json` preview with its `shape`, `dtype` and `values`.
 
-- Every numeric TensorFlow dtype that NumPy has keeps its dtype, including float16, int8, int16, uint16 and complex.
-- NumPy has no bfloat16, so bfloat16 tensors become float32; this is exact.
-- Float8 and 4-bit tensors are not decoded.
+- Float16/32/64, complex64/128, boolean, and signed and unsigned integers retain their storage precision.
+- Quantized integer tensors export their stored integers, not dequantized values.
+- Bfloat16 widens exactly to float32.
+- Use the raw frame for float8, float4, 2- and 4-bit integers, resources, variants and obsolete reference types; none
+  has a NumPy preview.
 - String tensors are NumPy text arrays (dtype `U`), so `np.load` reads them without `allow_pickle`.
 - A numeric tensor without a plugin name is also a tensor here.
 - A single repeated-field value can fill the declared shape up to 1 KiB of expanded data. Shapes requiring more
@@ -379,6 +385,9 @@ directory.
   `<step>/<tag>/tensors.tsv` files of PyTorch and tensorboardX `add_embedding`, at the paths that the config uses. Only
   relative paths to files of the run are followed, and only the first MiB of the config is read.
 - `profile` has the files below a `profile` directory of the run, such as `plugins/profile/...`.
+
+tboardfs copies profiler `.xplane.pb` files without decoding them; it does not extract checkpoint tensors or decode
+Debugger V2 dumps.
 
 ### Other Plugins
 
@@ -445,28 +454,81 @@ lengths above 1 GiB before reading the payload. CRC32C detects accidental damage
 
 ## Generate Test Data
 
-The tests read four small event files in `tests/data/producer-cases/` without installing their writers. To generate
-fresh examples, run these executable PEP 723 scripts from the checkout. `uv` installs each writer in an isolated script
-environment rather than changing the project environment. Give each script a new or empty output directory.
+The test suite reads `tests/data/producer-cases/` and `test-logs/` without installing the writers.
+
+To regenerate a fixture, run its executable PEP 723 script with a new or empty output directory; `uv` isolates the
+generator's dependencies.
 
 ```bash
-scripts/generate_tf1_cases.py --output samples/tf1
-scripts/generate_tf2_cases.py --output samples/tf2
-scripts/generate_tensorboard_cases.py --output samples/tensorboard
-scripts/generate_tensorboardx_cases.py --output samples/tensorboardx
-scripts/generate_framing_cases.py --output samples/framing
+scripts/generate_media_cases.py --output samples/media
+scripts/generate_geometry_cases.py --output samples/geometry
 ```
 
-| Generator | Cases |
+| Generator in `scripts/` | What the fixtures and tests distinguish |
 | -- | -- |
-| `tf1` | Legacy image and histogram fields from `tf.compat.v1.summary.FileWriter`, omitted step, repeated images in one event, coincident histograms |
-| `tf2` | Batched PNG and WAV data, omitted repeat metadata, tensor histograms, an integer matrix and adjacent scalar steps above the exact float64 integer range |
-| `tensorboard` | Native `EventFileWriter` output with an unknown-only event, opaque plugin metadata, unusual tags and equal-step rows |
-| `tensorboardx` | Two genuine writer sessions in one stream, a restart marker, epoch joins and out-of-order steps |
-| `framing` | Controlled valid records, separate failures of the length and payload CRCs, an incomplete tail, and an over-limit header without a large allocation |
+| `generate_tb115_cases.py` | TensorBoard 1.15.0: scalar siblings, log messages, checkpoint/stop events, obsolete histogram bytes, a debugger numeric summary and a Beholder sidecar |
+| `generate_tf1_cases.py` | TF1-format image and histogram fields from `tf.compat.v1.summary.FileWriter`, omitted step, multiple images and coincident histograms |
+| `generate_tf2_cases.py` | Native TF2 batched PNG/WAV, repeated metadata omitted, tensor histograms, integer matrices and adjacent large steps |
+| `generate_tensorboard_cases.py` | Native `EventFileWriter` source metadata, unknown-only event, opaque plugin metadata, colliding tags and equal-step rows |
+| `generate_tensorboardx_cases.py` | Two writer sessions, a restart marker, epoch joins and out-of-order steps |
+| `generate_geometry_cases.py` | TensorBoardX meshes and point clouds, raw histogram buckets and derived percentiles, weighted and precomputed PR curves |
+| `generate_media_cases.py` | Legacy media fields and plugin tensors: image channels, static/animated GIF, audio sample widths, and native video containers |
+| `generate_raster_cases.py` | PNG color types and sample depths, baseline and progressive JPEG, and two-frame GIF/APNG/WebP with known colors and timings |
+| `generate_dtype_cases.py` | Both encodings of all 20 supported numeric/boolean dtype IDs, binary strings, and raw recovery of unsupported dtype IDs |
+| `generate_torch_cases.py` | CPU PyTorch scalar precision and actual `add_tensor` encodings, including records with no faithful NumPy preview |
+| `generate_plugin_cases.py` | Unicode text tables, HParams domains, margin/multiline custom charts, projector TSV/sprite/bookmarks, CPU profile and unknown plugin data |
+| `generate_auxiliary_cases.py` | Real checkpoint-backed projector config and six Debugger V2 streams beside an ordinary scalar; neither is mistaken for summary data |
+| `generate_writer_inputs.py` | TensorBoardX grouped scalar subruns, image grids and boxes, ONNX and OpenVINO inputs converted to `GraphDef` |
+| `generate_framing_cases.py` | Length and payload CRC failures, incomplete tails, and an over-limit header; these cases are generated during tests |
 
-The producer observations are fixed, but producer headers and timestamps can differ between invocations. The framing
-cases are deterministic and are generated during tests rather than stored as damaged binary fixtures.
+### Compatibility Scope
+
+- **Version marker:** `brain.Event:2` identifies the event format, not the TensorBoard or TensorFlow release.
+- **Historical comparison:** TensorBoard 1.15.0 and 2.0.0 produced identical bytes for the historical fixture.
+- **TF1 API:** `tf.compat.v1` on TensorFlow 2.21.0 wrote this fixture, not a TensorFlow 1.x runtime.
+- **Modern writers:** the pinned format cases use TensorBoard 2.21.0, TensorBoardX 2.6.5 and CPU PyTorch 2.12.0.
+
+Compare the upstream plugin inventories for
+[1.15.0](https://github.com/tensorflow/tensorboard/blob/1.15.0/tensorboard/default.py),
+[2.0.0](https://github.com/tensorflow/tensorboard/blob/2.0.0/tensorboard/default.py) and
+[2.21.0](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/default.py).
+
+A dashboard need not define a summary type: distributions derive from histograms, and Debugger V2 uses separate files.
+
+| Media in a verified event | Filesystem result |
+| -- | -- |
+| PNG (gray, indexed, gray + alpha, RGB, RGBA), baseline/progressive JPEG, BMP, WebP | `images/`, with the detected extension |
+| Animated PNG and WebP | `images/<tag>/<step>.png` or `.webp`, including all frames |
+| Static and animated GIF, including an `images` plugin tensor | `videos/<tag>/<step>.gif`, with the original frames |
+| WAV (8-, 16-, 24-, 32-bit PCM), FLAC, MP3, Ogg/Vorbis, WebM/Opus | `audio/`, with the detected extension |
+| MP4, QuickTime, AVI, WebM, Matroska, Ogg/Theora in a custom `video` summary | `videos/`, with `.mp4`, `.mov`, `.avi`, `.webm`, `.mkv`, `.ogg` respectively |
+| TIFF or AVIF image, RIFF MIDI audio | `.bin` under the corresponding tab; no invented codec or lost bytes |
+
+The [TF2 image writer](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/plugins/image/summary_v2.py)
+emits PNG and the
+[TF2 audio writer](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/plugins/audio/summary_v2.py) emits
+WAV.
+
+TensorBoard's
+[image MIME detector](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/util/img_mime_type_detector.py)
+recognizes BMP, GIF, JPEG and PNG; the other containers test filesystem export, not dashboard playback.
+
+The dtype matrix follows the
+[2.21.0 wire enum](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/compat/proto/types.proto), not just
+the [scalar writer](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/plugins/scalar/summary_v2.py),
+which casts to float32.
+
+The tests compare values and dtypes for both `tensor_content` and repeated value fields, and recover opaque records from
+`raw/`.
+
+[PyTorch 2.12.0 `add_tensor`](https://github.com/pytorch/pytorch/blob/v2.12.0/torch/utils/tensorboard/summary.py) writes
+float32 bit patterns into `half_val` for float16 and bfloat16, and writes uint8 values into `uint32_val` instead of
+`int_val`.
+
+The affected records remain byte-exact in `raw/`; tboardfs does not guess a NumPy preview for these noncanonical
+encodings.
+
+Writer headers, profile timestamps and encoder output can vary when regenerating fixtures.
 
 ## License
 
