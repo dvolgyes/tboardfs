@@ -1,0 +1,47 @@
+[
+  {
+    "label": "Left point",
+    "isSelected": false,
+    "dataSetDimensions": [
+      2,
+      2
+    ],
+    "selectedProjection": "pca",
+    "pcaComponentDimensions": [
+      0,
+      1
+    ],
+    "projections": [
+      {
+        "pca-0": -1.4142135623730951,
+        "pca-1": 0
+      },
+      {
+        "pca-0": 1.4142135623730951,
+        "pca-1": 0
+      }
+    ],
+    "selectedPoints": [
+      0
+    ],
+    "filteredPoints": null,
+    "tSNEIteration": 0,
+    "tSNEPerplexity": 30,
+    "tSNELearningRate": 10,
+    "tSNEis3d": false,
+    "cameraDef": {
+      "orthographic": true,
+      "position": [
+        0,
+        0,
+        3
+      ],
+      "target": [
+        0,
+        0,
+        0
+      ],
+      "zoom": 1
+    }
+  }
+]

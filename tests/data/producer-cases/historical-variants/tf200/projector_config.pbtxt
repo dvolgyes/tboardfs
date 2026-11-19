@@ -1,0 +1,10 @@
+embeddings {
+  tensor_name: "coordinates"
+  metadata_path: "labels.tsv"
+  bookmarks_path: "bookmarks.json"
+  sprite {
+    image_path: "sprite.png"
+    single_image_dim: 1
+    single_image_dim: 2
+  }
+}

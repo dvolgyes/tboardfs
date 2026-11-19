@@ -1,0 +1,18 @@
+embeddings {
+  tensor_name: "vectors:00004"
+  tensor_path: "00004/vectors/tensors.tsv"
+}
+embeddings {
+  tensor_name: "labels:00004"
+  metadata_path: "00004/labels/metadata.tsv"
+  tensor_path: "00004/labels/tensors.tsv"
+}
+embeddings {
+  tensor_name: "sprite:00004"
+  sprite {
+    image_path: "00004/sprite/sprite.png"
+    single_image_dim: 4
+    single_image_dim: 4
+  }
+  tensor_path: "00004/sprite/tensors.tsv"
+}

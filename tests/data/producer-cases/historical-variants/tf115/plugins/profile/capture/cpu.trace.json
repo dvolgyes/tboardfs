@@ -1,0 +1,139 @@
+{
+    "traceEvents": [
+        {
+            "name": "process_name",
+            "ph": "M",
+            "pid": 0,
+            "args": {
+                "name": "Allocators"
+            }
+        },
+        {
+            "name": "process_name",
+            "ph": "M",
+            "pid": 1,
+            "args": {
+                "name": "/host:CPU Compute"
+            }
+        },
+        {
+            "name": "process_name",
+            "ph": "M",
+            "pid": 2,
+            "args": {
+                "name": "/host:CPU Tensors"
+            }
+        },
+        {
+            "name": "process_name",
+            "ph": "M",
+            "pid": 3,
+            "args": {
+                "name": "/job:localhost/replica:0/task:0/device:CPU:0 Compute"
+            }
+        },
+        {
+            "name": "process_name",
+            "ph": "M",
+            "pid": 4,
+            "args": {
+                "name": "/job:localhost/replica:0/task:0/device:CPU:0 Tensors"
+            }
+        },
+        {
+            "ph": "X",
+            "cat": "Op",
+            "name": "unknown",
+            "pid": 1,
+            "tid": 0,
+            "ts": 1795075839483202,
+            "dur": 10,
+            "args": {
+                "name": "watched_square:Square",
+                "op": "unknown"
+            }
+        },
+        {
+            "ph": "X",
+            "cat": "Op",
+            "name": "NoOp",
+            "pid": 3,
+            "tid": 0,
+            "ts": 1795075839483165,
+            "dur": 10,
+            "args": {
+                "name": "_SOURCE",
+                "op": "NoOp"
+            }
+        },
+        {
+            "ph": "X",
+            "cat": "Op",
+            "name": "_Arg",
+            "pid": 3,
+            "tid": 0,
+            "ts": 1795075839483182,
+            "dur": 12,
+            "args": {
+                "name": "_arg_samples_0_0",
+                "op": "_Arg"
+            }
+        },
+        {
+            "ph": "X",
+            "cat": "Op",
+            "name": "Square",
+            "pid": 3,
+            "tid": 0,
+            "ts": 1795075839483198,
+            "dur": 30,
+            "args": {
+                "name": "watched_square",
+                "op": "Square",
+                "input0": "_arg_samples_0_0"
+            }
+        },
+        {
+            "ph": "X",
+            "cat": "Op",
+            "name": "Copy",
+            "pid": 3,
+            "tid": 0,
+            "ts": 1795075839483232,
+            "dur": 13,
+            "args": {
+                "name": "__copy_watched_square_0",
+                "op": "Copy",
+                "input0": "watched_square"
+            }
+        },
+        {
+            "ph": "X",
+            "cat": "Op",
+            "name": "DebugIdentity",
+            "pid": 3,
+            "tid": 0,
+            "ts": 1795075839483249,
+            "dur": 626,
+            "args": {
+                "name": "__dbg_watched_square:0_0_DebugIdentity",
+                "op": "DebugIdentity",
+                "input0": "__copy_watched_square_0"
+            }
+        },
+        {
+            "ph": "X",
+            "cat": "Op",
+            "name": "_Retval",
+            "pid": 3,
+            "tid": 0,
+            "ts": 1795075839483881,
+            "dur": 7,
+            "args": {
+                "name": "_retval_watched_square_0_0",
+                "op": "_Retval",
+                "input0": "watched_square"
+            }
+        }
+    ]
+}

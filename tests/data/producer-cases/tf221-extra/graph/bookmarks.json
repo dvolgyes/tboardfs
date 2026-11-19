@@ -1,0 +1,1 @@
+[{"label":"First point","dataSetDimensions":[2,2],"selectedProjection":"pca","pcaComponentDimensions":[0,1],"projections":[{"pca-0":-3.4,"pca-1":0.0},{"pca-0":3.4,"pca-1":0.0}],"selectedPoints":[0],"tSNEIteration":0,"tSNEPerplexity":0,"tSNELearningRate":0,"tSNEis3d":true,"umapIs3d":true,"umapNeighbors":15,"umapMinDist":0.1}]

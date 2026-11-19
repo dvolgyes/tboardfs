@@ -8,23 +8,26 @@
 # ///
 """Rewrap caller-encoded media with independent, isolated event writers.
 
-These are low-level inputs, not codec support claims for high-level summary APIs.
-Only the shared serialized Summary is deduplicated. The other writers' exact
-headers, tails and whole-file hashes allow byte-for-byte reassembly offline.
+The bounded envelopes and file hashes allow exact TFRecord reassembly.
+The extended matrix reuses original fixture payloads without storing extra media.
 """
 
 import argparse
+from fnmatch import fnmatchcase
 from hashlib import sha256
 from importlib import import_module
+from importlib.metadata import version
 from io import BytesIO
 from itertools import pairwise
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 import struct
 import subprocess
 import tempfile
+from time import time
 import wave
 
 from google.protobuf.message import Message
@@ -40,6 +43,38 @@ AUDIO = (
     ("flac", "audio/flac"),
     ("ogg", "audio/ogg"),
     ("webm", "audio/webm"),
+)
+EXTENDED_SOURCES = (
+    (
+        "media/media",
+        ("gif", "channels", "unlabelled", "pcm8", "pcm16", "pcm24", "pcm32"),
+    ),
+    ("rasters/rasters", ("png-*", "jpeg-*")),
+    ("rasters/moving-scenes", ("*",)),
+    ("audio-variants/audio-variants", ("*",)),
+    ("av-clips/av-clips", ("*",)),
+    ("geotiff/geotiff", ("*",)),
+    ("heic/heic", ("*",)),
+    ("wave64/wave64", ("*",)),
+    ("native-media/native-media", ("*",)),
+    (
+        "media-containers/media-containers",
+        (
+            "qoi",
+            "ico-bmp",
+            "ico-png",
+            "hdr",
+            "svg",
+            "caf",
+            "ogg",
+            "webm",
+            "program-v1",
+            "program-v2",
+            "transport",
+            "windows-media",
+            "elementary",
+        ),
+    ),
 )
 
 
@@ -98,6 +133,32 @@ class _MediaCorpus:
                         value.audio.encoded_audio_string
                     )
 
+    def stage_extended(self, source: Path) -> bytes:
+        """Stage a single Summary from original events, without modifying media fields."""
+        loader = import_module(
+            "tensorboard.backend.event_processing.event_file_loader"
+        ).LegacyEventFileLoader
+        summary = import_module("tensorboard.compat.proto.summary_pb2").Summary()
+        for key, patterns in EXTENDED_SOURCES:
+            run, name = key.split("/")
+            path = source / run / f"events.out.tfevents.{name}"
+            candidates = [
+                v for event in loader(str(path)).Load() for v in event.summary.value
+            ]
+            for pattern in patterns:
+                if not any(fnmatchcase(v.tag, pattern) for v in candidates):
+                    raise ValueError(f"{path}: no values for {pattern}")
+            for value in candidates:
+                if any(fnmatchcase(value.tag, pattern) for pattern in patterns):
+                    staged = summary.value.add()
+                    staged.CopyFrom(value)
+                    staged.tag = f"{run}-{value.tag}"
+        payload = bytes(summary.SerializeToString())
+        if len(payload) > 1024**2:
+            raise ValueError("extended Summary exceeds 1 MiB")
+        (self.work / "extended-summary.pb").write_bytes(payload)
+        return payload
+
     def stage_tones(self) -> None:
         """Decode the interior 0.2 s of every lossy clip and verify 88 cycles of A4."""
         rate = 16000
@@ -136,6 +197,10 @@ class _MediaCorpus:
     def _build_summary(self, schema: str) -> Message:
         """Construct every field in the isolated writer's own protobuf schema."""
         summary = import_module(f"{schema}.summary_pb2").Summary()
+        staged = self.work / "extended-summary.pb"
+        if staged.is_file():
+            summary.ParseFromString(staged.read_bytes())
+            return summary
         types = import_module(f"{schema}.types_pb2")
         for tag in (*STILLS, *ANIMATIONS):
             data = (self.work / tag).read_bytes()
@@ -187,25 +252,23 @@ class _MediaCorpus:
         return summary
 
     @staticmethod
-    def _write_native(
-        writer: str, dest: Path, event: Message, summary: Message
-    ) -> None:
+    def _write_native(writer: str, dest: Path, event: Message, summary: Message) -> str:
         """Call the public event/raw-summary API. Lightning delegates to its experiment."""
         if writer == "tf1":
             tf = import_module("tensorflow")
             with tf.Graph().as_default():
                 native = tf.compat.v1.summary.FileWriter(str(dest))
                 try:
-                    native.add_event(event)
+                    write = native.add_event
+                    write(event)
                 finally:
                     native.close()
         elif writer == "tf2":
             tf = import_module("tensorflow")
             native = tf.summary.create_file_writer(str(dest))
             with native.as_default():
-                if not tf.summary.experimental.write_raw_pb(
-                    summary.SerializeToString(), step=7
-                ):
+                write = tf.summary.experimental.write_raw_pb
+                if not write(summary.SerializeToString(), step=7):
                     raise ValueError("TF2 did not write the caller-supplied Summary")
             native.close()
         elif writer == "tb221":
@@ -213,7 +276,8 @@ class _MediaCorpus:
                 "tensorboard.summary.writer.event_file_writer"
             ).EventFileWriter(str(dest))
             try:
-                native.add_event(event)
+                write = native.add_event
+                write(event)
             finally:
                 native.close()
         elif writer == "lightning":
@@ -222,9 +286,15 @@ class _MediaCorpus:
             )
             experiment = logger.experiment
             try:
-                experiment.file_writer.add_summary(summary, global_step=7, walltime=1.0)
+                write = experiment.file_writer.add_summary
+                write(summary, global_step=7, walltime=1.0)
             finally:
                 experiment.close()
+            owner = type(logger)
+            return (
+                f"{owner.__module__}.{owner.__qualname__} -> "
+                f"{write.__module__}.{write.__qualname__}"
+            )
         else:
             module = (
                 "tensorboardX.writer"
@@ -233,9 +303,11 @@ class _MediaCorpus:
             )
             native = import_module(module).FileWriter(str(dest))
             try:
-                native.add_summary(summary, global_step=7, walltime=1.0)
+                write = native.add_summary
+                write(summary, global_step=7, walltime=1.0)
             finally:
                 native.close()
+        return f"{write.__module__}.{write.__qualname__}"
 
     def emit(self, dest: Path, writer: str) -> None:
         """Load only modules installed for this backend, and serialize a native event."""
@@ -251,17 +323,43 @@ class _MediaCorpus:
         summary = self._build_summary(schema)
         event = events.Event(step=7, wall_time=1, summary=summary)
         path = dest / f"events.out.tfevents.encoded-{writer}"
+        extended = (self.work / "extended-summary.pb").is_file()
         if writer in {"tb115", "tb200"}:
             with path.open("xb") as handle:
                 native = import_module(
                     "tensorboard.summary.writer.record_writer"
                 ).RecordWriter(handle)
-                for record in (events.Event(file_version="brain.Event:2"), event):
+                header = events.Event(file_version="brain.Event:2")
+                if extended:
+                    header.wall_time = time()
+                for record in (header, event):
                     native.write(record.SerializeToString())
+                api = f"{native.write.__module__}.{native.write.__qualname__}"
         else:
-            self._write_native(writer, dest, event, summary)
+            api = self._write_native(writer, dest, event, summary)
             (source,) = dest.glob("events.out.tfevents.*")
             source.rename(path)
+        if extended:
+            distributions = {
+                "tb115": ("tensorboard",),
+                "tb200": ("tensorboard",),
+                "tf1": ("tensorflow-cpu",),
+                "tf2": ("tensorflow-cpu",),
+                "tb221": ("tensorboard",),
+                "tbx": ("tensorboardX",),
+                "torch": ("torch", "tensorboard"),
+                "lightning": ("lightning", "torch", "tensorboard"),
+            }
+            (dest / "provenance.json").write_text(
+                json.dumps(
+                    {
+                        "api": api,
+                        "versions": {
+                            name: version(name) for name in distributions[writer]
+                        },
+                    }
+                )
+            )
 
     def _run_writer(self, writer: str, dependencies: list[str], dest: Path) -> Path:
         """Run this module's adapter in a pinned environment, with torch only from its CPU index."""
@@ -313,12 +411,24 @@ class _MediaCorpus:
             str(dest),
             writer,
         ]
-        subprocess.run(command, check=True)  # noqa: S603
+        subprocess.run(  # noqa: S603
+            command,
+            check=True,
+            env={
+                **os.environ,
+                "OMP_NUM_THREADS": "1",
+                "OPENBLAS_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1",
+                "TF_NUM_INTEROP_THREADS": "1",
+                "TF_NUM_INTRAOP_THREADS": "1",
+                "CUDA_VISIBLE_DEVICES": "",
+            },
+        )
         (event_file,) = dest.glob("events.out.tfevents.*")
         return event_file
 
-    def generate(self, output: Path) -> None:
-        """Keep one complete file; save other files' native envelopes around its Summary."""
+    def generate(self, output: Path, *, extended: bytes | None = None) -> None:
+        """Save native envelopes around one independently reconstructible Summary."""
         historical = ["numpy==1.23.5", "protobuf==3.20.3", "setuptools==80.9.0"]
         tf = ["tensorflow-cpu==2.21.0", "tensorboard==2.21.0"]
         packages = {
@@ -335,43 +445,70 @@ class _MediaCorpus:
                 "tensorboard==2.21.0",
             ],
         }
-        loader = import_module(
-            "tensorboard.backend.event_processing.event_file_loader"
-        ).LegacyEventFileLoader
-        canonical = self._run_writer(
-            "tb115", packages.pop("tb115"), output / "encoded-tb115"
-        )
-        (reference,) = (
-            e for e in loader(str(canonical)).Load() if e.HasField("summary")
-        )
-        shared = reference.summary.SerializeToString()
-        envelopes = {}
+        if extended is not None:
+            shared = extended
+        else:
+            loader = import_module(
+                "tensorboard.backend.event_processing.event_file_loader"
+            ).LegacyEventFileLoader
+            canonical = self._run_writer(
+                "tb115", packages.pop("tb115"), output / "encoded-tb115"
+            )
+            (reference,) = (
+                e for e in loader(str(canonical)).Load() if e.HasField("summary")
+            )
+            shared = bytes(reference.summary.SerializeToString())
+        envelopes: dict[str, dict[str, object]] = {}
         for writer, dependencies in packages.items():
             path = self._run_writer(
                 writer, dependencies, self.work / f"encoded-{writer}"
             )
             actual = path.read_bytes()
             before, after = actual.split(shared)
-            envelopes[writer] = {
+            if len(before) + len(after) > 4096:
+                raise ValueError(f"{writer}: native envelope exceeds 4 KiB")
+            envelope: dict[str, object] = {
                 "prefix": before.hex(),
                 "suffix": after.hex(),
                 "sha256": sha256(actual).hexdigest(),
             }
+            if extended is not None:
+                envelope.update(
+                    json.loads(path.with_name("provenance.json").read_text())
+                )
+            envelopes[writer] = envelope
+        if extended is not None:
+            (output / "encoded-extended.json").write_text(
+                json.dumps(
+                    {
+                        "summary_sha256": sha256(shared).hexdigest(),
+                        "writers": envelopes,
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+            return
         (output / "encoded-envelopes.json").write_text(
             json.dumps(envelopes, indent=2) + "\n"
         )
 
 
 def main() -> None:
-    """Generate the corpus in an empty directory from the two original reference files."""
+    """Generate the selected matrix in a new or empty directory."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-o", "--output", type=Path, required=True)
+    parser.add_argument(
+        "--extended",
+        action="store_true",
+        help="write only the cross-writer envelopes for the extended media sources",
+    )
     parser.add_argument(
         "-s",
         "--source",
         type=Path,
         default=CORPUS,
-        help="producer-cases directory containing the media/ and rasters/ inputs",
+        help="producer-cases directory containing the original media runs",
     )
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -380,6 +517,11 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as temp:
         work = Path(temp)
         corpus = _MediaCorpus(work)
+        if args.extended:
+            corpus.generate(
+                args.output.resolve(), extended=corpus.stage_extended(args.source)
+            )
+            return
         corpus.stage_sources(args.source)
         corpus.stage_tones()
         hashes = {

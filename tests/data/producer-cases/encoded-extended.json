@@ -1,0 +1,80 @@
+{
+  "summary_sha256": "29df6e7b2ae8848aea036352acfbbbb50c24d14123ef1d7ae7fad4127f2b25f5",
+  "writers": {
+    "tb115": {
+      "prefix": "1800000000000000a37f4b220915ade63fabbfda411a0d627261696e2e4576656e743a32677ce49e961b0a00000000005fa893e009000000000000f03f10072a87b728",
+      "suffix": "566a063d",
+      "sha256": "246448600679ac6270fd102b494209ca8ae60fdd22c55f0cc5d6d665047f14d0",
+      "api": "tensorboard.summary.writer.record_writer.RecordWriter.write",
+      "versions": {
+        "tensorboard": "1.15.0"
+      }
+    },
+    "tb200": {
+      "prefix": "1800000000000000a37f4b220959c02540abbfda411a0d627261696e2e4576656e743a3263148bca961b0a00000000005fa893e009000000000000f03f10072a87b728",
+      "suffix": "566a063d",
+      "sha256": "452fd004433a8922eeaf0dbf41ad2b0dbf4f86f8d6a7bc807391f9422e265ea2",
+      "api": "tensorboard.summary.writer.record_writer.RecordWriter.write",
+      "versions": {
+        "tensorboard": "2.0.0"
+      }
+    },
+    "tf1": {
+      "prefix": "3e00000000000000d9d240e7090000c041abbfda411a0d627261696e2e4576656e743a3252240a2274656e736f72666c6f772e636f72652e7574696c2e6576656e74735f7772697465726768a9ad961b0a00000000005fa893e009000000000000f03f10072a87b728",
+      "suffix": "566a063d",
+      "sha256": "3de5d2d40b49313e815db006b1e7d30bc0ec5c87fb4027a5d93b396bbd9f65f2",
+      "api": "tensorflow.python.summary.writer.writer.FileWriter.add_event",
+      "versions": {
+        "tensorflow-cpu": "2.21.0"
+      }
+    },
+    "tf2": {
+      "prefix": "3e00000000000000d9d240e7090000c043abbfda411a0d627261696e2e4576656e743a3252240a2274656e736f72666c6f772e636f72652e7574696c2e6576656e74735f777269746572588e973f961b0a00000000005fa893e009caddca43abbfda4110072a87b728",
+      "suffix": "b61f335e",
+      "sha256": "729007baad6f7d3e2a2ede78d0a2545653ce04a2c645c14671380e580c033df8",
+      "api": "tensorflow.python.ops.summary_ops_v2.write_raw_pb",
+      "versions": {
+        "tensorflow-cpu": "2.21.0"
+      }
+    },
+    "tb221": {
+      "prefix": "4800000000000000fe92489d0900be0f44abbfda411a0d627261696e2e4576656e743a32522e0a2c74656e736f72626f6172642e73756d6d6172792e7772697465722e6576656e745f66696c655f777269746572bf20ec9d961b0a00000000005fa893e009000000000000f03f10072a87b728",
+      "suffix": "566a063d",
+      "sha256": "43d2ba4e55d0b863a51f4be08d931be7c009e8c3ac241f7a1d5461119b621032",
+      "api": "tensorboard.summary.writer.event_file_writer.EventFileWriter.add_event",
+      "versions": {
+        "tensorboard": "2.21.0"
+      }
+    },
+    "tbx": {
+      "prefix": "1800000000000000a37f4b220919ea3444abbfda411a0d627261696e2e4576656e743a3280d226fd961b0a00000000005fa893e009000000000000f03f10072a87b728",
+      "suffix": "566a063d",
+      "sha256": "0aad73b0a65c0b0f916ce04975e61ac62d63d6e9f56f2928348c420c5a7693db",
+      "api": "tensorboardX.writer.FileWriter.add_summary",
+      "versions": {
+        "tensorboardX": "2.6.5"
+      }
+    },
+    "torch": {
+      "prefix": "4800000000000000fe92489d09c6083a45abbfda411a0d627261696e2e4576656e743a32522e0a2c74656e736f72626f6172642e73756d6d6172792e7772697465722e6576656e745f66696c655f7772697465726f7aca88961b0a00000000005fa893e009000000000000f03f10072a87b728",
+      "suffix": "566a063d",
+      "sha256": "eab2d019f3c79091648610680053a053f28c1a27dc6dff4fcb940efafdf4ceca",
+      "api": "torch.utils.tensorboard.writer.FileWriter.add_summary",
+      "versions": {
+        "torch": "2.12.0+cpu",
+        "tensorboard": "2.21.0"
+      }
+    },
+    "lightning": {
+      "prefix": "4800000000000000fe92489d0985027847abbfda411a0d627261696e2e4576656e743a32522e0a2c74656e736f72626f6172642e73756d6d6172792e7772697465722e6576656e745f66696c655f7772697465728b3fda23961b0a00000000005fa893e009000000000000f03f10072a87b728",
+      "suffix": "566a063d",
+      "sha256": "9c0e19b62bf573c0c088199c439bdfb95e8894bb276db8b852af9d83cdba27e3",
+      "api": "lightning.pytorch.loggers.tensorboard.TensorBoardLogger -> torch.utils.tensorboard.writer.FileWriter.add_summary",
+      "versions": {
+        "lightning": "2.6.6",
+        "torch": "2.12.0+cpu",
+        "tensorboard": "2.21.0"
+      }
+    }
+  }
+}
