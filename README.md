@@ -548,6 +548,9 @@ How to read the table:
 - **Encoded:** the low-level writer preserved bytes supplied by the caller; this does not mean the writer has that
   encoder.
 - **Delegated:** the call went through Lightning's PyTorch writer.
+- **Missing:** the named writer can produce this case, but the suite has no test for it through that writer.
+- **Not supported:** the pinned writer or plugin has no such API; this is not a missing test.
+- A cell can contain both a verified case and a missing variant; an unmarked cell claims only the cases it names.
 - Historical encoded-media cases use each release's TensorBoard `RecordWriter`, separately from its native TensorFlow
   examples.
 
@@ -557,26 +560,64 @@ An additional TensorFlow 1.2.0 fixture on CPython 3.6 exercises the older practi
 TensorBoard 1.15 uses `plugins/tensorboard_text/tensors.json` to select dashboard series; tboardfs exports both the
 registered and unregistered string tables.
 
-| Tested data | TF/TB 1.15.0 | TF/TB 2.0.0 | TF 2.21.0 graph mode | TF/TB 2.21.0 eager | TensorBoardX 2.6.5 | PyTorch 2.12.0 CPU | Lightning 2.6.6 |
+| Data and test coverage | TF/TB 1.15.0 | TF/TB 2.0.0 | TF 2.21.0 graph mode | TF eager / standalone TB 2.21.0 | TensorBoardX 2.6.5 | PyTorch 2.12.0 CPU | Lightning 2.6.6 |
 | -- | -- | -- | -- | -- | -- | -- | -- |
-| Scalars | Native | Native | Native | Native | Native, grouped subruns | Native, double precision | Native training metrics |
-| Histograms | Classic buckets | Tensor buckets | Classic buckets | Tensor buckets | Samples and raw buckets | Samples and raw buckets | Delegated model weights |
+| Scalars | Native | Native | Native | Native | Native, grouped subruns | Double precision; **Missing:** grouped `add_scalars` subruns | Native training metrics; **Missing:** delegated grouped subruns and double-precision scalars |
+| Histograms | Classic buckets | Tensor buckets | Classic buckets | Tensor buckets | Samples and raw buckets | Samples and raw buckets | Delegated model weights; **Missing:** delegated raw buckets |
 | Distributions | Derived percentiles | Derived percentiles | Derived percentiles | Derived percentiles | Derived percentiles | Derived percentiles | Derived percentiles |
-| PR curves | Weighted | Weighted plugin op | Threshold counts | Weighted, unweighted and precomputed | Weighted and precomputed | Weighted and precomputed | Delegated weighted |
-| Meshes and point clouds | Surface and colored cloud | Surface and colored cloud | Triangle and colored cloud | Batched terrain and range scans | Tetrahedron and cloud | Triangle and colored cloud | Delegated surface and colored cloud |
-| Embeddings | Config and TSVs | Config and TSVs | Config and TSVs | Config, sidecars and checkpoint | Vectors, labels and sprites | Vectors, labels and sprites | Delegated vectors, labels and sprite |
-| Text | Native | Native | Vector | Unicode table | Native | Native | Delegated Markdown |
-| HParams | Experiment and trial | Experiment and trial | Plugin builders | Experiment and trial | Trial and metric | Child run and metric | Metrics and `hparams.yaml` |
-| Custom scalar layouts | Multiline | Multiline | Multiline | Margin and multiline | Margin and multiline | Margin and multiline | Delegated margin chart |
-| Graphs | Session graph | Eager trace | Session graph | Function and Keras graphs | Model, ONNX and OpenVINO imports | Traced model | Logger delegates model graph |
-| Still images | Native PNG; encoded alternatives | Native PNG; encoded alternatives | Native PNG; encoded alternatives | Batched PNG; encoded alternatives | PNG grids and boxes; encoded alternatives | PNG; encoded alternatives | Delegated PNG; encoded alternatives |
+| PR curves | Native weighted, unweighted on wire; **Missing:** native unweighted and precomputed | Native weighted, unweighted on wire; **Missing:** native unweighted and precomputed | Unweighted; **Missing:** weighted and precomputed | Weighted, unweighted and precomputed | Weighted and precomputed | Weighted and precomputed; **Missing:** unweighted | Delegated weighted; **Missing:** unweighted and precomputed |
+| Meshes and point clouds | Colored and uncolored, native and wire; **Missing:** batches | Colored and uncolored, native and wire; **Missing:** batches | Triangle and colored cloud; **Missing:** batches, colored surface, uncolored cloud | Batched surfaces and clouds; optional faces and colors | Colored tetrahedron and uncolored cloud; **Missing:** batches, uncolored surface, colored cloud | Colored triangle and cloud; **Missing:** batches, uncolored surface and cloud | Delegated surface and colored cloud; **Missing:** batches, colored surface, uncolored cloud |
+| Embeddings | TSVs; **Missing:** sprite, bookmarks, checkpoint config | TSVs; **Missing:** sprite, bookmarks, checkpoint config | TSVs; **Missing:** sprite, bookmarks, checkpoint config | TSVs, binary vectors, sprite, bookmarks and checkpoint config | Multiple embeddings; labels and sprites independently optional | Labels and sprite together; **Missing:** optional assets and multiple embeddings | Delegated labels and sprite together; **Missing:** optional assets and multiple embeddings |
+| Text | Native vector, wire table; **Missing:** native rank 3 | Native vector, wire table; **Missing:** native rank 3 | Vector; **Missing:** native rank 2 and 3 | Unicode table; **Missing:** native rank 3 | Native text | Native text | Delegated Markdown |
+| HParams | Experiment, trial, end on wire; **Missing:** native session-end builder and mixed domains | Experiment, trial, end on wire; **Missing:** native session-end builder and mixed domains | Experiment and trial; **Missing:** session end and mixed domains | Experiment, trial, end and mixed domains | Trial and metric | Child run and metric; **Missing:** explicit discrete domain | Metrics and `hparams.yaml`; **Missing:** delegated child run with explicit discrete domain |
+| Custom scalar layouts | Multiline; **Missing:** margin | Multiline; **Missing:** margin | Multiline; **Missing:** margin | Margin and multiline | Margin and multiline | Margin and multiline | Delegated margin; **Missing:** multiline |
+| Graphs | Session graph; **Missing:** Sequential Keras model summary | Eager trace; **Missing:** traced `tf.function` and Sequential Keras model summary | Session graph and meta graph | Function and Keras graphs | Model, ONNX and OpenVINO imports | Traced model | Logger delegates model graph |
+| Still images | Native PNG; encoded alternatives | Native PNG; encoded alternatives | Native PNG; encoded alternatives | Batched PNG; encoded alternatives | PNG grids and boxes; encoded alternatives | PNG; encoded alternatives; **Missing:** native grids and boxes | Delegated PNG; encoded alternatives; **Missing:** delegated grids and boxes |
 | Animation | Encoded | Encoded | Encoded | Encoded | Native GIF; encoded alternatives | Native GIF; encoded alternatives | Delegated GIF; encoded alternatives |
 | Audio | WAV; encoded alternatives | WAV; encoded alternatives | WAV; encoded alternatives | Batched WAV; encoded alternatives | Stereo WAV; encoded alternatives | Mono WAV; encoded alternatives | Delegated WAV; encoded alternatives |
 | Video containers | Encoded | Encoded | Encoded | Encoded | Encoded | Encoded | Delegated encoded |
-| Generic tensors | Native float32; other wire types | Native float32; other wire types | Matrix and strings | Numeric, string, resource and variant; full wire matrix | 18 numeric/Boolean wire types, strings and resource | 12 native dtypes, three raw-only | Delegated float64 |
-| Profiler | Native CPU session trace | Native CPU `.trace` | Timed session and v1 timeline | CPU XPlane | Not supported by its writer | CPU trace excerpt | Native `PyTorchProfiler` |
-| TensorFlow Debugger | V1 numeric summary | V1 numeric summary | Native `tfdbg` tensor dump | Six Debugger V2 streams | Not supported by its writer | Not supported by its writer | Not supported by its logger |
-| Beholder | Native arrays capture and section metadata | Constructed frame sidecar | Not included in TB 2.21 | Not included in TB 2.21 | Not supported by its writer | Not supported by its writer | Not supported by its logger |
+| Extended encoded media (cases below) | **Missing** | **Missing** | **Missing** | Standalone TB tested; **Missing:** TF eager | **Missing** | **Missing** | **Missing** via delegated writer |
+| Generic tensors | Native float32; wider types on wire; **Missing:** native float64, complex64 and binary strings | Native float32; wider types on wire; **Missing:** native float64, complex64 and binary strings | Matrix and strings; **Missing:** native float64, complex64 and binary strings | Numeric, binary strings, resource, variant; full wire matrix; **Missing:** native float64 and complex64 | 18 numeric/Boolean wire types, UTF-8 strings and resource; **Missing:** binary strings via file writer | 12 native dtypes, three tested as raw-only | Delegated float64; **Missing:** delegated complex64 and raw-only float16 |
+| Profiler | Native CPU session trace; **Missing:** v1 CPU timeline JSON | Native CPU `.trace`; **Missing:** `compat.v1` CPU timeline JSON | Timed session and v1 timeline | CPU XPlane | Not supported by its writer | CPU trace excerpt | Native `PyTorchProfiler` |
+| TensorFlow Debugger | V1 numeric summary on wire; **Missing:** native watched-tensor dump | V1 numeric summary on wire; **Missing:** `compat.v1` watched-tensor dump | Native `tfdbg` tensor dump | Six Debugger V2 streams; **Missing:** automatic capture of a live operation | Not supported by its writer | Not supported by its writer | Not supported by its logger |
+| Beholder | Native arrays capture and section metadata | Constructed frame; **Missing:** native arrays capture and section metadata in graph mode | Not included in TB 2.21 | Not included in TB 2.21 | Not supported by its writer | Not supported by its writer | Not supported by its logger |
+
+The [cross-writer media tests](tests/test_encoded_media_writers.py) cover eight low-level writer paths, including both
+TF eager and standalone TensorBoard 2.21.
+
+All eight preserve still images, two-frame GIF/APNG/WebP, five audio formats and six silent video containers.
+
+The **extended encoded media** row marks cases tested with standalone `EventFileWriter` but not across the other seven
+paths:
+
+- [Still images](tests/test_raster_formats.py): the full PNG color/depth and baseline/progressive JPEG sets, including
+  CMYK, plus [single-frame GIF routing](tests/test_media_formats.py).
+- [Animation](tests/test_raster_formats.py): moving partial frames with GIF disposal, APNG blending and lossless/lossy
+  animated WebP.
+- [Audio](tests/test_audio_variants.py): ADTS AAC, AAC and ALAC in M4A, PCM AIFF, float WAV and the
+  [full integer PCM sample-width set](tests/test_media_formats.py).
+- [Video](tests/test_av_clips.py): synchronized sound and motion in all six containers, not just the silent clips.
+
+Other marks distinguish the producer test from a reader behavior that the suite already checks:
+
+- The [historical mesh API](https://github.com/tensorflow/tensorboard/blob/1.15.0/tensorboard/plugins/mesh/summary.py)
+  accepts leading dimensions; the [batched geometry test](tests/test_geometry_scene.py) checks vertex order and triangle
+  indices across two objects.
+- The [projector tests](tests/test_embedding_cases.py) check that vector rows still match their labels and sprite tiles
+  when observations change order.
+- The [checkpoint fixture](tests/test_auxiliary_formats.py) checks that tboardfs exposes the config without extracting
+  checkpoint vectors; the missing historical test is for that same behavior.
+- The [rank-3 text test](tests/test_text_tables.py) uses a constructed event: the Markdown preview shows one plane, but
+  JSON retains all planes.
+- The [dtype tests](tests/test_torch_formats.py) check byte-exact recovery of noncanonical PyTorch values; a raw-only
+  result is not a missing test.
+- The [binary string fixture](tests/test_tf2_plugin_formats.py) contains embedded NUL and invalid UTF-8 bytes, not just
+  non-ASCII text.
+- The [historical PR API](https://github.com/tensorflow/tensorboard/blob/1.15.0/tensorboard/plugins/pr_curve/summary.py)
+  accepts predictions or precomputed counts; supplying an equivalent tensor does not exercise either producer call.
+
+CPU profiles do not establish accelerator coverage: a real TPU operation profile requires a TPU capture, not the
+[schema-generated example](tests/test_legacy_tool_assets.py).
 
 For video with synchronized sound, the fixture uses H.264/AAC in MP4 and MOV, MPEG-4/PCM in AVI, VP9/Opus in WebM,
 H.264/FLAC in Matroska and Theora/Vorbis in Ogg.
@@ -602,7 +643,7 @@ The suite checks decoded content and byte preservation, not playback in a specif
 | Static and animated GIF, including an `images` plugin tensor | `videos/<tag>/<step>.gif`, with the original frames |
 | WAV (8-, 16-, 24-, 32-bit PCM and float32), MP3, FLAC, Ogg/Vorbis, WebM/Opus, ADTS AAC, AAC or ALAC in M4A, PCM AIFF | `audio/`, with the detected extension |
 | MP4, QuickTime, AVI, WebM, Matroska, Ogg/Theora in a custom `video` summary | `videos/`, with `.mp4`, `.mov`, `.avi`, `.webm`, `.mkv`, `.ogg` respectively |
-| TIFF or AVIF image, RIFF MIDI audio | `.bin` under the corresponding tab; no invented codec or lost bytes |
+| TIFF or AVIF image, RIFF MIDI audio | Byte-exact `.bin` fallback tested on all eight paths; **missing export feature:** format-specific extensions (`.tiff`, `.avif`, `.rmi`) |
 
 The [TF2 image writer](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/plugins/image/summary_v2.py)
 emits PNG and the
