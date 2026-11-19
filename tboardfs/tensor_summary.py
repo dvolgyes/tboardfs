@@ -73,9 +73,11 @@ class _TensorSummary:
         plugin: str, tensor: dict[str, Any], count: int
     ) -> range | None:
         """Select encoded samples, excluding image dimensions and audio labels."""
+        if tensor.get("unknown_rank"):
+            return None
         shape = tensor.get("shape") or []
         if plugin == "images":
-            if tensor.get("unknown_rank") or count < 2 or shape != [count]:
+            if count < 2 or shape != [count]:
                 return None
             return range(2, count)
         if plugin == "audio":
@@ -86,10 +88,12 @@ class _TensorSummary:
         return None
 
     @staticmethod
-    def part_extension(value: dict[str, Any], kind: str, blob: bytes) -> str:
-        """Return the file extension of one item from media_parts."""
+    def part_extension(value: dict[str, Any], kind: str, blob: bytes) -> str | None:
+        """Choose an extension per item, omitting small unrecognized generic fields."""
         if kind == "graphs":
             return GRAPH_PLUGINS[_Classifier.plugin_name(value)][1]
+        if kind == "tensors":
+            return _Classifier.embedded_extension(blob)
         return detect_extension(blob)
 
     @staticmethod

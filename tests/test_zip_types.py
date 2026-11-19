@@ -1,6 +1,7 @@
 """Exercise the ZIP package sniffer independently of the TensorBoard reader."""
 
 from io import BytesIO
+from pathlib import Path
 from random import Random
 import struct
 from unittest import TestCase
@@ -49,7 +50,75 @@ def _office(part, kind):
     }
 
 
+def _odf(kind):
+    path = (
+        Path(__file__).parent
+        / "data"
+        / "file-types"
+        / "zip-packages"
+        / f"survey.{kind}"
+    )
+    with ZipFile(path) as archive:
+        return {
+            name: archive.read(name)
+            for name in ("mimetype", "META-INF/manifest.xml", "content.xml")
+        }
+
+
+def _zip64(archive):
+    end = len(archive) - 22
+    size, offset = struct.unpack_from("<II", archive, end + 12)
+    count = struct.unpack_from("<H", archive, end + 10)[0]
+    record = struct.pack(
+        "<4sQ2H2I4Q", b"PK\x06\x06", 44, 45, 45, 0, 0, count, count, size, offset
+    )
+    locator = struct.pack("<4sIQI", b"PK\x06\x07", 0, end, 1)
+    return archive[:end] + record + locator + archive[end:]
+
+
 class TestZipTypes(TestCase):
+    def test_real_zip_packages(self):
+        directory = Path(__file__).parent / "data" / "file-types" / "zip-packages"
+        for name in (
+            "survey.odt",
+            "survey.ods",
+            "survey.odp",
+            "survey64.odt",
+            "survey64.docx",
+            "temperatures64.npz",
+        ):
+            path = directory / name
+            blob = path.read_bytes()
+            if "64" in name:
+                self.assertEqual(blob[-42:-38], b"PK\x06\x07")
+            with self.subTest(name=name):
+                self.assertEqual(zip_extension(blob), path.suffix[1:])
+
+    def test_opendocument(self):
+        for ext in ("odt", "ods", "odp"):
+            members = _odf(ext)
+            classic = _zip(members, ZIP_STORED)
+            for blob in (classic, _zip64(classic)):
+                self.assertEqual(zip_extension(blob), ext)
+            manifest = "META-INF/manifest.xml"
+            self.assertEqual(zip_extension(_zip(members, ZIP_DEFLATED)), "zip")
+            for change in (
+                {"mimetype": members["mimetype"] + b"\n"},
+                {manifest: _odf("ods" if ext == "odp" else "odp")[manifest]},
+                {
+                    manifest: members[manifest].replace(
+                        b"xmlns:manifest=", b"xmlns:other="
+                    )
+                },
+                {manifest: members[manifest] + b" " * (1 << 16)},
+                {"content.xml": b""},
+                {"data.npy": _npy(1)},
+                _office("word/document.xml", "wordprocessingml.document"),
+            ):
+                self.assertEqual(
+                    zip_extension(_zip(members | change, ZIP_STORED)), "zip"
+                )
+
     def test_zip_types_stored_deflated_numpy(self):
         arrays = {f"v{v}.npy": _npy(v) for v in (1, 2, 3)}
         for method in (ZIP_STORED, ZIP_DEFLATED):
@@ -68,7 +137,9 @@ class TestZipTypes(TestCase):
             members = _office(part, kind)
             for method in (ZIP_STORED, ZIP_DEFLATED):
                 with self.subTest(ext=ext, method=method):
-                    self.assertEqual(zip_extension(_zip(members, method)), ext)
+                    classic = _zip(members, method)
+                    self.assertEqual(zip_extension(classic), ext)
+                    self.assertEqual(zip_extension(_zip64(classic)), ext)
             for missing in members:
                 subset = members.copy()
                 del subset[missing]
@@ -186,8 +257,29 @@ class TestZipTypes(TestCase):
             "<4sQ2H2I4Q", b"PK\x06\x06", 44, 45, 45, 0, 0, 1, 1, size, offset
         )
         locator = struct.pack("<4sIQI", b"PK\x06\x07", 0, end, 1)
+        self.assertEqual(zip_extension(_zip64(archive)), "npz")
+        sentinels = bytearray(_zip64(archive))
+        struct.pack_into(
+            "<2H2I",
+            sentinels,
+            len(sentinels) - 14,
+            65535,
+            65535,
+            0xFFFFFFFF,
+            0xFFFFFFFF,
+        )
+        self.assertEqual(zip_extension(bytes(sentinels)), "npz")
+        self.assertEqual(zip_extension(_zip64(_zip({}))), "zip")
+        large = _zip64(_zip({str(n): b"x" for n in range(129)}))
         with patch("tboardfs.zip_types.ZipFile", side_effect=AssertionError):
-            for expected, pair in (("zip", record + locator), ("bin", locator)):
-                self.assertEqual(
-                    zip_extension(archive[:end] + pair + archive[end:]), expected
-                )
+            self.assertEqual(zip_extension(large), "zip")
+            noncanonical = bytearray(_zip64(archive))
+            struct.pack_into("<I", noncanonical, len(noncanonical) - 10, size + 1)
+            self.assertEqual(zip_extension(bytes(noncanonical)), "zip")
+            self.assertEqual(
+                zip_extension(archive[:end] + locator + archive[end:]), "bin"
+            )
+            extended = record[:4] + struct.pack("<Q", 48) + record[12:] + b"tail"
+            self.assertEqual(
+                zip_extension(archive[:end] + extended + locator + archive[end:]), "zip"
+            )

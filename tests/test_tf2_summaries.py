@@ -85,6 +85,23 @@ def test_malformed_image_keeps_packed_and_raw(
     assert fs.read(RAW, 65536, 0) == _frame(event)
 
 
+@pytest.mark.parametrize(
+    ("plugin", "shape", "unknown_rank"),
+    [("audio", [1, 2], False), ("audio", [1], True), ("graph_keras_model", [], False)],
+)
+def test_unusable_plugin_layout_does_not_promote_a_tensor_member(
+    tmp_path: Path, plugin: str, shape: list[int], unknown_rank: bool
+) -> None:
+    event = compat_pb2.Event(step=1)
+    tensor = _value(event, "broken", plugin, shape)
+    tensor.dtype = DT_STRING
+    tensor.tensor_shape.unknown_rank = unknown_rank
+    tensor.string_val.append(PNG + bytes(2048))
+    fs = _log(tmp_path, event)
+    assert set(_files(fs)) == {f"/plugins/{plugin}/broken/000001.json", RAW}
+    assert fs.read(RAW, 65536, 0) == _frame(event)
+
+
 def test_zero_image_vector_needs_no_packed_fallback(tmp_path: Path) -> None:
     event = _images(1)
     fs = _log(tmp_path, event)
@@ -160,7 +177,7 @@ def test_malformed_singleton_is_not_a_scalar(tmp_path: Path) -> None:
     assert json.loads(fs.read("/scalars/healthy.json", 1000, 0))[0]["value"] == 9
 
 
-def test_large_string_tensor_exports_each_actual_item(tmp_path: Path) -> None:
+def test_large_embedded_image_does_not_promote_a_short_label(tmp_path: Path) -> None:
     event = compat_pb2.Event(step=1)
     tensor = event.summary.value.add(tag="blobs").tensor
     tensor.dtype = DT_STRING
@@ -169,8 +186,11 @@ def test_large_string_tensor_exports_each_actual_item(tmp_path: Path) -> None:
     tensor.string_val.extend([b"short", blob])
     fs = _log(tmp_path, event)
     assert fs.read("/tensors/blobs/000001_1.png", 4096, 0) == blob
-    short_path = next(p for p in _files(fs) if p.startswith("/tensors/blobs/000001_0."))
-    assert fs.read(short_path, 100, 0) == b"short"
+    assert fs.readdir("/tensors/blobs")[2:] == ["000001_1.png"]
+    assert (
+        json.loads(fs.read("/text/blobs/000001.json", 65536, 0))["values"][0] == "short"
+    )
+    assert fs.read(RAW, 65536, 0) == _frame(event)
 
 
 def test_each_image_sample_is_a_file(tmp_path: Path) -> None:

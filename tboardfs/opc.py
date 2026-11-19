@@ -1,9 +1,9 @@
-"""Recognize Office packages from bounded, namespace-aware OPC metadata."""
+"""Recognize Office and OpenDocument packages from bounded XML metadata."""
 
 from dataclasses import dataclass, field
 import pyexpat
 from types import MappingProxyType
-from zipfile import ZipFile
+from zipfile import ZIP_STORED, ZipFile
 
 _MAX_XML = 1 << 16
 _TYPES = "http://schemas.openxmlformats.org/package/2006/content-types}"
@@ -19,10 +19,20 @@ _MAIN_TYPES = MappingProxyType(
         "ppt/presentation.xml": ("presentationml.presentation", "pptx"),
     }
 )
+_MANIFEST = "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0}"
+_ODF_TYPES = MappingProxyType(
+    {
+        b"application/vnd.oasis.opendocument.text": "odt",
+        b"application/vnd.oasis.opendocument.spreadsheet": "ods",
+        b"application/vnd.oasis.opendocument.presentation": "odp",
+    }
+)
 
 
 def office_extension(archive: ZipFile, names: set[str]) -> str:
-    """Match one standard main part, its override and an internal root relationship."""
+    """Recognize a supported ODF package or a standard OPC main part."""
+    if "mimetype" in names:
+        return _opendocument(archive, names)
     candidates = names.intersection(_MAIN_TYPES)
     if len(candidates) != 1 or not {"[Content_Types].xml", "_rels/.rels"} <= names:
         return "zip"
@@ -42,6 +52,42 @@ def office_extension(archive: ZipFile, names: set[str]) -> str:
     ]
     expected = f"application/vnd.openxmlformats-officedocument.{kind}.main+xml"
     return extension if types == [expected] else "zip"
+
+
+def _opendocument(archive: ZipFile, names: set[str]) -> str:
+    """Require a stored first mimetype and a matching root and content manifest entry."""
+    if not {"content.xml", "META-INF/manifest.xml"} <= names:
+        return "zip"
+    if names & {"[Content_Types].xml", "_rels/.rels"} or any(
+        name.lower().endswith(".npy") for name in names
+    ):
+        return "zip"
+    info = archive.getinfo("mimetype")
+    if (
+        info.header_offset != 0
+        or info.compress_type != ZIP_STORED
+        or max(info.file_size, info.compress_size) > 64
+        or not archive.getinfo("content.xml").file_size
+    ):
+        return "zip"
+    media = archive.read(info)
+    extension = _ODF_TYPES.get(media)
+    if not extension:
+        return "zip"
+    entries = _Metadata(_MANIFEST + "manifest", _MANIFEST + "file-entry").read(
+        archive, "META-INF/manifest.xml"
+    )
+    types = [
+        (node.get(_MANIFEST + "full-path"), node.get(_MANIFEST + "media-type"))
+        for node in entries
+    ]
+    root = [value for path, value in types if path == "/"]
+    content = [value for path, value in types if path == "content.xml"]
+    return (
+        extension
+        if root == [media.decode("ascii")] and content == ["text/xml"]
+        else "zip"
+    )
 
 
 def _main_relationship(archive: ZipFile, part: str) -> bool:

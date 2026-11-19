@@ -228,6 +228,7 @@ __marimo__/
 *.splat
 *.las
 *.ply
+!tests/data/file-types/scientific/*.ply
 *.ksplat
 *.gsplat
 *.spz

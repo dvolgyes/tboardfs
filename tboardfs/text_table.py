@@ -29,7 +29,7 @@ class _TextTable:
 
         The list is empty when the entry has no strings, or when they do not
         fill the tensor shape. A table also gets a JSON file that keeps the
-        shape and the exact strings.
+        shape and the decoded text, not the original bytes.
         """
         tensor = entry.payload.get("tensor") or {}
         if not tensor.get("string_val"):

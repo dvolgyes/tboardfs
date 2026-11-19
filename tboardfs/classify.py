@@ -1,13 +1,19 @@
+import re
 import struct
 from typing import Any
 
 import magic
 import numpy as np
 
-from tboardfs.constants import DT_STRING, LARGE_TENSOR_THRESHOLD, PLUGIN_TAB
+from tboardfs.constants import DT_STRING, DT_UINT8, LARGE_TENSOR_THRESHOLD, PLUGIN_TAB
+from tboardfs.data_formats import data_extension
+from tboardfs.media_containers import media_extension
 from tboardfs.model import Scalar
+from tboardfs.native_files import native_extension
 from tboardfs.tensor import _MAX_NUMPY_DIMS, tensor_to_array
 from tboardfs.zip_types import zip_extension
+
+_LABEL = re.compile(rb"[\w .-]*")
 
 
 def detect_extension(blob: bytes | None) -> str:
@@ -121,12 +127,16 @@ class _Classifier:
             return "videos"
 
         tensor = value.get("tensor")
-        if (
-            tensor
-            and _Classifier.raw_tensor_summary(value)
-            and _Classifier.large_tensor_like(tensor)
-        ):
-            return "tensors"
+        if tensor and _Classifier.raw_tensor_summary(value):
+            content = tensor.get("tensor_content") or b""
+            if tensor.get("string_val") or (
+                content
+                and (
+                    tensor.get("dtype") == DT_UINT8
+                    or len(content) >= LARGE_TENSOR_THRESHOLD
+                )
+            ):
+                return "tensors"
         return None
 
     @staticmethod
@@ -142,14 +152,14 @@ class _Classifier:
         return PLUGIN_TAB.get(plugin, "plugins") in {"tensors", "plugins"}
 
     @staticmethod
-    def large_tensor_like(tensor: dict[str, Any]) -> bool:
-        """Return true for tensor values large enough to expose as blobs."""
-        tensor_content = tensor.get("tensor_content")
-        if tensor_content and len(tensor_content) >= LARGE_TENSOR_THRESHOLD:
-            return True
-        return any(
-            len(item) >= LARGE_TENSOR_THRESHOLD for item in tensor.get("string_val", [])
-        )
+    def embedded_extension(blob: bytes) -> str | None:
+        """Keep recognized small files and preserve large fields even when opaque."""
+        if len(blob) >= LARGE_TENSOR_THRESHOLD:
+            return detect_extension(blob)
+        if _LABEL.fullmatch(blob):
+            return None
+        extension = detect_extension(blob)
+        return None if extension in {"bin", "txt"} else extension
 
     @staticmethod
     def binary_blob(value: dict[str, Any]) -> bytes | None:
@@ -217,7 +227,7 @@ class _Classifier:
             return _Classifier.numpy_extension(blob)
         if blob[4:8] == b"ftyp":
             return _Classifier.image_brand(blob)
-        return None
+        return native_extension(blob) or media_extension(blob) or data_extension(blob)
 
     @staticmethod
     def wave64_extension(blob: bytes) -> str:
@@ -264,12 +274,32 @@ class _Classifier:
         return "heif" if not brands.isdisjoint((b"mif1", b"msf1")) else None
 
     @staticmethod
+    def mpeg_layer(blob: bytes) -> str | None:
+        """Read the MPEG audio layer after an optional length-delimited ID3v2 tag."""
+        offset = 0
+        if blob.startswith(b"ID3"):
+            if (
+                len(blob) < 10
+                or blob[3] not in (2, 3, 4)
+                or any(n & 0x80 for n in blob[6:10])
+            ):
+                return None
+            for n in blob[6:10]:
+                offset = (offset << 7) | n
+            offset += 20 if blob[3] == 4 and blob[5] & 0x10 else 10
+        header = blob[offset : offset + 4]
+        if len(header) < 4 or header[0] != 255 or header[1] & 0xE0 != 0xE0:
+            return None
+        if header[1] & 0x18 == 8 or header[2] & 0x0C == 0x0C or header[2] >> 4 == 15:
+            return None
+        return {2: "mp2", 1: "mp3"}.get((header[1] >> 1) & 3)
+
+    @staticmethod
     def extension_from_magic(blob: bytes) -> str | None:
         """Map known libmagic MIME types and descriptions to stable filename extensions."""
         mime = magic.from_buffer(blob, mime=True).lower()
-        description = magic.from_buffer(blob).lower()
-        if description.startswith("mpeg adts, aac"):
-            return "aac"
+        if mime == "audio/mpeg" and (layer := _Classifier.mpeg_layer(blob)):
+            return layer
         if blob[4:12] == b"ftypM4A ":
             return "m4a"
         mime_extensions = {
@@ -278,7 +308,6 @@ class _Classifier:
             "audio/aiff": "aiff",
             "audio/flac": "flac",
             "audio/mp4": "m4a",
-            "audio/mpeg": "mp3",
             "audio/ogg": "ogg",
             "audio/wav": "wav",
             "audio/webm": "webm",
@@ -292,6 +321,13 @@ class _Classifier:
             "image/x-ms-bmp": "bmp",
             "image/gif": "gif",
             "image/jpeg": "jpg",
+            "image/jp2": "jp2",
+            "image/x-jp2-codestream": "j2k",
+            "image/jxl": "jxl",
+            "image/x-exr": "exr",
+            "image/svg+xml": "svg",
+            "image/vnd.microsoft.icon": "ico",
+            "image/x-icon": "ico",
             "image/png": "png",
             "image/tiff": "tiff",
             "image/webp": "webp",
@@ -300,12 +336,17 @@ class _Classifier:
             "video/ogg": "ogg",
             "video/quicktime": "mov",
             "video/webm": "webm",
+            "video/x-ms-asf": "asf",
+            "audio/x-ms-asf": "asf",
+            "application/vnd.ms-asf": "asf",
             "video/x-matroska": "mkv",
             "video/x-msvideo": "avi",
         }
         if mime in mime_extensions:
             return mime_extensions[mime]
-        return _Classifier.extension_from_magic_description(description)
+        return _Classifier.extension_from_magic_description(
+            magic.from_buffer(blob).lower()
+        )
 
     @staticmethod
     def extension_from_magic_description(description: str) -> str | None:
@@ -321,6 +362,8 @@ class _Classifier:
             ("webm", "webm"),
             ("mp4 base media", "mp4"),
             ("quicktime", "mov"),
+            ("mpeg adts, aac", "aac"),
+            ("mpeg adts, layer ii,", "mp2"),
             ("mpeg adts, layer iii", "mp3"),
             ("flac audio", "flac"),
         )

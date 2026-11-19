@@ -50,6 +50,7 @@ def _directory_entries(blob: bytes) -> int | None:
 
 
 def _zip64_entries(blob: bytes, locator: int) -> int | None:
+    """Inspect only fixed trailers whose location agrees with zipfile's end-relative lookup."""
     disk, offset, disks = struct.unpack_from("<IQI", blob, locator + 4)
     if disk or disks != 1 or offset + 56 > locator:
         return None
@@ -59,13 +60,23 @@ def _zip64_entries(blob: bytes, locator: int) -> int | None:
     disk, cd_disk, n_disk, count, cd_size, cd_offset = struct.unpack_from(
         "<II4Q", blob, offset + 16
     )
-    if disk or cd_disk or n_disk != count or count * 46 > cd_size:
-        return None
-    if count and not blob.startswith(b"PK\x01\x02", cd_offset):
+    if disk or cd_disk or n_disk != count:
         return None
     if offset + 12 + size != locator or cd_offset + cd_size != offset:
         return None
-    return -1
+    entries = _Package.directory_count(blob, offset, cd_offset, cd_size, count)
+    if entries is None:
+        return None
+    classic_count, classic_size, classic_offset = struct.unpack_from(
+        "<HII", blob, locator + 30
+    )
+    if (
+        classic_count not in (count, 0xFFFF)
+        or classic_size not in (cd_size, 0xFFFFFFFF)
+        or classic_offset not in (cd_offset, 0xFFFFFFFF)
+    ):
+        return -1
+    return entries if size == 44 else -1
 
 
 @dataclass(slots=True)

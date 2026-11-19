@@ -1,5 +1,5 @@
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from functools import partial
 import os
@@ -35,7 +35,7 @@ from tboardfs.run_metadata_text import run_metadata_text
 from tboardfs.summary import parse_event
 from tboardfs.skip_failure import skip_failure
 from tboardfs.summary_graph import summary_graph_def
-from tboardfs.tensor_summary import _TensorSummary
+from tboardfs.tensor_summary import GRAPH_PLUGINS, _TensorSummary
 from tboardfs.tables import (
     _TableMerge,
     _TableRows,
@@ -486,27 +486,33 @@ class _EventIndexer:
     ) -> None:
         """Index a binary summary value lazily by source record position."""
         tag, step, wall_time = identity
-        parts: Sequence[tuple[str, int | None, str]] | None = (
+        parts: Iterable[tuple[str, int | None, str]] | None = (
             _TensorSummary.media_parts(value)
         )
         tensor = value.get("tensor", {})
         strings = tensor.get("string_val", ())
         if parts is None:
+            plugin = _Classifier.plugin_name(value)
+            if tensor and (plugin in {"images", "audio"} or plugin in GRAPH_PLUGINS):
+                return
             kind = _Classifier.binary_kind(value)
             if kind is None:
                 return
             if strings and not tensor.get("tensor_content"):
                 width = len(str(len(strings) - 1))
-                parts = [
+                parts = (
                     (kind, i, f"_{i:0{width}d}" if len(strings) > 1 else "")
                     for i in range(len(strings))
-                ]
+                )
             else:
                 parts = [(kind, None, "")]
         frame = record.reference(cache.progress.identity)
         for part_kind, part, suffix in parts:
             data = _Classifier.binary_blob(value) if part is None else strings[part]
             if data is None:
+                continue
+            extension = _TensorSummary.part_extension(value, part_kind, data)
+            if extension is None:
                 continue
             entry = BinaryEntry(
                 source_path=cache.source_path,
@@ -516,7 +522,7 @@ class _EventIndexer:
                 wall_time=wall_time,
                 frame=frame,
                 value_ordinal=ordinal,
-                extension=_TensorSummary.part_extension(value, part_kind, data),
+                extension=extension,
                 part=part,
                 suffix=suffix,
             )
