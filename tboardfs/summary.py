@@ -129,6 +129,8 @@ class _SummaryParser:
         tensor: dict[str, Any] = {"dtype": message.dtype}
         if message.HasField("tensor_shape"):
             tensor["shape"] = [dim.size for dim in message.tensor_shape.dim]
+            if message.tensor_shape.unknown_rank:
+                tensor["unknown_rank"] = True
         if message.tensor_content:
             tensor["tensor_content"] = message.tensor_content
         values = _SummaryParser.parse_tensor_values(message)

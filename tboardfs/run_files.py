@@ -90,6 +90,7 @@ class RunFiles:
             run: the run, which keeps its moved tags so a run that grows
                 logs each move once.
         """
+        self._separate_tensor_payloads()
         tag_names = dict.fromkeys(
             file.tag for file in self.files if file.tag is not None
         )
@@ -108,6 +109,25 @@ class RunFiles:
                 "type": "name_map",
                 "data": self.name_map,
             }
+
+    def _separate_tensor_payloads(self) -> None:
+        """Keep embedded bytes next to a generated tensor view with the same filename."""
+        payloads = [
+            f
+            for f in self.files
+            if f.root == ("tensors",) and f.node["type"] == "binary"
+        ]
+        if not payloads:
+            return
+        views = {
+            (f.tag, f.name)
+            for f in self.files
+            if f.root == ("tensors",) and f.node["type"] != "binary"
+        }
+        for payload in payloads:
+            if (payload.tag, payload.name) in views:
+                stem, ext = payload.name.rsplit(".", 1)
+                payload.name = f"{stem}.embedded.{ext}"
 
     def _insert_files(
         self, run_node: dict[str, Any], paths: list[tuple[str, ...]]

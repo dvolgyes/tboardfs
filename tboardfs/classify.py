@@ -13,6 +13,9 @@ def detect_extension(blob: bytes | None) -> str:
     """Infer a stable file extension from encoded summary bytes."""
     if not blob:
         return "bin"
+    extension = _Classifier.container_extension(blob)
+    if extension is not None:
+        return extension
     extension = _Classifier.extension_from_magic(blob)
     if extension is not None:
         return extension
@@ -194,8 +197,46 @@ class _Classifier:
         return "tensors"
 
     @staticmethod
+    def container_extension(blob: bytes) -> str | None:
+        """Resolve containers whose MIME labels can be ambiguous across magic databases."""
+        if blob.startswith(b"RIFF") and blob[8:12] == b"RMID":
+            return (
+                "rmi"
+                if 12 <= int.from_bytes(blob[4:8], "little") + 8 <= len(blob)
+                else None
+            )
+        if blob.startswith(b"MThd") and len(blob) >= 14:
+            size = int.from_bytes(blob[4:8], "big")
+            return "mid" if 6 <= size <= len(blob) - 8 else None
+        if blob.startswith(b"\x93NUMPY"):
+            return _Classifier.numpy_extension(blob)
+        if blob[4:8] == b"ftyp" and _Classifier.avif_brand(blob):
+            return "avif"
+        return None
+
+    @staticmethod
+    def numpy_extension(blob: bytes) -> str | None:
+        """Recognize the versioned NPY header without loading the array."""
+        if blob[6:8] not in (b"\x01\x00", b"\x02\x00", b"\x03\x00"):
+            return None
+        start = 10 if blob[6] == 1 else 12
+        end = start + int.from_bytes(blob[8:start], "little")
+        return "npy" if start < end <= len(blob) and blob[end - 1] == 10 else None
+
+    @staticmethod
+    def avif_brand(blob: bytes) -> bool:
+        """Check the major and compatible brands within the first 4 KiB of an ftyp box."""
+        size = int.from_bytes(blob[:4], "big")
+        if not 16 <= size <= len(blob) or size % 4:
+            return False
+        brands = (b"avif", b"avis")
+        return blob[8:12] in brands or any(
+            blob[i : i + 4] in brands for i in range(16, min(size, 4096), 4)
+        )
+
+    @staticmethod
     def extension_from_magic(blob: bytes) -> str | None:
-        """Return a native extension when libmagic recognizes the payload."""
+        """Map known libmagic MIME types and descriptions to stable filename extensions."""
         mime = magic.from_buffer(blob, mime=True).lower()
         description = magic.from_buffer(blob).lower()
         if description.startswith("mpeg adts, aac"):
@@ -217,11 +258,13 @@ class _Classifier:
             "audio/x-m4a": "m4a",
             "audio/x-flac": "flac",
             "audio/x-wav": "wav",
+            "image/avif": "avif",
             "image/bmp": "bmp",
             "image/x-ms-bmp": "bmp",
             "image/gif": "gif",
             "image/jpeg": "jpg",
             "image/png": "png",
+            "image/tiff": "tiff",
             "image/webp": "webp",
             "text/plain": "txt",
             "video/mp4": "mp4",

@@ -303,6 +303,13 @@ Media files contain the original bytes; tboardfs does not transcode them.
 - Both single-frame and animated GIF images go under `videos/`.
 - TensorBoardX and PyTorch `add_video` write GIF image summaries rather than native video containers.
 - A custom `video` plugin can instead store a native video container.
+- An audio summary stays under `audio/` even if the bytes identify a different format.
+- A TF2 image tensor must be a vector containing two dimension strings followed by the declared number of images. If its
+  layout is inconsistent, `plugins/images/` contains the packed JSON and `raw/` keeps the original event.
+
+Filename extensions identify likely content; they do not certify that it will decode. Unknown payloads keep `.bin`. If a
+generated tensor view and an embedded file would have the same path, the generated view keeps its name. For example,
+`000007.npy` describes the outer byte tensor and `000007.embedded.npy` contains the original NPY file.
 
 Repeated values with the same tag retain their own payloads even when a writer omits repeated plugin metadata.
 
@@ -481,6 +488,7 @@ scripts/generate_geometry_cases.py --output samples/geometry
 | `generate_projector_layouts.py` | A historical plugin-local TSV layout with no root config and a modern config that names binary float32 vectors; both preserve row and label order |
 | `generate_media_cases.py` | Legacy media fields and plugin tensors: image channels, static/animated GIF, audio sample widths, and native video containers |
 | `generate_raster_cases.py` | PNG color types and sample depths, baseline and progressive JPEG, timed GIF/APNG/WebP pairs and moving sprites with partial frames, blending and disposal |
+| `generate_embedded_formats.py` | Standard MIDI notes, two-page big-endian 16-bit TIFF, an embedded Fortran-order NPY matrix in string and byte tensors, and plain ZIP versus numeric NPZ |
 | `generate_dtype_cases.py` | Both encodings of all 20 supported numeric/boolean dtype IDs, binary strings, and raw recovery of unsupported dtype IDs |
 | `generate_torch_cases.py` | CPU PyTorch scalar precision and actual `add_tensor` encodings, including records with no faithful NumPy preview |
 | `generate_plugin_cases.py` | Unicode text tables, HParams domains, margin/multiline custom charts, projector TSV/sprite/bookmarks, CPU profile and unknown plugin data |
@@ -643,7 +651,13 @@ The suite checks decoded content and byte preservation, not playback in a specif
 | Static and animated GIF, including an `images` plugin tensor | `videos/<tag>/<step>.gif`, with the original frames |
 | WAV (8-, 16-, 24-, 32-bit PCM and float32), MP3, FLAC, Ogg/Vorbis, WebM/Opus, ADTS AAC, AAC or ALAC in M4A, PCM AIFF | `audio/`, with the detected extension |
 | MP4, QuickTime, AVI, WebM, Matroska, Ogg/Theora in a custom `video` summary | `videos/`, with `.mp4`, `.mov`, `.avi`, `.webm`, `.mkv`, `.ogg` respectively |
-| TIFF or AVIF image, RIFF MIDI audio | Byte-exact `.bin` fallback tested on all eight paths; **missing export feature:** format-specific extensions (`.tiff`, `.avif`, `.rmi`) |
+| TIFF and AVIF images; RIFF-wrapped MIDI audio | Original bytes as `.tiff`, `.avif` and `.rmi` across all eight low-level writer paths; these previously used `.bin` |
+| Standard MIDI without a RIFF wrapper | `audio/<tag>/<step>.mid`; the note sequence is preserved |
+| Embedded NumPy array | `.npy` for an eligible binary tensor payload; dtype, byte order and storage order are unchanged |
+| Embedded ZIP and NPZ | Original bytes as `.bin`; a ZIP header alone does not identify a NumPy archive |
+
+**Missing fixtures, not unsupported writers:** HEIC versus AVIF inside the same container family; BigTIFF with 64-bit
+image-directory offsets; and RF64/BW64 audio with a `ds64` chunk instead of an ordinary RIFF length.
 
 The [TF2 image writer](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/plugins/image/summary_v2.py)
 emits PNG and the
@@ -653,6 +667,16 @@ WAV.
 TensorBoard's
 [image MIME detector](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/util/img_mime_type_detector.py)
 recognizes BMP, GIF, JPEG and PNG; the other containers test filesystem export, not dashboard playback.
+
+To compare extensions for an event file, run the development-only [detector comparison](scripts/compare_file_types.py):
+
+```bash
+scripts/compare_file_types.py tests/data/producer-cases/audio-variants/events.out.tfevents.audio-variants
+```
+
+It prints one JSON object per indexed binary item except graphs, whose extensions are set by the plugin schema.
+`tboardfs` is the export extension; `puremagic` lists candidate extensions in rank order without using a filename hint.
+The script does not change the event file or add `puremagic` to the project dependencies.
 
 The dtype matrix follows the
 [2.21.0 wire enum](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/compat/proto/types.proto), not just

@@ -1,15 +1,18 @@
 """TF2 tensor summaries are unpacked into the files that TF1 summaries give."""
 
+import base64
 import json
 from pathlib import Path
 
 from loguru import logger
 import numpy as np
+import pytest
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
 
 from test_incremental_parse import _files, _frame
+from test_tf_producer_cases import _events
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -46,6 +49,70 @@ def test_an_image_summary_is_an_image_file(tmp_path: Path) -> None:
 
     assert sorted(_files(fs)) == ["/images/img/000001.png", RAW]
     assert fs.read("/images/img/000001.png", 100, 0) == PNG + b"a"
+
+
+@pytest.mark.parametrize(
+    ("shape", "strings", "unknown_rank"),
+    [
+        ([3], [b"4", b"2"], False),
+        ([4], [b"4", b"2", PNG], False),
+        ([2], [b"4", b"2", PNG], False),
+        ([1, 3], [b"4", b"2", PNG], False),
+        ([1], [b"4"], False),
+        ([3], [b"4", b"2", PNG], True),
+    ],
+)
+def test_malformed_image_keeps_packed_and_raw(
+    tmp_path: Path, shape: list[int], strings: list[bytes], unknown_rank: bool
+) -> None:
+    event = _images(1, PNG + b"healthy")
+    tensor = _value(event, "bad", "images", shape)
+    tensor.dtype = DT_STRING
+    tensor.tensor_shape.unknown_rank = unknown_rank
+    tensor.string_val.extend(strings)
+    fs = _log(tmp_path, event)
+    packed = "/plugins/images/bad/000001.json"
+    healthy = "/images/img/000001.png"
+    assert set(_files(fs)) == {packed, healthy, RAW}
+    payload = json.loads(fs.read(packed, 65536, 0))["tensor"]
+    assert payload["shape"] == shape
+    assert payload.get("unknown_rank", False) == unknown_rank
+    assert [
+        item.encode() if isinstance(item, str) else base64.b64decode(item["base64"])
+        for item in payload["string_val"]
+    ] == strings
+    assert fs.read(healthy, 65536, 0) == PNG + b"healthy"
+    assert fs.read(RAW, 65536, 0) == _frame(event)
+
+
+def test_zero_image_vector_needs_no_packed_fallback(tmp_path: Path) -> None:
+    event = _images(1)
+    fs = _log(tmp_path, event)
+    assert set(_files(fs)) == {RAW}
+    assert fs.read(RAW, 65536, 0) == _frame(event)
+
+
+def test_gif_routes_by_summary_kind(tmp_path: Path) -> None:
+    gif = next(
+        v.image.encoded_image_string
+        for e in _events("media")
+        for v in e.summary.value
+        if v.tag == "animated"
+    )
+    event = _images(1, gif)
+    event.summary.value.add(tag="legacy").audio.encoded_audio_string = gif
+    audio = _value(event, "tensor", "audio", [1, 2])
+    audio.dtype = DT_STRING
+    audio.string_val.extend([gif, b"clip"])
+    fs = _log(tmp_path, event)
+    media = {
+        "/videos/img/000001.gif",
+        "/audio/legacy/000001.gif",
+        "/audio/tensor/000001.gif",
+    }
+    assert set(_files(fs)) == media | {RAW}
+    for path in media:
+        assert fs.read(path, len(gif), 0) == gif
 
 
 def test_omitted_metadata_across_append_and_rotation(tmp_path: Path) -> None:

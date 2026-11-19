@@ -128,7 +128,7 @@ class _MediaRun:
         batch.tensor.tensor_shape.dim.add(size=len(batch.tensor.string_val))
 
     def compressed_audio(self) -> None:
-        """Write native compressed clips and an unrecognized RIFF subtype."""
+        """Write compressed clips and a RIFF-wrapped MIDI note."""
         midi = bytes.fromhex(
             "4d54686400000006000000010060 4d54726b0000000c 00904560 30804500 00ff2f00"
         )

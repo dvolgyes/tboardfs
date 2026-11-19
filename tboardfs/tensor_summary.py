@@ -48,29 +48,42 @@ class _TensorSummary:
             return None
         plugin = _Classifier.plugin_name(value)
         strings = tensor.get("string_val", [])
-        shape = tensor.get("shape") or []
         if plugin in GRAPH_PLUGINS:
             content = value.get("plugin_content")
             if not strings or (plugin != TAGGED_RUN_METADATA and content != b"1"):
                 return None
             return [("graphs", 0, GRAPH_PLUGINS[plugin][0])]
-        if plugin == "images" and len(strings) >= 2:
-            indices, kind = range(2, len(strings)), "images"
-        elif plugin == "audio" and shape == [len(strings)]:
-            indices, kind = range(len(strings)), "audio"
-        elif plugin == "audio" and shape[1:] == [2] and len(strings) == 2 * shape[0]:
-            indices, kind = range(0, len(strings), 2), "audio"
-        else:
+        indices = _TensorSummary._sample_indices(plugin, tensor, len(strings))
+        if indices is None:
             return None
         width = len(str(len(indices) - 1))
         return [
             (
-                "videos" if bytes(strings[index]).startswith(GIF_HEADERS) else kind,
+                "videos"
+                if plugin == "images" and strings[index].startswith(GIF_HEADERS)
+                else plugin,
                 index,
                 "" if len(indices) == 1 else f"_{sample:0{width}d}",
             )
             for sample, index in enumerate(indices)
         ]
+
+    @staticmethod
+    def _sample_indices(
+        plugin: str, tensor: dict[str, Any], count: int
+    ) -> range | None:
+        """Select encoded samples, excluding image dimensions and audio labels."""
+        shape = tensor.get("shape") or []
+        if plugin == "images":
+            if tensor.get("unknown_rank") or count < 2 or shape != [count]:
+                return None
+            return range(2, count)
+        if plugin == "audio":
+            if shape == [count]:
+                return range(count)
+            if shape[1:] == [2] and count == 2 * shape[0]:
+                return range(0, count, 2)
+        return None
 
     @staticmethod
     def part_extension(value: dict[str, Any], kind: str, blob: bytes) -> str:

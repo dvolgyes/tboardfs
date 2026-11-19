@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from tboardfs import TensorBoardFS
+from tboardfs.classify import detect_extension
 from tboardfs.proto import compat_pb2
 
 from test_tf_producer_cases import _events
@@ -36,8 +37,8 @@ def values() -> dict[str, compat_pb2.Summary.Value]:
         ("gif", "videos", "gif"),
         ("animated", "videos", "gif"),
         ("bmp", "images", "bmp"),
-        ("tiff", "images", "bin"),
-        ("avif", "images", "bin"),
+        ("tiff", "images", "tiff"),
+        ("avif", "images", "avif"),
     ],
 )
 def test_legacy_images(
@@ -47,6 +48,15 @@ def test_legacy_images(
     assert (image.width, image.height, image.colorspace) == (16, 8, 3)
     blob = fs.read(f"/{tab}/{tag}/000001.{suffix}", 65536, 0)
     assert blob == image.encoded_image_string
+
+
+def test_avif_compatible_brand_with_generic_heif_major_brand(values: dict) -> None:
+    image = values["avif"].image.encoded_image_string
+    size = int.from_bytes(image[:4], "big")
+    brands = [image[n : n + 4] for n in range(16, size, 4)]
+    assert b"avif" in brands and b"mif1" in brands
+    generic = image[:8] + b"mif1" + image[12:]
+    assert detect_extension(generic) == "avif"
 
 
 def test_image_tensor_keeps_png_dimensions_channels_and_order(
@@ -120,7 +130,7 @@ def test_wav_headers_and_interleaved_pcm(
         ("audio-mp3", "audio/mpeg", "mp3"),
         ("audio-ogg", "audio/ogg", "ogg"),
         ("audio-webm", "audio/webm", "webm"),
-        ("riff-midi", "audio/mid", "bin"),
+        ("riff-midi", "audio/mid", "rmi"),
     ],
 )
 def test_custom_encoded_audio(

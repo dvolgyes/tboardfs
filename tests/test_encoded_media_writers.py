@@ -73,8 +73,8 @@ def reference() -> dict[str, bytes]:
         ("jpeg", "images", "jpg"),
         ("webp", "images", "webp"),
         ("bmp", "images", "bmp"),
-        ("tiff", "images", "bin"),
-        ("avif", "images", "bin"),
+        ("tiff", "images", "tiff"),
+        ("avif", "images", "avif"),
         ("animated-gif", "videos", "gif"),
         ("animated-apng", "images", "png"),
         ("animated-webp", "images", "webp"),
@@ -159,6 +159,6 @@ def test_custom_video_layouts_preserve_both_decoded_frames(
     assert fs.read(f"/videos/{layout}-{ext}/000007.{ext}", 65536, 0) == payload
 
 
-def test_non_wave_riff_audio_uses_binary_fallback(writer, reference):
+def test_wrapped_midi_keeps_riff_container(writer, reference):
     fs, _ = writer
-    assert fs.read("/audio/riff-midi/000007.bin", 65536, 0) == reference["riff-midi"]
+    assert fs.read("/audio/riff-midi/000007.rmi", 65536, 0) == reference["riff-midi"]

@@ -207,6 +207,22 @@ def test_detect_extension_uses_magic_for_native_formats() -> None:
     assert detect_extension(unknown) == "bin"
 
 
+@pytest.mark.parametrize("major", [1, 2, 3])
+def test_detect_versioned_numpy_headers(major: int) -> None:
+    array = np.arange(6, dtype=np.int16).reshape(2, 3)
+    single = BytesIO()
+    np.lib.format.write_array(single, array, version=(major, 0), allow_pickle=False)
+    blob = single.getvalue()
+    assert detect_extension(blob) == "npy"
+    assert detect_extension(blob[:16]) == "bin"
+
+
+def test_numpy_archive_is_not_a_single_array() -> None:
+    archive = BytesIO()
+    np.savez(archive, sample=np.arange(6))
+    assert detect_extension(archive.getvalue()) == "bin"
+
+
 def test_export_table_json_spells_infinities_and_nulls_nan() -> None:
     """Strict JSON keeps open bucket edges; NaN, a missing cell, becomes null."""
     series = {
