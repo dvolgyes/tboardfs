@@ -20,6 +20,7 @@ from tboardfs.file_times import FileTimes
 from tboardfs.file_status import FileIdentity
 from tboardfs.indexer import _EventIndexer
 from tboardfs.model import RunCache, SidecarEntry
+from tboardfs.open3d_asset import OPEN3D_PLUGIN, Open3DAsset
 from tboardfs.paths import _Paths
 from tboardfs.run_places import RunPlaces
 from tboardfs.run_tree import build_run_tree
@@ -351,7 +352,12 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             entry: SidecarEntry = node["entry"]
             if not self._allowed(entry.source_path):
                 raise fuse_error(ENOENT)
-            return entry.source_path.stat().st_size
+            if entry.tab != OPEN3D_PLUGIN:
+                return entry.source_path.stat().st_size
+            asset = Open3DAsset.stat(entry.source_path)
+            if asset is None:
+                raise fuse_error(ENOENT)
+            return asset.size
         return len(self._node_bytes(node, key))
 
     def _node_bytes(self, node: dict[str, Any], key: Hashable) -> bytes:

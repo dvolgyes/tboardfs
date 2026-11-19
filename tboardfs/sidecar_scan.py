@@ -9,6 +9,7 @@ import stat
 
 from tboardfs.constants import TENSORBOARD_EVENT_GLOB
 from tboardfs.model import SidecarEntry
+from tboardfs.open3d_asset import OPEN3D_PLUGIN, Open3DAsset
 from tboardfs.paths import _Paths
 from tboardfs.projector import CONFIG_NAME, _ProjectorConfig
 
@@ -90,6 +91,8 @@ class SidecarScan:
         if fnmatchcase(path.name, TENSORBOARD_EVENT_GLOB):
             return None
         parts = path.relative_to(self.run_dir).parts
+        if Open3DAsset.matches(parts):
+            return Open3DAsset.stat(path)
         lowered = tuple(part.lower() for part in parts)
         if parts == ("hparams.yaml",):
             tab = "hparams"
@@ -110,7 +113,13 @@ class SidecarScan:
             item
             for entry in entries
             if allowed(entry.source_path)
-            if (item := _stat_entry(entry.source_path, entry.tab, entry.rel_parts))
+            if (
+                item := (
+                    Open3DAsset.stat(entry.source_path)
+                    if entry.tab == OPEN3D_PLUGIN
+                    else _stat_entry(entry.source_path, entry.tab, entry.rel_parts)
+                )
+            )
             is not None
         )
 
@@ -123,6 +132,10 @@ class SidecarScan:
         for entry in entries:
             parts = entry.source_path.relative_to(run_dir).parts
             if entry.tab == "hparams" and parts != ("hparams.yaml",):
+                continue
+            if entry.tab == OPEN3D_PLUGIN:
+                if Open3DAsset.matches(parts):
+                    result.append(entry)
                 continue
             result.append(
                 SidecarEntry(

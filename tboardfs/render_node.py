@@ -10,6 +10,7 @@ from tboardfs.errors import fuse_error
 from tboardfs.extract import _extract_graph_blob, extract_binary_blob
 from tboardfs.meta_graph import meta_graph_graph_def
 from tboardfs.npy_export import array_to_npy
+from tboardfs.open3d_asset import OPEN3D_PLUGIN, Open3DAsset
 from tboardfs.raw_frames import RawFrames
 from tboardfs.run_metadata_text import run_metadata_text
 from tboardfs.summary_graph import summary_graph_def
@@ -29,6 +30,13 @@ def _derived(data: bytes | None) -> bytes:
     if data is None:
         raise fuse_error(EIO)
     return data
+
+
+def _sidecar(node: dict[str, Any]) -> bytes:
+    entry = node["entry"]
+    if entry.tab == OPEN3D_PLUGIN:
+        return Open3DAsset.read(entry)
+    return bytes(entry.source_path.read_bytes())
 
 
 _RENDERERS: Final[Mapping[str, Callable[[dict[str, Any]], bytes]]] = MappingProxyType(
@@ -54,6 +62,6 @@ _RENDERERS: Final[Mapping[str, Callable[[dict[str, Any]], bytes]]] = MappingProx
         "run_metadata_text": lambda node: _derived(
             run_metadata_text(node["entry"], extract_binary_blob(node["entry"]))
         ),
-        "sidecar": lambda node: bytes(node["entry"].source_path.read_bytes()),
+        "sidecar": _sidecar,
     }
 )
