@@ -1,14 +1,14 @@
 import base64
 from collections import defaultdict
 from dataclasses import dataclass, field
+from importlib import import_module
 from io import BytesIO
 import math
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import Any
 
 import numpy as np
 import orjson
-import pandas as pd
 
 from tboardfs.decode import _Decode
 from tboardfs.histogram_compress import NORMAL_HISTOGRAM_BPS, compress_histogram
@@ -69,10 +69,10 @@ class _TableExport:
         text = _TableExport.number_text(series, separators[fmt])
         if text is not None:
             return text
-        frame = _TableExport.dataframe(series)
-        handle = BytesIO()
-        frame.to_csv(handle, sep=separators[fmt], index=False, na_rep="nan")
-        return handle.getvalue()
+        render: Callable[[dict[str, np.ndarray], str], bytes] = import_module(
+            "tboardfs.table_csv"
+        ).render
+        return render(series, separators[fmt])
 
     @staticmethod
     def number_text(series: dict[str, np.ndarray], sep: str) -> bytes | None:
@@ -189,11 +189,6 @@ class _TableExport:
         for index in np.flatnonzero(~np.isfinite(values)).tolist():
             cells[index] = str(values[index])
         return cells
-
-    @staticmethod
-    def dataframe(series: dict[str, np.ndarray]) -> pd.DataFrame:
-        """Build a pandas dataframe from column arrays."""
-        return pd.DataFrame({column: series[column] for column in series})
 
     @staticmethod
     def json_document(data: object) -> bytes:

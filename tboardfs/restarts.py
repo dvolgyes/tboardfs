@@ -1,6 +1,6 @@
 """Drop the rows that a restarted training run writes again, as TensorBoard does."""
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from typing import Protocol
 
@@ -10,6 +10,25 @@ from tboardfs.model import EventFileCache, RestartMark
 
 # A START step and the rows before it by (table, tag); None means all rows.
 _Start = tuple[float, Mapping[tuple[str, str], int] | None]
+
+
+def _offset_restarts(
+    marks: list[RestartMark], prefix_counts: Mapping[tuple[str, str], int]
+) -> Iterator[RestartMark]:
+    """Add rows and entries from an earlier prefix to each START count."""
+    return (
+        _offset_restart(mark, prefix_counts) if mark.kind == "start" else mark
+        for mark in marks
+    )
+
+
+def _offset_restart(
+    mark: RestartMark, prefix_counts: Mapping[tuple[str, str], int]
+) -> RestartMark:
+    counts = dict(mark.counts)
+    for key, length in prefix_counts.items():
+        counts[key] = counts.get(key, 0) + length
+    return replace(mark, counts=counts)
 
 
 class _Stepped(Protocol):

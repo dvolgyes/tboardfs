@@ -13,6 +13,38 @@ _FOOTER_SIZE = 4
 DEFAULT_MAX_RECORD_SIZE = 1 << 30
 
 
+def _read_header(
+    handle: BinaryIO, record_offset: int, end: int, max_record_size: int
+) -> tuple[bytes, int]:
+    """Validate the length header and check that the whole frame fits."""
+    header = handle.read(_HEADER_SIZE) if end - record_offset >= _HEADER_SIZE else b""
+    if len(header) != _HEADER_SIZE:
+        raise TFRecordError(
+            f"truncated TFRecord length at offset {record_offset}",
+            corrupt=False,
+        )
+    length_bytes = header[:8]
+    (length_crc,) = struct.unpack("<I", header[8:])
+    if masked_crc32c(length_bytes) != length_crc:
+        raise TFRecordError(
+            f"TFRecord length checksum mismatch at offset {record_offset}",
+            corrupt=True,
+        )
+    (payload_size,) = struct.unpack("<Q", length_bytes)
+    if payload_size > max_record_size:
+        raise TFRecordError(
+            f"TFRecord length {payload_size} exceeds maximum {max_record_size} at offset {record_offset}",
+            corrupt=True,
+        )
+    payload_offset = record_offset + _HEADER_SIZE
+    if end - payload_offset < payload_size + _FOOTER_SIZE:
+        raise TFRecordError(
+            f"truncated TFRecord payload at offset {payload_offset}",
+            corrupt=False,
+        )
+    return header, payload_size
+
+
 def iter_tfrecords(
     handle: BinaryIO,
     *,
@@ -27,38 +59,16 @@ def iter_tfrecords(
     start = handle.tell()
     end = handle.seek(0, os.SEEK_END)
     handle.seek(start)
+    yield from _iter_tfrecords(handle, end, max_record_size=max_record_size)
+
+
+def _iter_tfrecords(
+    handle: BinaryIO, end: int, *, max_record_size: int = DEFAULT_MAX_RECORD_SIZE
+) -> Iterator[Record]:
+    """Read validated frames up to an absolute exclusive source offset."""
     while (record_offset := handle.tell()) < end:
-        remaining = end - record_offset
-        if remaining < _HEADER_SIZE:
-            raise TFRecordError(
-                f"truncated TFRecord length at offset {record_offset}",
-                corrupt=False,
-            )
-        header = handle.read(_HEADER_SIZE)
-        if len(header) != _HEADER_SIZE:
-            raise TFRecordError(
-                f"truncated TFRecord length at offset {record_offset}",
-                corrupt=False,
-            )
-        length_bytes = header[:8]
-        (length_crc,) = struct.unpack("<I", header[8:])
-        if masked_crc32c(length_bytes) != length_crc:
-            raise TFRecordError(
-                f"TFRecord length checksum mismatch at offset {record_offset}",
-                corrupt=True,
-            )
-        (payload_size,) = struct.unpack("<Q", length_bytes)
-        if payload_size > max_record_size:
-            raise TFRecordError(
-                f"TFRecord length {payload_size} exceeds maximum {max_record_size} at offset {record_offset}",
-                corrupt=True,
-            )
+        header, payload_size = _read_header(handle, record_offset, end, max_record_size)
         payload_offset = record_offset + _HEADER_SIZE
-        if end - payload_offset < payload_size + _FOOTER_SIZE:
-            raise TFRecordError(
-                f"truncated TFRecord payload at offset {payload_offset}",
-                corrupt=False,
-            )
         payload = handle.read(payload_size)
         footer = handle.read(_FOOTER_SIZE)
         if len(payload) != payload_size or len(footer) != _FOOTER_SIZE:

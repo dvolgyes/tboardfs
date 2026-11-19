@@ -25,14 +25,19 @@ NAME = "/images/picture/000001.png"
 
 
 def _image_log(
-    directory: Path, *, large: bool = False
+    directory: Path, *, large: bool = False, mountpoint: Path | None = None
 ) -> tuple[TensorBoardFS, Path, bytes]:
     blob = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * (32 if not large else 16384)
     event = compat_pb2.Event(step=1, wall_time=3.0)
     event.summary.value.add(tag="picture").image.encoded_image_string = blob
     path = directory / "events.out.tfevents.host"
     path.write_bytes(_frame(event))
-    fs = TensorBoardFS(directory, refresh_age_seconds=float("inf"), cache_size_mb=0)
+    fs = TensorBoardFS(
+        directory,
+        refresh_age_seconds=float("inf"),
+        cache_size_mb=0,
+        mountpoint=mountpoint,
+    )
     assert fs.readdir("/images/picture")[2:] == ["000001.png"]
     return fs, path, blob
 
@@ -204,8 +209,9 @@ def test_release_cannot_close_a_descriptor_mid_read(
 def test_retargeted_source_to_mountpoint_cannot_open_a_span(tmp_path: Path) -> None:
     mountpoint = tmp_path / "mount"
     mountpoint.mkdir()
-    fs, path, _ = _image_log(tmp_path)
-    fs._state.mountpoint = mountpoint
+    source = tmp_path / "source"
+    source.mkdir()
+    fs, path, _ = _image_log(source, mountpoint=mountpoint)
     target = path.rename(mountpoint / path.name)
     path.symlink_to(target)
     with pytest.raises(OSError) as raised:

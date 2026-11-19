@@ -191,6 +191,45 @@ def test_mount_cli_refuses_a_negative_cache_size(
     assert "not in the range" in result.stderr
 
 
+@pytest.mark.parametrize("value", ["0", "-1", "many", "1.5"])
+def test_mount_cli_refuses_invalid_index_workers(
+    tmp_path: Path, monkeypatch: Any, value: str
+) -> None:
+    """Invalid worker counts are rejected before launching FUSE."""
+    source = tmp_path / "runs"
+    source.mkdir()
+    fuse_calls: list[object] = []
+    monkeypatch.setattr(cli, "FUSE", lambda *args, **kwargs: fuse_calls.append(args))
+
+    result = CliRunner().invoke(
+        cli.main, [str(source), str(tmp_path / "mnt"), "--index-workers", value]
+    )
+
+    assert result.exit_code == 2
+    assert "--index-workers" in result.stderr
+    assert fuse_calls == []
+
+
+@pytest.mark.parametrize(
+    ("option", "workers"), [([], 1), (["-j", "2"], 2), (["--index-workers", "3"], 3)]
+)
+def test_mount_cli_sets_index_workers(
+    tmp_path: Path, monkeypatch: Any, option: list[str], workers: int
+) -> None:
+    """The mount is serial by default and accepts both opt-in spellings."""
+    source = tmp_path / "runs"
+    source.mkdir()
+    counts: list[int] = []
+    monkeypatch.setattr(
+        cli, "FUSE", lambda fs, *args, **kwargs: counts.append(fs.index_workers)
+    )
+
+    result = CliRunner().invoke(cli.main, [str(source), str(tmp_path / "mnt"), *option])
+
+    assert result.exit_code == 0, result.output
+    assert counts == [workers]
+
+
 @pytest.mark.parametrize(
     ("option", "owner"),
     [

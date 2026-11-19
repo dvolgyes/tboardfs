@@ -33,12 +33,23 @@ def _runs(tmp_path: Path, *names: str) -> list[Path]:
 def _spy_opens(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     opened: list[Path] = []
     real_open = Path.open
+    real_os_open = os.open
 
     def spy(self: Path, *args: Any, **kwargs: Any) -> Any:
         opened.append(self)
         return real_open(self, *args, **kwargs)
 
+    def spy_fd(
+        path: str | bytes | int | os.PathLike[str] | os.PathLike[bytes],
+        *args: Any,
+        **kwargs: Any,
+    ) -> int:
+        if isinstance(path, (str, Path)):
+            opened.append(Path(path))
+        return real_os_open(path, *args, **kwargs)
+
     monkeypatch.setattr(Path, "open", spy)
+    monkeypatch.setattr(os, "open", spy_fd)
     return opened
 
 
@@ -73,8 +84,8 @@ def test_a_grown_event_file_is_read_again(
     (event,) = _runs(tmp_path, "run")
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
     before = fs.read("/run/scalars/loss.json", 1 << 20, 0)
-    opened = _spy_opens(monkeypatch)
     _append(event, 1)
+    opened = _spy_opens(monkeypatch)
 
     after = fs.read("/run/scalars/loss.json", 1 << 20, 0)
 
@@ -153,14 +164,14 @@ def test_unreadable_replacement_drops_only_its_previous_index(
     replacement = bad.with_name("replacement")
     replacement.write_bytes(_loss(9, 2.0))
     replacement.replace(bad)
-    original = Path.open
+    original = os.open
 
-    def deny_replacement(self: Path, *args: Any, **kwargs: Any) -> Any:
-        if self == bad:
-            raise PermissionError(self)
-        return original(self, *args, **kwargs)
+    def deny_replacement(path: Path, *args: Any, **kwargs: Any) -> int:
+        if path == bad:
+            raise PermissionError(path)
+        return original(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "open", deny_replacement)
+    monkeypatch.setattr(os, "open", deny_replacement)
     with pytest.raises(FileNotFoundError):
         fs.read(bad_path, 4096, 0)
     assert fs.read(good_path, 4096, 0) == expected

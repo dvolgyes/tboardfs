@@ -90,6 +90,7 @@ tboardfs runs in the background by default. With `--foreground`, it stays in the
 | `--step-digits N` | `6` | Zero-padding width of step file names, from 1 to 20. |
 | `--refresh-age-seconds S` | `150` | Minimum interval between local searches for new files and directories. Use `0` for immediate discovery or `inf` to freeze each directory after first access. |
 | `--cache-size-mb N` | `1024` | Memory for rendered files. `0` turns the cache off. |
+| `-j N`, `--index-workers N` | `1` | Maximum workers per cold file index (`1` keeps indexing serial). |
 | `--root-owner` / `--user-owner` | `--root-owner` | Owner of all files and directories: root, or the user who mounts. |
 | `--foreground` / `--background` | `--background` | Stay in the terminal, or detach. |
 | `--logfile FILE` | none | Write the log to FILE. |
@@ -97,6 +98,25 @@ tboardfs runs in the background by default. With `--foreground`, it stays in the
 
 In the background, the log goes only to `--logfile`. Without `--logfile`, you do not see the warnings about damaged
 data; use `--logfile` or `--foreground` when you need them.
+
+### Parallel cold indexing
+
+For a large event file that takes tens of seconds to open, try `tboardfs -j 4 SOURCE MOUNTPOINT`.
+
+The mount starts workers only for uncached regular event files of at least 8 MiB.
+
+It limits workers to the available CPUs and the number of nonempty file ranges.
+
+Each worker opens the same source file, reads its own range and validates the TFRecord checksums.
+
+The mount merges ranges in file order without copying the event file into shared memory.
+
+If the file changes during the scan or a worker exits unexpectedly, the mount discards the partial index and uses the
+serial reader.
+
+Repeated reads reuse the cache; appends resume from the existing index without starting workers.
+
+On memory-constrained systems, keep the serial default: each active worker needs memory in addition to the index.
 
 ### Live Training Runs
 
@@ -596,6 +616,26 @@ Use runs **without** `--profile` for timing comparisons: deterministic call trac
 
 The JSON output reports callback timings and peak process RSS; input generation, copying and result checks are not
 timed.
+
+Compare fresh serial and parallel indexes on the same file:
+
+```bash
+uv run --locked python -m scripts.benchmark_index_workers /tmp/scale.tfevents \
+    --workers 1 2 4 8 --repeat 3 --compare-workers 4
+```
+
+The comparison times three worker result representations and separates record discovery, result decoding and index
+merging.
+
+It does not include FUSE mount startup or virtual directory construction.
+
+To benchmark a slower cold open, prepare a distinct mixed file with 450,000 small scalar/image pairs and 4 GiB of total
+event data in a directory on the storage device you want to measure:
+
+```bash
+uv run --locked python -m scripts.benchmark_scale --prepare --count 450000 \
+    --target-bytes 4294967296 --data ./events.out.tfevents.large
+```
 
 Run the full-size integration test with
 `TBOARDFS_MIXED_SCALE_BYTES=1073741824 uv run --locked pytest -q tests/test_mixed_scale.py`.

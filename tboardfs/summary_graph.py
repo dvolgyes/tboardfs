@@ -4,11 +4,11 @@ import json
 from typing import Any, cast
 
 from google.protobuf.message import DecodeError, Message
-from loguru import logger
 
 from tboardfs.keras_graph import keras_model_to_graph_def
 from tboardfs.model import BinaryEntry
 from tboardfs.proto import compat_pb2
+from tboardfs.skip_failure import _warn_skipped
 
 
 def summary_graph_def(entry: BinaryEntry, blob: bytes) -> bytes | None:
@@ -22,7 +22,7 @@ def summary_graph_def(entry: BinaryEntry, blob: bytes) -> bytes | None:
     try:
         return _graph_def(blob, entry.extension)
     except (DecodeError, RecursionError, ValueError) as error:
-        logger.warning(
+        _warn_skipped(
             "graph {} at step {} in {} has no GraphDef file: {}",
             entry.tag,
             entry.step,

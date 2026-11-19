@@ -3,10 +3,10 @@
 from typing import Any, cast
 
 from google.protobuf.message import DecodeError
-from loguru import logger
 
 from tboardfs.model import GraphEntry
 from tboardfs.proto import compat_pb2
+from tboardfs.skip_failure import _warn_skipped
 
 
 def meta_graph_graph_def(entry: GraphEntry, blob: bytes) -> bytes | None:
@@ -22,7 +22,7 @@ def meta_graph_graph_def(entry: GraphEntry, blob: bytes) -> bytes | None:
     try:
         meta_graph.ParseFromString(blob)
     except DecodeError as error:
-        logger.warning(
+        _warn_skipped(
             "meta graph at offset {} in {} has no graph file: {}",
             entry.frame.payload_offset,
             entry.source_path,

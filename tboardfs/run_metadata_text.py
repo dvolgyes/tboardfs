@@ -3,10 +3,10 @@
 from typing import Any, cast
 
 from google.protobuf.message import DecodeError
-from loguru import logger
 
 from tboardfs.model import BinaryEntry
 from tboardfs.proto import compat_pb2
+from tboardfs.skip_failure import _warn_skipped
 
 
 def run_metadata_text(entry: BinaryEntry, blob: bytes) -> bytes | None:
@@ -21,7 +21,7 @@ def run_metadata_text(entry: BinaryEntry, blob: bytes) -> bytes | None:
     try:
         run_metadata.ParseFromString(blob)
     except DecodeError as error:
-        logger.warning(
+        _warn_skipped(
             "run metadata {} at step {} in {} has no profile file: {}",
             entry.tag,
             entry.step,

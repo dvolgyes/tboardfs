@@ -9,6 +9,7 @@ from urllib.parse import unquote
 import numpy as np
 
 from tboardfs.constants import SCALAR_FORMATS, TENSORBOARD_EVENT_GLOB
+from tboardfs.event_source import EventSource
 
 _UNSAFE_PATH_CHARS = frozenset(
     [chr(code) for code in range(0x20)] + ["\\", "/", "\x7f", "%", "~"]
@@ -91,13 +92,31 @@ class _Paths:
             return []
 
     @staticmethod
-    def event_files(directory: Path, entries: list[os.DirEntry[str]]) -> list[Path]:
+    def event_files(
+        directory: Path,
+        entries: list[os.DirEntry[str]],
+        *,
+        mountpoint: Path | None = None,
+    ) -> list[Path]:
         """Return the paths of the event files among the entries of a directory."""
         return [
             directory / entry.name
             for entry in entries
-            if fnmatchcase(entry.name, TENSORBOARD_EVENT_GLOB) and _Paths.is_file(entry)
+            if fnmatchcase(entry.name, TENSORBOARD_EVENT_GLOB)
+            and (
+                _Paths.is_file(entry)
+                if mountpoint is None
+                else _Paths._event_source_exists(directory / entry.name, mountpoint)
+            )
         ]
+
+    @staticmethod
+    def _event_source_exists(path: Path, mountpoint: Path) -> bool:
+        try:
+            EventSource.stat(path, mountpoint=mountpoint)
+        except OSError:
+            return False
+        return True
 
     @staticmethod
     def is_file(entry: os.DirEntry[str]) -> bool:

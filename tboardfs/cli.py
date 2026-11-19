@@ -38,6 +38,15 @@ from tboardfs.stdlib_logging import StdlibToLoguru
     show_default=True,
     help="Memory for rendered files; 0 turns the cache off.",
 )
+@click.option(
+    "-j",
+    "--index-workers",
+    type=click.IntRange(min=1),
+    metavar="N",
+    default=1,
+    show_default=True,
+    help="Maximum workers for cold indexing of event files at least 8 MiB.",
+)
 @click.option("--foreground/--background", default=False, show_default=True)
 @click.option(
     "--root-owner/--user-owner",
@@ -86,6 +95,7 @@ def main(
         log_to_screen=foreground,
         cache_size_mb=cast(int, params["cache_size_mb"]),
         owner=(0, 0) if params["root_owner"] else (os.getuid(), os.getgid()),
+        index_workers=cast(int, params["index_workers"]),
     )
     # attr_timeout=0 makes fstat and SEEK_END ask for the size of the open
     # handle; a cached size from an older version would cut its data.

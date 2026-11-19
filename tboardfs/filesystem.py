@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from errno import EIO, EISDIR, ENOENT, ENOTDIR, EROFS
+from importlib import import_module
 from io import FileIO
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from tboardfs.constants import (
     DEFAULT_SCALAR_FORMATS,
 )
 from tboardfs.errors import fuse_error
+from tboardfs.event_source import EventSource
 from tboardfs.file_times import FileTimes
 from tboardfs.file_status import FileIdentity
 from tboardfs.indexer import _EventIndexer
@@ -37,6 +39,9 @@ from tboardfs.render_node import render_node
 from tboardfs.verified_span import _FrameValidations, _VerifiedSpan
 
 
+_PARALLEL_MIN_BYTES = 8 << 20
+
+
 @dataclass
 class _Directory:
     """Local listing deadline, browseable children, and their sidecar ownership."""
@@ -48,6 +53,14 @@ class _Directory:
     pieces: dict[tuple[str, ...], tuple[SidecarEntry, ...]] = field(
         default_factory=dict
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _IndexOptions:
+    """Event-source lookup and worker limits for this mount."""
+
+    mountpoint: Path | None
+    workers: int
 
 
 @dataclass
@@ -64,9 +77,9 @@ class _FsState:
     :ivar next_handle: number for the next open file handle
     """
 
+    index: _IndexOptions
     runs: dict[tuple[str, ...], RunCache] = field(default_factory=dict)
     directories: dict[tuple[str, ...], _Directory] = field(default_factory=dict)
-    mountpoint: Path | None = None
     tree_cache: tuple[int, dict[str, Any]] | None = None
     tree_generation: int = 0
     run_trees: dict[tuple[str, ...], tuple[int, dict[str, Any]]] = field(
@@ -80,7 +93,7 @@ class _FsState:
     next_handle: int = 1
 
 
-class TensorBoardFS:  # pcr: noqa: PCR010
+class TensorBoardFS:
     """Read-only virtual filesystem over TensorBoard event files.
 
     FUSE calls the callbacks from several threads. Discovery, refresh and
@@ -94,6 +107,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     :ivar step_digits: zero-padding width for step filenames
     :ivar refresh_age_seconds: minimum age before cache refresh
     :ivar scalar_formats: enabled scalar export formats
+    :ivar index_workers: maximum workers for a cold event-file index
     :ivar log_to_screen: whether operations log status messages
     :ivar owner: user and group ids that own every file and directory
     :ivar _renders: rendered file bytes by run versions and path
@@ -125,7 +139,10 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         cache_size_mb: int = DEFAULT_CACHE_SIZE_MB,
         owner: tuple[int, int] = (0, 0),
         mountpoint: str | Path | None = None,
+        index_workers: int = 1,
     ) -> None:
+        if index_workers < 1:
+            raise ValueError("index_workers must be positive")
         self.source = Path(source)
         self.step_digits = step_digits
         self.refresh_age_seconds = refresh_age_seconds
@@ -135,13 +152,17 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         self.log_to_screen = log_to_screen
         self.owner = owner
         self._renders = RenderCache(cache_size_mb * 1024 * 1024)
-        self._state = _FsState(
-            mountpoint=Path(mountpoint).resolve() if mountpoint else None
-        )
+        mounted_at = Path(mountpoint).resolve() if mountpoint is not None else None
+        self._state = _FsState(_IndexOptions(mounted_at, index_workers))
         self._lock = RLock()
         self._run_places = RunPlaces()
         self._state.directories[()] = _Directory()
         self._ensure_run(())
+
+    @property
+    def index_workers(self) -> int:
+        """Return the configured limit for cold indexing workers."""
+        return self._state.index.workers
 
     def virtual_tree(self) -> dict[str, Any]:
         """Return the current root node; nodes are not changed after creation."""
@@ -437,7 +458,8 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         return data
 
     def _allowed(self, path: Path) -> bool:
-        if self._state.mountpoint is None:
+        mountpoint = self._state.index.mountpoint
+        if mountpoint is None:
             return True
         pending = list(reversed(path.absolute().parts[1:]))
         current = Path("/")
@@ -448,7 +470,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
                 current = current.parent
                 continue
             current /= part
-            if current == self._state.mountpoint:
+            if current == mountpoint:
                 return False
             if current.is_symlink():
                 links += 1
@@ -479,7 +501,14 @@ class TensorBoardFS:  # pcr: noqa: PCR010
                 else []
             )
             local.scanned_at = now
-        if self._refresh_run(run, entries):
+        files = list(run.files)
+        if entries is not None:
+            files = _Paths.event_files(
+                directory, entries, mountpoint=self._state.index.mountpoint
+            )
+            event_names = {path.name for path in files}
+            entries = [entry for entry in entries if entry.name not in event_names]
+        if self._refresh_run(run, files, entries):
             self._log("finished parsing TensorBoard files")
         if entries is not None:
             children = {
@@ -555,21 +584,21 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     def _refresh_run(
         self,
         run: RunCache,
+        files: list[Path],
         entries: list[os.DirEntry[str]] | None,
         *,
         force: bool = False,
     ) -> bool:
         """Check known files on access; discover new files only with a fresh listing."""
         now = time.time()
-        run_dir = self.source.joinpath(*run.run_parts)
-        files = (
-            _Paths.event_files(run_dir, entries)
-            if entries is not None
-            else [path for path in run.files if self._allowed(path)]
-        )
         log_parse = logger.info if self.log_to_screen else None
         changed, base = _RunData.refresh_event_files(
-            run, files, force=force, log=log_parse
+            run,
+            files,
+            force=force,
+            log=log_parse,
+            index_workers=self.index_workers,
+            mountpoint=self._state.index.mountpoint,
         )
         self._refresh_sidecars(run, entries)
         run.refreshed_at = now
@@ -699,6 +728,8 @@ class _RunData:
         *,
         force: bool,
         log: Callable[[str, object], None] | None,
+        index_workers: int,
+        mountpoint: Path | None,
     ) -> tuple[bool, EventFileCache | None]:
         """Report a change and the base index if exactly one source resumed."""
         changed = False
@@ -714,6 +745,8 @@ class _RunData:
                     or (old is not None and old.progress.initial_metadata != carry),
                     log=log,
                     initial_metadata=carry,
+                    index_workers=index_workers,
+                    mountpoint=mountpoint,
                 ):
                     base = (
                         old
@@ -742,23 +775,44 @@ class _RunData:
         *,
         force: bool,
         log: Callable[[str, object], None] | None,
-        initial_metadata: dict[str, dict[str, Any]] | None = None,
+        initial_metadata: dict[str, dict[str, Any]],
+        index_workers: int,
+        mountpoint: Path | None,
     ) -> bool:
         """Check a known source; open and parse it only when its status changes."""
         old = run.files.get(source_path)
         if (
             not force
             and old is not None
-            and FileIdentity.fingerprint(source_path.stat())
+            and FileIdentity.fingerprint(
+                EventSource.stat(source_path, mountpoint=mountpoint)
+            )
             == old.progress.checked_status
         ):
             return False
         if log is not None:
             log("parsing {}", source_path)
+        if (
+            old is None
+            and index_workers > 1
+            and EventSource.stat(source_path, mountpoint=mountpoint).st_size
+            >= _PARALLEL_MIN_BYTES
+        ):
+            cold = import_module("tboardfs.parallel_index")
+            cache: EventFileCache | None = cold.parallel_index(
+                source_path,
+                index_workers,
+                initial_metadata=initial_metadata,
+                mountpoint=mountpoint,
+            )
+            if cache is not None:
+                run.files[source_path] = cache
+                return True
         run.files[source_path] = _EventIndexer.parse_event_file(
             source_path,
             ignore_truncated=True,
             base_cache=None if force else old,
             initial_metadata=initial_metadata,
+            mountpoint=mountpoint,
         )
         return True

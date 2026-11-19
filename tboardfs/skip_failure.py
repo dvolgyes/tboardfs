@@ -1,8 +1,22 @@
 """Skip one item that fails to convert, and keep the items beside it."""
 
 from collections.abc import Callable
+from contextvars import ContextVar
 
 from loguru import logger
+
+_speculative_record = ContextVar("speculative_record", default=False)
+
+
+class _ReplayRecordError(Exception):
+    """A speculative conversion needs the serial diagnostic path."""
+
+
+def _warn_skipped(message: str, *args: object) -> None:
+    """Defer skip diagnostics during speculative record conversion."""
+    if _speculative_record.get():
+        raise _ReplayRecordError(message.format(*args))
+    logger.warning(message, *args)
 
 
 def skip_failure[Result](
@@ -26,6 +40,12 @@ def skip_failure[Result](
     except MemoryError:
         raise
     except Exception as error:
+        if _speculative_record.get():
+            if isinstance(error, _ReplayRecordError):
+                raise
+            raise _ReplayRecordError(
+                f"{what} is skipped: {type(error).__name__}: {error}"
+            ) from error
         if strict:
             raise
         logger.warning("{} is skipped: {}: {}", what, type(error).__name__, error)

@@ -1,6 +1,6 @@
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from functools import partial
 import os
 from pathlib import Path
@@ -13,6 +13,8 @@ import numpy as np
 
 from tboardfs.classify import _Classifier
 from tboardfs.constants import PLUGIN_TAB
+from tboardfs.crc32c import masked_crc32c
+from tboardfs.event_source import EventSource
 from tboardfs.file_status import FileIdentity
 from tboardfs.frame_ref import FrameRef
 from tboardfs.indexed_frame import IndexedFrame
@@ -33,10 +35,10 @@ from tboardfs.meta_graph import meta_graph_graph_def
 from tboardfs.payload_spans import PayloadSpans, Span
 from tboardfs.proto_schema import _ProtoParser
 from tboardfs.range_proof import range_proof
-from tboardfs.restarts import _RestartPurge
+from tboardfs.restarts import _RestartPurge, _offset_restarts
 from tboardfs.run_metadata_text import run_metadata_text
 from tboardfs.summary import parse_event
-from tboardfs.skip_failure import skip_failure
+from tboardfs.skip_failure import _warn_skipped, skip_failure
 from tboardfs.summary_graph import summary_graph_def
 from tboardfs.tensor_summary import GRAPH_PLUGINS, _TensorSummary
 from tboardfs.tables import (
@@ -88,6 +90,18 @@ def parse_file(filename: str | Path) -> dict[str, Any]:
     }
 
 
+@dataclass(slots=True)
+class _ClockDependencies:
+    """Record which inherited clock seeds were used or replaced."""
+
+    first_time: float | None
+    epoch: object
+    reads_first_time: bool = False
+    reads_epoch: bool = False
+    writes_first_time: bool = False
+    writes_epoch: bool = False
+
+
 @dataclass
 class _ParseState:
     """The table rows and the clock of one event file parse.
@@ -107,6 +121,8 @@ class _ParseState:
     first_time: float | None = None
     epoch: object = None
     binary_extensions: dict[tuple[str, bytes], str | None] = field(default_factory=dict)
+    clock: _ClockDependencies | None = None
+    deferred_tensor_content: list[tuple[int, int, int, int]] | None = None
 
 
 class _EventIndexer:
@@ -120,9 +136,10 @@ class _EventIndexer:
         strict_framing: bool = False,
         base_cache: EventFileCache | None = None,
         initial_metadata: dict[str, dict[str, Any]] | None = None,
+        mountpoint: Path | None = None,
     ) -> EventFileCache:
         """Index a validated prefix and appended frames on one descriptor."""
-        with path.open("rb") as handle:
+        with EventSource.open(path, mountpoint=mountpoint) as handle:
             status = os.fstat(handle.fileno())
             if base_cache is not None and (
                 base_cache.progress.identity != FileIdentity.of(status)
@@ -261,21 +278,7 @@ class _EventIndexer:
             )
             for tag, series in series_by_tag.items()
         }
-        return [
-            *base_cache.restarts,
-            *(
-                replace(
-                    mark,
-                    counts={
-                        key: lengths.get(key, 0) + mark.counts.get(key, 0)
-                        for key in lengths.keys() | mark.counts.keys()
-                    },
-                )
-                if mark.kind == "start"
-                else mark
-                for mark in marks
-            ),
-        ]
+        return [*base_cache.restarts, *_offset_restarts(marks, lengths)]
 
     @staticmethod
     def valid_anchor(handle: BinaryIO, cache: EventFileCache) -> bool:
@@ -306,6 +309,10 @@ class _EventIndexer:
         event = parse_event(record.payload)
         wall_time = float(event["wall_time"])
         values = event.get("values", [])
+        clock = state.clock
+        if clock is not None and values and not clock.reads_first_time:
+            clock.reads_first_time = True
+            clock.writes_first_time = first_time is None
         if first_time is None and values:
             first_time = wall_time
         relative_time = np.nan if first_time is None else wall_time - first_time
@@ -454,7 +461,7 @@ class _EventIndexer:
                 (step, wall_time, relative_time),
             )
         _EventIndexer.add_histogram(
-            cache, value, state.histogram_rows, (epoch, step, wall_time, relative_time)
+            cache, value, state, (epoch, step, wall_time, relative_time)
         )
         _EventIndexer.add_binary(
             cache,
@@ -465,7 +472,17 @@ class _EventIndexer:
             spans,
             state.binary_extensions,
         )
-        _EventIndexer.add_plugin(cache, value, (tag, step, wall_time))
+        entry = _EventIndexer.add_plugin(cache, value, (tag, step, wall_time))
+        deferred = state.deferred_tensor_content
+        if entry is not None and spans is not None and deferred is not None:
+            _EventIndexer.defer_tensor(
+                deferred,
+                len(cache.json_entries) - 1,
+                entry,
+                record.payload_offset,
+                spans,
+                ordinal,
+            )
         return epoch
 
     @staticmethod
@@ -479,8 +496,13 @@ class _EventIndexer:
     ) -> object:
         """Append a decoded scalar to its tag's columns."""
         step, wall_time, relative_time = timing
+        clock = state.clock
         if tag == "epoch":
             epoch = value
+            if clock is not None:
+                clock.writes_epoch = True
+        elif clock is not None and not clock.writes_epoch:
+            clock.reads_epoch = True
         rows = state.scalar_rows[tag]
         rows.epoch.append(epoch)
         rows.step.append(step)
@@ -501,7 +523,7 @@ class _EventIndexer:
     def add_histogram(
         cache: EventFileCache,
         value: dict[str, Any],
-        histogram_rows: dict[str, dict[str, list[Any]]],
+        state: _ParseState,
         timing: tuple[Any, Any, float, float],
     ) -> None:
         """Append histogram bucket rows when present."""
@@ -510,8 +532,11 @@ class _EventIndexer:
             return
         tag = value["tag"]
         epoch, step, wall_time, relative_time = timing
-        rows = histogram_rows[tag]
+        rows = state.histogram_rows[tag]
+        clock = state.clock
         for index, (left, right, count) in enumerate(buckets):
+            if index == 0 and clock is not None and not clock.writes_epoch:
+                clock.reads_epoch = True
             rows["_start"].append(index == 0)
             rows["step"].append(step)
             rows["epoch"].append(epoch)
@@ -648,17 +673,17 @@ class _EventIndexer:
         cache: EventFileCache,
         value: dict[str, Any],
         identity: tuple[str, Any, float],
-    ) -> None:
+    ) -> JsonEntry | None:
         """Index plugin metadata as JSON records."""
         payload = _Classifier.plugin_json_payload(value)
         if payload is None or _TensorSummary.unpacked(value):
-            return
+            return None
         tag, step, wall_time = identity
         plugin_name = str(payload.get("plugin_name") or "unknown").lower()
         tab = PLUGIN_TAB.get(plugin_name, "plugins")
         error = _EventIndexer.plugin_error(tab, payload)
         if error is not None:
-            logger.warning(
+            _warn_skipped(
                 "skipping {} record {} at step {} in {}: {}",
                 plugin_name,
                 tag,
@@ -666,10 +691,37 @@ class _EventIndexer:
                 cache.source_path,
                 error,
             )
-            return
-        cache.json_entries.append(
-            JsonEntry(tag=tag, tab=tab, step=step, wall_time=wall_time, payload=payload)
+            return None
+        entry = JsonEntry(
+            tag=tag, tab=tab, step=step, wall_time=wall_time, payload=payload
         )
+        cache.json_entries.append(entry)
+        return entry
+
+    @staticmethod
+    def defer_tensor(
+        descriptors: list[tuple[int, int, int, int]],
+        entry_index: int,
+        entry: JsonEntry,
+        payload_offset: int,
+        spans: PayloadSpans,
+        ordinal: int,
+    ) -> None:
+        """Replace a large plugin buffer with a verified source extent for IPC."""
+        tensor = entry.payload.get("tensor")
+        if tensor is None:
+            return
+        content = tensor.get("tensor_content")
+        if not isinstance(content, bytes) or len(content) < 64 << 10:
+            return
+        fields = spans.value_fields(ordinal, 8, 4)
+        if len(fields) != 1 or spans.match(fields[0], content) is None:
+            return
+        offset, size = fields[0]
+        descriptors.append(
+            (entry_index, payload_offset + offset, size, masked_crc32c(content))
+        )
+        tensor["tensor_content"] = b""
 
     @staticmethod
     def plugin_error(tab: str, payload: dict[str, Any]) -> str | None:
