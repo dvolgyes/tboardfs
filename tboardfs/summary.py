@@ -24,25 +24,22 @@ class _SummaryParser:
             "wall_time": event_message.wall_time,
             "step": event_message.step,
         }
-        if event_message.HasField("file_version"):
-            event["file_version"] = event_message.file_version
-        if event_message.session_log.status == START:
-            event["session_start"] = True
-        if event_message.HasField("graph_def"):
-            event["graph_def"] = event_message.graph_def
-        if event_message.HasField("summary"):
+        kind = event_message.WhichOneof("what")
+        if kind == "summary":
             event["values"] = [
                 _SummaryParser.parse_summary_value(value)
                 for value in event_message.summary.value
             ]
-        if event_message.HasField("tagged_run_metadata"):
-            event.setdefault("values", []).append(
+        elif kind == "tagged_run_metadata":
+            event["values"] = [
                 _SummaryParser.tagged_run_metadata_value(
                     event_message.tagged_run_metadata
                 )
-            )
-        if event_message.HasField("meta_graph_def"):
-            event["meta_graph_def"] = event_message.meta_graph_def
+            ]
+        elif kind in ("file_version", "graph_def", "meta_graph_def"):
+            event[kind] = getattr(event_message, kind)
+        elif kind == "session_log" and event_message.session_log.status == START:
+            event["session_start"] = True
         return event
 
     @staticmethod
@@ -131,8 +128,8 @@ class _SummaryParser:
             tensor["shape"] = [dim.size for dim in message.tensor_shape.dim]
             if message.tensor_shape.unknown_rank:
                 tensor["unknown_rank"] = True
-        if message.tensor_content:
-            tensor["tensor_content"] = message.tensor_content
+        if content := message.tensor_content:
+            tensor["tensor_content"] = content
         values = _SummaryParser.parse_tensor_values(message)
         if values:
             tensor["values"] = values

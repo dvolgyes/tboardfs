@@ -1,6 +1,8 @@
 """Check scientific file inference without loading third-party producers."""
 
 from pathlib import Path
+import struct
+from zlib import compress, crc32
 
 import pytest
 
@@ -54,3 +56,41 @@ def test_non_native_fragments() -> None:
     hdf = (_DATA / "profile.h5").read_bytes()
     assert detect_extension(b"\0" + hdf) != "h5"
     assert detect_extension(hdf[:9]) != "h5"
+
+
+def _png_chunk(kind: bytes, body: bytes) -> bytes:
+    return (
+        struct.pack(">I4s", len(body), kind)
+        + body
+        + struct.pack(">I", crc32(body, crc32(kind)))
+    )
+
+
+_PNG_START = (
+    b"\x89PNG\r\n\x1a\n"
+    + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0))
+    + _png_chunk(b"IDAT", compress(b"\x00\x00"))
+)
+_PNG_END = _png_chunk(b"IEND", b"")
+_ANCILLARY_START = len(_PNG_START) + 8
+
+
+@pytest.mark.parametrize(
+    ("offset", "suffix"), [(512, "h5"), (2048, "h5"), (513, "png")]
+)
+def test_png_hdf_user_block(offset: int, suffix: str) -> None:
+    """HDF5 inside a valid PNG chunk takes precedence at legal user-block offsets."""
+    hdf = (_DATA / "profile.h5").read_bytes()
+    ancillary = bytes(offset - _ANCILLARY_START) + hdf
+    blob = _PNG_START + _png_chunk(b"vpAg", ancillary) + _PNG_END
+    assert detect_extension(blob) == suffix
+
+
+@pytest.mark.parametrize(("count", "suffix"), [(2, "stl"), (3, "png")])
+def test_png_binary_stl_header(count: int, suffix: str) -> None:
+    """Binary STL permits a PNG header but still requires exact facet framing."""
+    ancillary = bytearray(184 - len(_PNG_END) - 4 - _ANCILLARY_START)
+    struct.pack_into("<I", ancillary, 80 - _ANCILLARY_START, count)
+    struct.pack_into("<9f", ancillary, 96 - _ANCILLARY_START, 0, 0, 0, 1, 0, 0, 0, 1, 0)
+    blob = _PNG_START + _png_chunk(b"vpAg", bytes(ancillary)) + _PNG_END
+    assert detect_extension(blob) == suffix

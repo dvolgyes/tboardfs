@@ -37,13 +37,6 @@ class _RunFile:
         )
         return (*self.root, *parts[:-1], name)
 
-    def tag_dir_ends(self, tags: TagPaths) -> range:
-        """Return the lengths of the path prefixes that are tag directories."""
-        if self.tag is None:
-            return range(0)
-        count = len(tags.dir_parts(self.tag)) - self.named
-        return range(len(self.root) + 1, len(self.root) + count + 1)
-
 
 class RunFiles:
     """Collect the virtual files of one run and build its directory tree.
@@ -98,12 +91,13 @@ class RunFiles:
         while True:
             tags = TagPaths(tag_names, blocked, self.name_map)
             paths = [file.path(tags, self.name_map) for file in self.files]
-            found = self.blocked_dirs(paths, tags)
+            leaves = set(paths)
+            found = self.blocked_dirs(paths, leaves)
             if found.keys() <= blocked.keys():
                 break
             blocked |= found
         tags.log(run)
-        self._insert_files(run_node, paths)
+        self._insert_files(run_node, paths, leaves)
         if self.name_map:
             run_node["children"][NAME_MAP] = {
                 "type": "name_map",
@@ -130,12 +124,19 @@ class RunFiles:
                 payload.name = f"{stem}.embedded.{ext}"
 
     def _insert_files(
-        self, run_node: dict[str, Any], paths: list[tuple[str, ...]]
+        self,
+        run_node: dict[str, Any],
+        paths: list[tuple[str, ...]],
+        leaves: set[tuple[str, ...]],
     ) -> None:
-        leaves = set(paths)
-        directories = {path[:end] for path in leaves for end in range(1, len(path))}
+        directories: dict[tuple[str, ...], dict[str, Any] | None] = {}
+        for path in leaves:
+            parent = path[:-1]
+            while parent and parent not in directories:
+                directories[parent] = None
+                parent = parent[:-1]
         collisions: dict[tuple[str, ...], dict[str, dict[str, Any]]] = {
-            path: {} for path in leaves & directories
+            path: {} for path in leaves & directories.keys()
         }
         for path, file in zip(paths, self.files, strict=True):
             if file.identity:
@@ -143,7 +144,12 @@ class RunFiles:
         for path, file in zip(paths, self.files, strict=True):
             sources = collisions.get(path)
             if sources is None:
-                _Paths.mkdirs(run_node, path[:-1])["children"][path[-1]] = file.node
+                parent = path[:-1]
+                children = directories.get(parent)
+                if children is None:
+                    node = _Paths.mkdirs(run_node, parent)
+                    children = directories[parent] = node["children"]
+                children[path[-1]] = file.node
             else:
                 sources[file.identity] = file.node
         for path, sources in collisions.items():
@@ -166,16 +172,23 @@ class RunFiles:
                 children[resolved[-1]] = sources[source]
 
     def blocked_dirs(
-        self, paths: list[tuple[str, ...]], tags: TagPaths
+        self, paths: list[tuple[str, ...]], leaves: set[tuple[str, ...]]
     ) -> dict[tuple[str, ...], str]:
         """Return the tag directories that are also files, below their roots.
 
         Each value is the path of the file, for the warning.
         """
-        file_paths = set(paths)
         found: dict[tuple[str, ...], str] = {}
+        checked: set[tuple[tuple[str, ...], str, bool]] = set()
         for path, file in zip(paths, self.files, strict=True):
-            for end in file.tag_dir_ends(tags):
-                if path[:end] in file_paths:
-                    found.setdefault(path[len(file.root) : end], "/".join(path[:end]))
+            if file.tag is None:
+                continue
+            scope = (file.root, file.tag, file.named)
+            if scope in checked:
+                continue
+            checked.add(scope)
+            for end in range(len(file.root) + 1, len(path)):
+                prefix = path[:end]
+                if prefix in leaves:
+                    found.setdefault(prefix[len(file.root) :], "/".join(prefix))
         return found

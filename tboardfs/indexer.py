@@ -591,12 +591,13 @@ class _EventIndexer:
         value: dict[str, Any], tensor: dict[str, Any], strings: int
     ) -> Iterable[tuple[str, int | None, str]] | None:
         """Select tensor samples or the bytes of one legacy summary value."""
-        parts = _TensorSummary.media_parts(value)
-        if parts is not None:
-            return parts
-        plugin = _Classifier.plugin_name(value)
-        if tensor and (plugin in {"images", "audio"} or plugin in GRAPH_PLUGINS):
-            return None
+        if tensor:
+            parts = _TensorSummary.media_parts(value)
+            if parts is not None:
+                return parts
+            plugin = _Classifier.plugin_name(value)
+            if plugin in {"images", "audio"} or plugin in GRAPH_PLUGINS:
+                return None
         kind = _Classifier.binary_kind(value)
         if kind is None:
             return None

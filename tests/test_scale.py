@@ -11,15 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from scripts.benchmark_scale import (
-    EVENT_NAME,
-    IMAGES,
-    LARGE,
-    LOSS,
-    SIBLING,
-    _ScaleCorpus as ScaleCorpus,
-    _read_file,
-)
+from scripts.benchmark_scale import _read_file
+from scripts.scale_corpus import EVENT_NAME, IMAGES, LARGE, LOSS, SIBLING
+from scripts.scale_corpus import _ScaleCorpus as ScaleCorpus
 from tboardfs import TensorBoardFS
 
 

@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from scripts.benchmark_scale import _ScaleCorpus
+from scripts.scale_corpus import _ScaleCorpus
 from tboardfs import parse_file
 from tboardfs.classify import detect_extension, magic
 from tboardfs.crc32c import masked_crc32c

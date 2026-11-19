@@ -9,8 +9,10 @@ import pytest
 from tboardfs import TensorBoardFS
 from tboardfs.file_tree import SingleEventTree
 from tboardfs.model import RunCache, SidecarEntry
+from tboardfs.paths import _DirectoryNode
 from tboardfs.proto import compat_pb2
 from tboardfs.render_node import render_node
+from tboardfs.run_files import RunFiles
 from tboardfs.run_tree import build_run_tree
 
 from test_incremental_parse import _files, _frame
@@ -174,6 +176,37 @@ def test_a_fixed_file_directory_clash_keeps_both(tmp_path: Path) -> None:
     assert fs.read("/profile/a~2", 100, 0) == b"file"
     assert fs.read("/profile/a/c", 100, 0) == b"below"
     assert [row["value"] for row in _json(fs, "/scalars/value.json")] == [1.0]
+
+
+def test_named_tags_and_fixed_sources_share_a_collision_namespace() -> None:
+    """Fixed directories stay put; tagged directories and colliding leaves move."""
+    files = RunFiles()
+    run = RunCache(())
+    tree = _DirectoryNode()
+    existing = {"type": "text", "data": "existing"}
+    occupied = {"type": "text", "data": "occupied"}
+    sidecar = {"type": "text", "data": "sidecar"}
+    scalar = {"type": "scalar", "data": "scalar"}
+    nested = {"type": "scalar", "data": "nested"}
+    step = {"type": "tensor", "data": "step"}
+    files.add_fixed(("scalars", "loss.json", "existing"), existing)
+    files.add_fixed(("scalars", "loss.json~2"), occupied)
+    files.add_fixed(("scalars", "loss.json"), sidecar, identity="source")
+    files.add_named(("scalars",), "loss", "json", scalar)
+    files.add_named(("scalars",), "loss.json/x", "json", nested)
+    files.add(("tensors",), "loss.json/x", "000001.json", step)
+
+    files.fill(tree, run)
+
+    children = tree["children"]
+    scalars = children["scalars"]["children"]
+    assert scalars["loss.json"]["children"] == {"existing": existing}
+    assert scalars["loss.json~2"] is occupied
+    assert scalars["loss.json~3"]["children"] == {"x.json": nested}
+    assert scalars["loss.json~4"] is scalar
+    assert scalars["loss.json~5"] is sidecar
+    tensors = children["tensors"]["children"]
+    assert tensors["loss.json~3"]["children"]["x"]["children"] == {"000001.json": step}
 
 
 @pytest.mark.parametrize("reverse", [False, True])

@@ -9,7 +9,7 @@ from typing import BinaryIO
 
 import pytest
 
-from scripts.benchmark_scale import EVENT_NAME, SIBLING, _ScaleCorpus as ScaleCorpus
+from scripts.scale_corpus import EVENT_NAME, SIBLING, _ScaleCorpus as ScaleCorpus
 
 from tboardfs import TensorBoardFS
 from tboardfs.file_status import FileIdentity

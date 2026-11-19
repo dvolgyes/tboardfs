@@ -557,16 +557,42 @@ Run the larger case to check append, partial tails, truncation, replacement, del
 TBOARDFS_SCALE_COUNT=100000 uv run --locked pytest -q tests/test_scale.py
 ```
 
-To time the same workload, generate the corpus once at a new path and run one process per trial:
+The benchmark generates one mixed TFRecord file of at least 1 GiB by default.
+
+It interleaves 100,000 scalar/image pairs with bulk RGB images, stereo PCM audio and float32 activation maps.
+
+The file also contains selected real producer records for histograms, distributions, PR curves, graphs, run metadata,
+text, custom scalars, HParams, meshes, point clouds, Open3D manifests, encoded media, and the full dtype fixture.
+
+Projector embeddings, Open3D assets, profiles and other sidecars are checked in their native layouts; they do not count
+toward the event file size.
+
+Generate the file once at a new path and use a fresh process for each trial:
 
 ```bash
-uv run --locked python scripts/benchmark_scale.py --prepare --data /tmp/scale.tfevents
-uv run --locked python scripts/benchmark_scale.py --data /tmp/scale.tfevents
+uv run --locked python -m scripts.benchmark_scale --prepare --data /tmp/scale.tfevents
+uv run --locked python -m scripts.benchmark_scale --data /tmp/scale.tfevents
+uv run --locked python -m scripts.benchmark_scale --data /tmp/scale.tfevents \
+    --profile /tmp/cold-listing.pstats --profile-phase cold_listing
+uv run --locked python -m pstats /tmp/cold-listing.pstats
 ```
 
 The benchmark measures filesystem callbacks, not kernel FUSE throughput or cold-disk latency.
 
-It checks returned bytes and reports timings and peak process RSS as JSON.
+Enter `sort cumulative` and `stats 25` in `pstats` to see where the selected operation spends time.
+
+Use runs **without** `--profile` for timing comparisons: deterministic call tracing adds significant overhead.
+
+The JSON output reports callback timings and peak process RSS; input generation, copying and result checks are not
+timed.
+
+Run the full-size integration test with
+`TBOARDFS_MIXED_SCALE_BYTES=1073741824 uv run --locked pytest -q tests/test_mixed_scale.py`.
+
+Ordinary tests use a smaller mixed file with the same data families.
+
+Use `--target-bytes` to change the minimum generated size or `--narrow` to reproduce the earlier scalar/image-only
+benchmark.
 
 ## Generate Test Data
 

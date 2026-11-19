@@ -8,10 +8,10 @@ import magic
 import numpy as np
 
 from tboardfs.constants import DT_STRING, DT_UINT8, LARGE_TENSOR_THRESHOLD, PLUGIN_TAB
-from tboardfs.data_formats import data_extension
+from tboardfs.data_formats import _Mesh, data_extension
 from tboardfs.media_containers import media_extension
 from tboardfs.model import Scalar
-from tboardfs.native_files import native_extension
+from tboardfs.native_files import _Framing, native_extension
 from tboardfs.tensor import _MAX_NUMPY_DIMS, tensor_to_array
 from tboardfs.zip_types import zip_extension
 
@@ -58,14 +58,16 @@ def _canonical_png(blob: bytes) -> bool:
 
 
 def detect_extension(blob: bytes | None) -> str:
-    """Infer a stable file extension from encoded summary bytes."""
+    """Infer a file extension; valid HDF5 and STL framing can also fit inside a PNG."""
     if not blob:
         return "bin"
+    if _canonical_png(blob):
+        if _Framing.hdf(blob):
+            return "h5"
+        return "stl" if _Mesh.stl(blob) else "png"
     extension = _Classifier.container_extension(blob)
     if extension is not None:
         return extension
-    if _canonical_png(blob):
-        return "png"
     extension = _Classifier.extension_from_magic(blob)
     if extension is not None:
         return extension
