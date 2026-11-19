@@ -443,6 +443,31 @@ lengths above 1 GiB before reading the payload. CRC32C detects accidental damage
 - When only a conversion fails, the file with the stored bytes stays, for example `<step>.run_metadata.pb` without its
   `.pbtxt`.
 
+## Generate Test Data
+
+The tests read four small event files in `tests/data/producer-cases/` without installing their writers. To generate
+fresh examples, run these executable PEP 723 scripts from the checkout. `uv` installs each writer in an isolated script
+environment rather than changing the project environment. Give each script a new or empty output directory.
+
+```bash
+scripts/generate_tf1_cases.py --output samples/tf1
+scripts/generate_tf2_cases.py --output samples/tf2
+scripts/generate_tensorboard_cases.py --output samples/tensorboard
+scripts/generate_tensorboardx_cases.py --output samples/tensorboardx
+scripts/generate_framing_cases.py --output samples/framing
+```
+
+| Generator | Cases |
+| -- | -- |
+| `tf1` | Legacy image and histogram fields from `tf.compat.v1.summary.FileWriter`, omitted step, repeated images in one event, coincident histograms |
+| `tf2` | Batched PNG and WAV data, omitted repeat metadata, tensor histograms, an integer matrix and adjacent scalar steps above the exact float64 integer range |
+| `tensorboard` | Native `EventFileWriter` output with an unknown-only event, opaque plugin metadata, unusual tags and equal-step rows |
+| `tensorboardx` | Two genuine writer sessions in one stream, a restart marker, epoch joins and out-of-order steps |
+| `framing` | Controlled valid records, separate failures of the length and payload CRCs, an incomplete tail, and an over-limit header without a large allocation |
+
+The producer observations are fixed, but producer headers and timestamps can differ between invocations. The framing
+cases are deterministic and are generated during tests rather than stored as damaged binary fixtures.
+
 ## License
 
 MIT

@@ -1,59 +1,37 @@
+import os
+import re
 import tomllib
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-FIXTURE_SCRIPT_DEPENDENCIES = (
-    "imageio>=2.37.3,<3.0",
-    "matplotlib>=3.10.9,<4.0",
-    "moviepy>=2.2.1,<3.0",
-    "numpy>=2.4.6,<3.0",
-    "pillow>=11.3.0,<12.0",
-    "soundfile>=0.13.1,<1.0",
-    "tensorboard>=2.20.0,<3.0",
-    "tensorboardx>=2.6.5,<3.0",
-    "torch>=2.12.0,<3.0",
-)
+GENERATORS = sorted((ROOT / "scripts").glob("generate_*.py"))
 
 
-def test_fixture_generation_script_uses_uv_pep723_metadata() -> None:
-    """Fixture packages are declared by uv-compatible script metadata."""
-    script_lines = (ROOT / "scripts/generate_test_logs.py").read_text().splitlines()
-    metadata_end = script_lines.index("# ///", 2)
-    metadata = tomllib.loads(
-        "\n".join(line.removeprefix("# ") for line in script_lines[2:metadata_end])
-    )
+@pytest.mark.parametrize("path", GENERATORS, ids=lambda path: path.name)
+def test_generators_are_standalone_executables(path: Path) -> None:
+    """The operating system and uv can start each generator from its metadata."""
+    lines = path.read_text().splitlines()
+    assert os.access(path, os.X_OK)
+    assert lines[:2] == ["#!/usr/bin/env -S uv run --script", "# /// script"]
+    end = lines.index("# ///", 2)
+    assert all(line == "#" or line.startswith("# ") for line in lines[2:end])
+    metadata = tomllib.loads("\n".join(line[1:].lstrip(" ") for line in lines[2:end]))
+    assert metadata["requires-python"]
+    assert isinstance(metadata["dependencies"], list)
 
-    assert script_lines[0] == "#!/usr/bin/env -S uv run --script"
-    assert script_lines[1] == "# /// script"
-    assert metadata["requires-python"] == ">=3.12"
-    assert tuple(metadata["dependencies"]) == FIXTURE_SCRIPT_DEPENDENCIES
 
-
-def test_dev_dependencies_do_not_include_fixture_generation_stack() -> None:
-    """The project dev group contains test tooling, not fixture tooling."""
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    dev_dependencies = {
-        dependency.split(">=", maxsplit=1)[0].lower()
-        for dependency in pyproject["dependency-groups"]["dev"]
+def test_project_does_not_install_summary_writers() -> None:
+    """Installing the package or its tests must not install the producer stack."""
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    specs = [*project["project"]["dependencies"], *project["dependency-groups"]["dev"]]
+    names = {
+        re.split("[^a-zA-Z0-9_.-]", spec, maxsplit=1)[0].lower().replace("_", "-")
+        for spec in specs
     }
-    fixture_dependency_names = {
-        dependency.split(">=", maxsplit=1)[0].lower()
-        for dependency in FIXTURE_SCRIPT_DEPENDENCIES
-    }
-
-    assert fixture_dependency_names.isdisjoint(dev_dependencies)
-
-
-def test_runtime_dependencies_do_not_include_forbidden_protobuf_stacks() -> None:
-    """Runtime dependencies avoid TensorBoard and TensorFlow packages."""
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    runtime_dependencies = {
-        dependency.split(">=", maxsplit=1)[0].lower()
-        for dependency in pyproject["project"]["dependencies"]
-    }
-
-    assert {"tensorboard", "tensorboardx", "tensorflow"}.isdisjoint(
-        runtime_dependencies
+    assert names.isdisjoint(
+        {"tensorboard", "tensorboardx", "tensorflow", "tensorflow-cpu", "torch"}
     )
