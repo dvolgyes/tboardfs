@@ -16,6 +16,24 @@ _UNSAFE_PATH_CHARS = frozenset(
 NAME_MAP = ".tboardfs-names.json"
 
 
+class _DirectoryNode(dict[str, Any]):
+    """A virtual directory with its listing cached after publication."""
+
+    __slots__: tuple[str, ...] = ("_sorted_names",)
+
+    _sorted_names: tuple[str, ...] | None
+
+    def __init__(self) -> None:
+        super().__init__(type="dir", children={})
+        self._sorted_names = None
+
+    def sorted_names(self) -> tuple[str, ...]:
+        """Return the sorted child names once the directory is published."""
+        if self._sorted_names is None:
+            self._sorted_names = tuple(sorted(self["children"]))
+        return self._sorted_names
+
+
 def find_tensorboard_files(directory: str | Path) -> list[Path]:
     """Return TensorBoard event files below a directory, recursively.
 
@@ -137,7 +155,11 @@ class _Paths:
         """Create virtual directory nodes and return the final node."""
         node = root
         for part in parts:
-            node = node["children"].setdefault(part, {"type": "dir", "children": {}})
+            children = node["children"]
+            child = children.get(part)
+            if child is None:
+                child = children[part] = _DirectoryNode()
+            node = child
         return node
 
     @staticmethod
@@ -156,6 +178,13 @@ class _Paths:
             return "~empty"
         if name in {".", "..", NAME_MAP}:
             return "%2E" + name[1:].replace(".", "%2E")
+        if (
+            len(name) <= 255
+            and name.isascii()
+            and name.isprintable()
+            and not ("\\" in name or "/" in name or "%" in name or "~" in name)
+        ):
+            return name
         encoded = "".join(
             f"%{ord(ch):02X}"
             if ch in _UNSAFE_PATH_CHARS

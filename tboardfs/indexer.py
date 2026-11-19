@@ -28,8 +28,11 @@ from tboardfs.model import (
     RestartMark,
     TFRecordError,
 )
+from tboardfs.model.indexed_blob import IndexedBlob
 from tboardfs.meta_graph import meta_graph_graph_def
+from tboardfs.payload_spans import PayloadSpans, Span
 from tboardfs.proto_schema import _ProtoParser
+from tboardfs.range_proof import range_proof
 from tboardfs.restarts import _RestartPurge
 from tboardfs.run_metadata_text import run_metadata_text
 from tboardfs.summary import parse_event
@@ -37,6 +40,7 @@ from tboardfs.skip_failure import skip_failure
 from tboardfs.summary_graph import summary_graph_def
 from tboardfs.tensor_summary import GRAPH_PLUGINS, _TensorSummary
 from tboardfs.tables import (
+    _ScalarRows,
     _TableMerge,
     _TableRows,
 )
@@ -44,6 +48,8 @@ from tboardfs.tfrecord import iter_tfrecords
 
 # A framed record whose payload cannot be decoded or indexed; framing is intact.
 _MALFORMED_RECORD_ERRORS = (DecodeError, ValueError, struct.error)
+_FLOAT32 = np.dtype("float32")
+_FLOAT64 = np.dtype("float64")
 
 
 def parse_file(filename: str | Path) -> dict[str, Any]:
@@ -87,23 +93,20 @@ class _ParseState:
     """The table rows and the clock of one event file parse.
 
     :ivar scalar_rows: scalar columns by tag
-    :ivar scalar_dtypes: dtype of each scalar row by tag
     :ivar histogram_rows: histogram bucket columns by tag
     :ivar first_time: wall time of the first event with values
     :ivar epoch: the newest value of the epoch scalar
     """
 
-    scalar_rows: dict[str, dict[str, list[Any]]] = field(
-        default_factory=lambda: defaultdict(_TableRows.empty_scalar_rows)
-    )
-    scalar_dtypes: dict[str, list[np.dtype]] = field(
-        default_factory=lambda: defaultdict(list)
+    scalar_rows: dict[str, _ScalarRows] = field(
+        default_factory=lambda: defaultdict(_ScalarRows)
     )
     histogram_rows: dict[str, dict[str, list[Any]]] = field(
         default_factory=lambda: defaultdict(_TableRows.empty_histogram_rows)
     )
     first_time: float | None = None
     epoch: object = None
+    binary_extensions: dict[tuple[str, bytes], str | None] = field(default_factory=dict)
 
 
 class _EventIndexer:
@@ -123,7 +126,12 @@ class _EventIndexer:
             status = os.fstat(handle.fileno())
             if base_cache is not None and (
                 base_cache.progress.identity != FileIdentity.of(status)
-                or status.st_size < base_cache.progress.processed_pos
+                or status.st_size < base_cache.progress.last_checked_size
+                or (
+                    status.st_size == base_cache.progress.last_checked_size
+                    and FileIdentity.fingerprint(status)
+                    != base_cache.progress.checked_status
+                )
                 or not _EventIndexer.valid_anchor(handle, base_cache)
             ):
                 base_cache = None
@@ -153,6 +161,7 @@ class _EventIndexer:
         cache = EventFileCache(source_path=path)
         progress = cache.progress
         progress.identity = FileIdentity.of(status)
+        progress.checked_status = FileIdentity.fingerprint(status)
         progress.initial_metadata = (
             base_cache.progress.initial_metadata
             if base_cache is not None
@@ -226,10 +235,9 @@ class _EventIndexer:
         progress.last_checked_size = status.st_size
         progress.first_time = state.first_time
         progress.epoch = state.epoch
-        progress.checked_status = FileIdentity.fingerprint(status)
-        cache.scalars = _TableRows.arrays_from_scalar_rows(
-            state.scalar_rows, state.scalar_dtypes
-        )
+        for tag, rows in state.scalar_rows.items():
+            cache.scalars[tag] = rows.arrays()
+            cache.scalar_mtimes[tag] = rows.wall_time[-1]
         cache.histograms = _TableRows.arrays_from_histogram_rows(state.histogram_rows)
         if base_cache is not None:
             cache.scalars = _TableMerge.append_series(base_cache.scalars, cache.scalars)
@@ -302,7 +310,8 @@ class _EventIndexer:
         relative_time = np.nan if first_time is None else wall_time - first_time
         timing = (event["step"], wall_time, relative_time)
         _EventIndexer.add_restart(cache, event, state)
-        _EventIndexer.add_graph(cache, path, event, record, wall_time)
+        spans = PayloadSpans.for_payload(record.payload)
+        _EventIndexer.add_graph(cache, path, event, record, wall_time, spans)
         binary_start = len(cache.binaries)
         for ordinal, value in enumerate(values):
             tag = value["tag"]
@@ -313,6 +322,11 @@ class _EventIndexer:
                 }
             elif tag in cache.progress.effective_metadata:
                 value.update(cache.progress.effective_metadata[tag])
+            if len(value) == 2 and "simple_value" in value:
+                epoch = _EventIndexer.add_scalar(
+                    state, tag, value["simple_value"], _FLOAT32, epoch, timing
+                )
+                continue
             indexed = skip_failure(
                 f"value {value['tag']!r} at step {event['step']} in {path}",
                 partial(
@@ -323,6 +337,7 @@ class _EventIndexer:
                     value,
                     state,
                     (epoch, *timing),
+                    spans,
                 ),
                 strict=strict,
             )
@@ -353,13 +368,12 @@ class _EventIndexer:
         if not event.get("session_start"):
             return
         counts = {
-            (table, tag): len(columns["step"])
-            for table, rows_by_tag in (
-                ("scalars", state.scalar_rows),
-                ("histograms", state.histogram_rows),
-            )
-            for tag, columns in rows_by_tag.items()
+            ("scalars", tag): len(rows.step) for tag, rows in state.scalar_rows.items()
         }
+        counts.update(
+            (("histograms", tag), len(rows["step"]))
+            for tag, rows in state.histogram_rows.items()
+        )
         counts[("binaries", "")] = len(cache.binaries)
         counts[("json_entries", "")] = len(cache.json_entries)
         cache.restarts.append(RestartMark("start", event["step"], counts))
@@ -371,23 +385,42 @@ class _EventIndexer:
         event: dict[str, Any],
         record: Record,
         wall_time: float,
+        spans: PayloadSpans | None,
     ) -> None:
         """Index graph and meta graph payloads found in an event record."""
-        if event.get("graph_def") is not None:
+        graph = event.get("graph_def")
+        meta_graph = event.get("meta_graph_def")
+        if graph is None and meta_graph is None:
+            return
+        frame = record.reference(
+            cache.progress.identity, fingerprint=cache.progress.checked_status
+        )
+        if graph is not None:
+            span = spans.graph(4, graph) if spans is not None else None
             cache.graphs.append(
                 GraphEntry(
                     source_path=path,
                     wall_time=wall_time,
-                    frame=record.reference(cache.progress.identity),
+                    blob=IndexedBlob(
+                        frame,
+                        len(graph),
+                        span,
+                        range_proof(graph) if span is not None else b"",
+                    ),
                 )
             )
-        meta_graph = event.get("meta_graph_def")
         if meta_graph is None:
             return
+        span = spans.graph(9, meta_graph) if spans is not None else None
         entry = MetaGraphEntry(
             source_path=path,
             wall_time=wall_time,
-            frame=record.reference(cache.progress.identity),
+            blob=IndexedBlob(
+                frame,
+                len(meta_graph),
+                span,
+                range_proof(meta_graph) if span is not None else b"",
+            ),
         )
         entry.readable = meta_graph_graph_def(entry, bytes(meta_graph)) is not None
         cache.graphs.append(entry)
@@ -400,6 +433,7 @@ class _EventIndexer:
         value: dict[str, Any],
         state: _ParseState,
         timing: tuple[Any, Any, float, float],
+        spans: PayloadSpans | None,
     ) -> object:
         """Index one TensorBoard summary value.
 
@@ -408,47 +442,58 @@ class _EventIndexer:
         """
         tag = value["tag"]
         epoch, step, wall_time, relative_time = timing
-        epoch = _EventIndexer.add_scalar(
-            cache,
-            value,
-            state.scalar_rows,
-            state.scalar_dtypes,
-            (epoch, step, wall_time, relative_time),
-        )
-        # A TF1 or PyTorch scalar without metadata holds nothing else.
-        if value.keys() == {"tag", "simple_value"}:
-            return epoch
+        scalar = _Classifier.scalar_value(value)
+        if scalar is not None:
+            epoch = _EventIndexer.add_scalar(
+                state,
+                tag,
+                scalar.value,
+                scalar.dtype,
+                epoch,
+                (step, wall_time, relative_time),
+            )
         _EventIndexer.add_histogram(
             cache, value, state.histogram_rows, (epoch, step, wall_time, relative_time)
         )
-        _EventIndexer.add_binary(cache, ordinal, record, value, (tag, step, wall_time))
+        _EventIndexer.add_binary(
+            cache,
+            ordinal,
+            record,
+            value,
+            (tag, step, wall_time),
+            spans,
+            state.binary_extensions,
+        )
         _EventIndexer.add_plugin(cache, value, (tag, step, wall_time))
         return epoch
 
     @staticmethod
     def add_scalar(
-        cache: EventFileCache,
-        value: dict[str, Any],
-        scalar_rows: dict[str, dict[str, list[Any]]],
-        scalar_dtypes: dict[str, list[np.dtype]],
-        timing: tuple[Any, Any, float, float],
+        state: _ParseState,
+        tag: str,
+        value: int | float,
+        dtype: np.dtype,
+        epoch: object,
+        timing: tuple[int, float, float],
     ) -> object:
-        """Append one scalar row when a summary value is scalar-shaped."""
-        tag = value["tag"]
-        scalar = _Classifier.scalar_value(value)
-        if scalar is None:
-            return timing[0]
-        epoch, step, wall_time, relative_time = timing
+        """Append a decoded scalar to its tag's columns."""
+        step, wall_time, relative_time = timing
         if tag == "epoch":
-            epoch = scalar.value
-        rows = scalar_rows[tag]
-        rows["epoch"].append(epoch)
-        rows["step"].append(step)
-        rows["wall_time"].append(wall_time)
-        rows["relative_time"].append(relative_time)
-        rows["value"].append(scalar.value)
-        scalar_dtypes[tag].append(scalar.dtype)
-        cache.scalar_mtimes[tag] = wall_time
+            epoch = value
+        rows = state.scalar_rows[tag]
+        rows.epoch.append(epoch)
+        rows.step.append(step)
+        rows.wall_time.append(wall_time)
+        rows.relative_time.append(relative_time)
+        rows.value.append(value)
+        if rows.dtype is None:
+            rows.dtype = dtype
+        elif (
+            rows.dtype is not dtype
+            and rows.dtype is not _FLOAT64
+            and rows.dtype != dtype
+        ):
+            rows.dtype = _FLOAT64
         return epoch
 
     @staticmethod
@@ -483,45 +528,51 @@ class _EventIndexer:
         record: Record,
         value: dict[str, Any],
         identity: tuple[str, Any, float],
+        spans: PayloadSpans | None,
+        extensions: dict[tuple[str, bytes], str | None],
     ) -> None:
         """Index a binary summary value lazily by source record position."""
         tag, step, wall_time = identity
-        parts: Iterable[tuple[str, int | None, str]] | None = (
-            _TensorSummary.media_parts(value)
-        )
         tensor = value.get("tensor", {})
         strings = tensor.get("string_val", ())
+        parts = _EventIndexer.binary_parts(value, tensor, len(strings))
         if parts is None:
-            plugin = _Classifier.plugin_name(value)
-            if tensor and (plugin in {"images", "audio"} or plugin in GRAPH_PLUGINS):
-                return
-            kind = _Classifier.binary_kind(value)
-            if kind is None:
-                return
-            if strings and not tensor.get("tensor_content"):
-                width = len(str(len(strings) - 1))
-                parts = (
-                    (kind, i, f"_{i:0{width}d}" if len(strings) > 1 else "")
-                    for i in range(len(strings))
-                )
-            else:
-                parts = [(kind, None, "")]
-        frame = record.reference(cache.progress.identity)
+            return
+        frame = record.reference(
+            cache.progress.identity, fingerprint=cache.progress.checked_status
+        )
+        candidates: list[Span] | None = None
         for part_kind, part, suffix in parts:
             data = _Classifier.binary_blob(value) if part is None else strings[part]
             if data is None:
                 continue
-            extension = _TensorSummary.part_extension(value, part_kind, data)
+            extension = _EventIndexer.binary_extension(
+                value, part_kind, data, extensions
+            )
             if extension is None:
                 continue
+            if spans is not None and candidates is None:
+                candidates = _EventIndexer.binary_candidates(
+                    spans, ordinal, value, part, len(strings)
+                )
+            span = (
+                spans.match(candidates[0 if part is None else part], data)
+                if spans is not None and candidates
+                else None
+            )
             entry = BinaryEntry(
                 source_path=cache.source_path,
                 tag=tag,
                 kind=part_kind,
                 step=step,
                 wall_time=wall_time,
-                frame=frame,
                 value_ordinal=ordinal,
+                blob=IndexedBlob(
+                    frame,
+                    len(data),
+                    span,
+                    range_proof(data) if span is not None else b"",
+                ),
                 extension=extension,
                 part=part,
                 suffix=suffix,
@@ -534,6 +585,61 @@ class _EventIndexer:
                     profiles=profile and run_metadata_text(entry, data) is not None,
                 )
             cache.binaries.append(entry)
+
+    @staticmethod
+    def binary_parts(
+        value: dict[str, Any], tensor: dict[str, Any], strings: int
+    ) -> Iterable[tuple[str, int | None, str]] | None:
+        """Select tensor samples or the bytes of one legacy summary value."""
+        parts = _TensorSummary.media_parts(value)
+        if parts is not None:
+            return parts
+        plugin = _Classifier.plugin_name(value)
+        if tensor and (plugin in {"images", "audio"} or plugin in GRAPH_PLUGINS):
+            return None
+        kind = _Classifier.binary_kind(value)
+        if kind is None:
+            return None
+        if strings and not tensor.get("tensor_content"):
+            width = len(str(strings - 1))
+            return (
+                (kind, i, f"_{i:0{width}d}" if strings > 1 else "")
+                for i in range(strings)
+            )
+        return [(kind, None, "")]
+
+    @staticmethod
+    def binary_extension(
+        value: dict[str, Any],
+        kind: str,
+        data: bytes,
+        cached: dict[tuple[str, bytes], str | None],
+    ) -> str | None:
+        """Reuse file-type decisions for small, byte-identical media."""
+        if len(data) > 4096 or kind == "graphs":
+            return _TensorSummary.part_extension(value, kind, data)
+        key = (kind, data)
+        if key not in cached:
+            if len(cached) == 128:
+                cached.clear()
+            cached[key] = _TensorSummary.part_extension(value, kind, data)
+        return cached[key]
+
+    @staticmethod
+    def binary_candidates(
+        spans: PayloadSpans,
+        ordinal: int,
+        value: dict[str, Any],
+        part: int | None,
+        string_count: int,
+    ) -> list[Span]:
+        """Reject ambiguous field merges and mismatched repeated-field counts."""
+        if part is not None:
+            found = spans.value_fields(ordinal, 8, 8)
+            return found if len(found) == string_count else []
+        field = 4 if "image" in value else 6 if "audio" in value else 8
+        found = spans.value_fields(ordinal, field, 4)
+        return found if len(found) == 1 else []
 
     @staticmethod
     def add_plugin(

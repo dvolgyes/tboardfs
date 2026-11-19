@@ -1,11 +1,11 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from tboardfs.frame_ref import FrameRef
+from tboardfs.model.indexed_blob import _IndexedBlobEntry
 
 
 @dataclass
-class BinaryEntry:
+class BinaryEntry(_IndexedBlobEntry):
     """Index entry for a lazily extracted binary summary payload.
 
     :ivar source_path: source event file
@@ -13,7 +13,6 @@ class BinaryEntry:
     :ivar kind: virtual tab for the binary payload
     :ivar step: TensorBoard step
     :ivar wall_time: event wall time
-    :ivar frame: verified source frame and generation
     :ivar extension: detected file extension
     :ivar part: string_val index of a TF2 media item, or None for the value blob
     :ivar suffix: file-name suffix after the step, for one of several items
@@ -24,7 +23,6 @@ class BinaryEntry:
     kind: str
     step: int | float
     wall_time: float
-    frame: FrameRef
     extension: str
     value_ordinal: int
     part: int | None = None

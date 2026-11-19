@@ -118,23 +118,52 @@ def test_a_listing_of_an_earlier_discovery_is_not_reused(tmp_path: Path) -> None
     assert "accuracy.json" in fs.readdir("/run/scalars")
 
 
-def test_a_historical_rewrite_requires_a_new_generation(tmp_path: Path) -> None:
-    """Append-only histories can be replaced atomically to publish rewrites."""
+@pytest.mark.parametrize("tail_bytes", [0, 9], ids=["same-size", "shrinking-tail"])
+def test_rewrite_before_unchanged_checkpoint_refreshes_scalars(
+    tmp_path: Path, tail_bytes: int
+) -> None:
+    """Rewrites and shrinks invalidate the whole index, even with the old mtime."""
     event = tmp_path / EVENTS
-    event.write_bytes(_loss(0, 1.0) + _loss(1, 1.0))
+    frames = _loss(0, 1.0) + _loss(1, 1.0)
+    event.write_bytes(frames + _loss(2, 1.0)[:tail_bytes])
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
     before = fs.read("/scalars/loss.json", 1 << 20, 0)
     times = event.stat()
     time.sleep(0.02)  # past the clock tick of coarse file timestamps
     with event.open("r+b") as handle:
         handle.write(_loss(0, 2.0))
+        if tail_bytes:
+            handle.truncate(len(frames) + tail_bytes - 1)
     os.utime(event, ns=(times.st_atime_ns, times.st_mtime_ns))
 
-    assert fs.read("/scalars/loss.json", 1 << 20, 0) == before
-    replacement = tmp_path / "replacement"
-    replacement.write_bytes(_loss(0, 2.0) + _loss(1, 1.0))
-    replacement.replace(event)
-    assert fs.read("/scalars/loss.json", 1 << 20, 0) != before
+    after = fs.read("/scalars/loss.json", 1 << 20, 0)
+    assert after != before
+    assert after == TensorBoardFS(tmp_path).read("/scalars/loss.json", 1 << 20, 0)
+
+
+def test_unreadable_replacement_drops_only_its_previous_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bad, _ = _runs(tmp_path, "bad", "good")
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    good_path = "/good/scalars/loss.json"
+    bad_path = "/bad/scalars/loss.json"
+    expected = fs.read(good_path, 4096, 0)
+    assert fs.read(bad_path, 4096, 0) == expected
+    replacement = bad.with_name("replacement")
+    replacement.write_bytes(_loss(9, 2.0))
+    replacement.replace(bad)
+    original = Path.open
+
+    def deny_replacement(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == bad:
+            raise PermissionError(self)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", deny_replacement)
+    with pytest.raises(FileNotFoundError):
+        fs.read(bad_path, 4096, 0)
+    assert fs.read(good_path, 4096, 0) == expected
 
 
 def test_a_touched_event_file_is_opened_once(

@@ -1,6 +1,8 @@
 import re
 import struct
+from types import MappingProxyType
 from typing import Any
+from zlib import crc32
 
 import magic
 import numpy as np
@@ -14,6 +16,45 @@ from tboardfs.tensor import _MAX_NUMPY_DIMS, tensor_to_array
 from tboardfs.zip_types import zip_extension
 
 _LABEL = re.compile(rb"[\w .-]*")
+_SCALAR_FIELDS = MappingProxyType(
+    {
+        dtype: (field, np.dtype(name), struct.Struct(fmt))
+        for dtype, field, name, fmt in (
+            (1, 5, "float32", "<f"),
+            (2, 6, "float64", "<d"),
+            (3, 7, "int32", "<i"),
+            (9, 10, "int64", "<q"),
+            (10, 11, "bool", "<?"),
+            (22, 16, "uint32", "<I"),
+            (23, 17, "uint64", "<Q"),
+        )
+    }
+)
+
+
+def _canonical_png(blob: bytes) -> bool:
+    """Recognize PNG chunk framing without reading compressed image data."""
+    if not blob.startswith(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"):
+        return False
+    if not blob.endswith(b"\x00\x00\x00\x00IEND\xaeB`\x82"):
+        return False
+    if crc32(blob[12:29]) != int.from_bytes(blob[29:33], "big"):
+        return False
+    end = len(blob) - 12
+    offset = 33
+    has_data = False
+    for _ in range(256):
+        if offset + 12 > end:
+            break
+        size, kind = struct.unpack_from(">I4s", blob, offset)
+        if kind in (b"IHDR", b"IEND"):
+            return False
+        if kind == b"IDAT" and size > 0:
+            has_data = True
+        offset += size + 12
+        if offset == end:
+            return has_data
+    return False
 
 
 def detect_extension(blob: bytes | None) -> str:
@@ -23,6 +64,8 @@ def detect_extension(blob: bytes | None) -> str:
     extension = _Classifier.container_extension(blob)
     if extension is not None:
         return extension
+    if _canonical_png(blob):
+        return "png"
     extension = _Classifier.extension_from_magic(blob)
     if extension is not None:
         return extension
@@ -61,50 +104,21 @@ class _Classifier:
     def common_scalar(tensor: dict[str, Any]) -> Scalar | None:
         """Return a scalar of a common dtype from its fields, without NumPy."""
         dtype = tensor.get("dtype")
-        values = tensor.get("values", {})
-        content = tensor.get("tensor_content")
-        if content:
-            return _Classifier.tensor_content_scalar(dtype, content)
-
-        # dtype id: (TensorProto repeated field number, NumPy dtype)
-        fields = {
-            1: (5, "float32"),
-            2: (6, "float64"),
-            3: (7, "int32"),
-            9: (10, "int64"),
-            10: (11, "bool"),
-            22: (16, "uint32"),
-            23: (17, "uint64"),
-        }
-        if dtype not in fields:
-            return None
-        field, np_dtype = fields[dtype]
-        if len(values.get(field, ())) != 1:
-            return None
-        return Scalar(values[field][0], np.dtype(np_dtype))
-
-    @staticmethod
-    def tensor_content_scalar(dtype: int | None, content: bytes) -> Scalar | None:
-        """Return a scalar from fixed-width tensor content when supported."""
-        specs = {
-            1: ("<f", np.dtype("float32")),
-            2: ("<d", np.dtype("float64")),
-            3: ("<i", np.dtype("int32")),
-            9: ("<q", np.dtype("int64")),
-            10: ("<?", np.dtype("bool")),
-            22: ("<I", np.dtype("uint32")),
-            23: ("<Q", np.dtype("uint64")),
-        }
         if dtype is None:
             return None
-        spec = specs.get(dtype)
+        spec = _SCALAR_FIELDS.get(dtype)
         if spec is None:
             return None
-
-        fmt, np_dtype = spec
-        if len(content) != struct.calcsize(fmt):
+        field, np_dtype, layout = spec
+        content = tensor.get("tensor_content")
+        if content:
+            if len(content) != layout.size:
+                return None
+            return Scalar(layout.unpack(content)[0], np_dtype)
+        values = tensor.get("values", {}).get(field, ())
+        if len(values) != 1:
             return None
-        return Scalar(struct.unpack(fmt, content)[0], np_dtype)
+        return Scalar(values[0], np_dtype)
 
     @staticmethod
     def plugin_name(value: dict[str, Any]) -> str:

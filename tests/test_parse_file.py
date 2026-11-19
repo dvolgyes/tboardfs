@@ -381,6 +381,58 @@ def test_parse_file_mixed_scalar_types_fall_back_to_double(tmp_path: Path) -> No
     )
 
 
+def test_scalar_append_matches_a_single_pass_with_mixed_dtypes(tmp_path: Path) -> None:
+    path = tmp_path / "events.out.tfevents"
+    first_step = 2**53
+    path.write_bytes(
+        _event_record(
+            10.0,
+            first_step + 1,
+            [
+                _tensor_value("mixed", 9, "int64_val", 2**53 + 1),
+                _tensor_value("narrow", 17, "int_val", 40_000),
+                {"tag": "epoch", "simple_value": 3},
+            ],
+        )
+    )
+    parse = tboardfs.indexer._EventIndexer.parse_event_file
+    base = parse(path)
+    with path.open("ab") as handle:
+        handle.write(
+            _event_record(
+                9.0,
+                first_step,
+                [
+                    {"tag": "mixed", "simple_value": 2.5},
+                    _tensor_value("narrow", 17, "int_val", 40_001),
+                ],
+            )
+            + _event_record(
+                8.0, first_step, [_tensor_value("mixed", 9, "int64_val", 4)]
+            )
+        )
+    warm, cold = parse(path, base_cache=base), parse(path)
+    assert (
+        warm.scalar_mtimes
+        == cold.scalar_mtimes
+        == {
+            "epoch": 10.0,
+            "mixed": 8.0,
+            "narrow": 9.0,
+        }
+    )
+    for tag, columns in cold.scalars.items():
+        for column, values in columns.items():
+            np.testing.assert_array_equal(
+                warm.scalars[tag][column], values, strict=True
+            )
+    scalars = parse_file(path)["scalars"]
+    assert scalars["mixed"]["step"].tolist() == [first_step, first_step, first_step + 1]
+    assert scalars["mixed"]["value"].tolist() == [2.5, 4.0, float(2**53 + 1)]
+    assert scalars["mixed"]["value"].dtype == np.dtype("float64")
+    assert scalars["narrow"]["value"].dtype == np.dtype("uint16")
+
+
 def test_parse_file_rejects_truncated_record(tmp_path: Path) -> None:
     """Strict parsing rejects truncated TFRecords."""
     path = tmp_path / "events.out.tfevents"

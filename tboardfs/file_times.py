@@ -30,24 +30,29 @@ class FileTimes:
         above it. A directory that has a time keeps it, so a shared subtree
         that has its times is not changed.
         """
-        FileTimes.newest(tree)
-        FileTimes.fill(tree, FileTimes.of(tree))
+        if FileTimes.newest(tree) is None:
+            FileTimes.fill(tree, 0.0)
 
     @staticmethod
     def newest(node: dict[str, Any]) -> float | None:
-        """Set and return the newest time below a directory, or None without files."""
+        """Stamp directories with data and return their newest time."""
         if node["type"] != "dir" or "mtime" in node:
             return FileTimes.of(node)
         times = [FileTimes.newest(child) for child in node["children"].values()]
         newest = max((time for time in times if time is not None), default=None)
         if newest is not None:
             node["mtime"] = newest
+            for child in node["children"].values():
+                if child["type"] == "dir" and "mtime" not in child:
+                    FileTimes.fill(child, newest)
         return newest
 
     @staticmethod
     def fill(node: dict[str, Any], above: float) -> None:
         """Give the directories without a time the time of the directory above."""
-        node.setdefault("mtime", above)
+        if "mtime" in node:
+            return
+        node["mtime"] = above
         for child in node["children"].values():
             if child["type"] == "dir":
-                FileTimes.fill(child, node["mtime"])
+                FileTimes.fill(child, above)

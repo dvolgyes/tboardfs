@@ -13,6 +13,7 @@ from tboardfs.host_publish import OutputPublisher, _OutputConflictError
 from tboardfs.indexer import _EventIndexer
 from tboardfs.model import RunCache, TFRecordError
 from tboardfs.paths import _Paths
+from tboardfs.raw_frames import _RawFrameChildren
 from tboardfs.render_node import render_node
 from tboardfs.run_tree import build_run_tree
 
@@ -161,6 +162,10 @@ class SingleEventTree:
         if view == "typed" and node.get("view") == "raw":
             return
         children = node["children"]
+        if isinstance(children, _RawFrameChildren):
+            for name, child in children.iter_nodes():
+                yield (*parts, name), child
+            return
         for name in sorted(
             children, key=lambda n: n + ("/" if children[n]["type"] == "dir" else "")
         ):

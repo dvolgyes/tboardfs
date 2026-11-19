@@ -27,6 +27,13 @@ class Record:
     header: bytes
     footer: bytes
 
-    def reference(self, identity: FileIdentity) -> FrameRef:
+    def reference(
+        self,
+        identity: FileIdentity,
+        *,
+        fingerprint: tuple[int | None, ...] | None = None,
+    ) -> FrameRef:
         """Keep the generation and frame evidence needed for a lazy read."""
-        return FrameRef(identity, self.record_offset, self.total_size, self.payload_crc)
+        return FrameRef(
+            identity, self.record_offset, self.total_size, self.payload_crc, fingerprint
+        )

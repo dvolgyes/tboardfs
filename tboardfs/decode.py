@@ -1,6 +1,3 @@
-import numpy as np
-
-
 class _Decode:
     """Small decoding helpers for TensorBoard scalar and text fields."""
 
@@ -15,13 +12,3 @@ class _Decode:
         return all(
             isinstance(value, int) and not isinstance(value, bool) for value in values
         )
-
-    @staticmethod
-    def scalar_array_dtype(dtypes: list[np.dtype]) -> np.dtype:
-        """Return the narrow scalar dtype when all rows agree."""
-        if not dtypes:
-            return np.dtype("float64")
-        first = dtypes[0]
-        if all(dtype == first for dtype in dtypes):
-            return first
-        return np.dtype("float64")

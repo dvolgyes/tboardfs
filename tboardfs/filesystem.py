@@ -1,12 +1,13 @@
 from dataclasses import dataclass, field
-from errno import EISDIR, ENOENT, ENOTDIR, EROFS
+from errno import EIO, EISDIR, ENOENT, ENOTDIR, EROFS
+from io import FileIO
 import os
 from pathlib import Path
 import stat
 from threading import RLock
 import time
 from typing import Any
-from collections.abc import Callable, Hashable
+from collections.abc import Callable
 
 from loguru import logger
 
@@ -19,14 +20,15 @@ from tboardfs.errors import fuse_error
 from tboardfs.file_times import FileTimes
 from tboardfs.file_status import FileIdentity
 from tboardfs.indexer import _EventIndexer
-from tboardfs.model import RunCache, SidecarEntry
+from tboardfs.model import BinaryEntry, GraphEntry, RunCache, SidecarEntry
 from tboardfs.open3d_asset import OPEN3D_PLUGIN, Open3DAsset
-from tboardfs.paths import _Paths
+from tboardfs.paths import _DirectoryNode, _Paths
 from tboardfs.run_places import RunPlaces
 from tboardfs.run_tree import build_run_tree
 from tboardfs.sidecar_scan import SidecarScan
-from tboardfs.render_cache import RenderCache
+from tboardfs.render_cache import RenderCache, RenderKey
 from tboardfs.render_node import render_node
+from tboardfs.verified_span import _FrameValidations, _VerifiedSpan
 
 
 @dataclass
@@ -52,7 +54,7 @@ class _FsState:
     :ivar tree_generation: current virtual tree generation
     :ivar run_trees: run version and virtual tree by run path
     :ivar next_version: next unused run data version
-    :ivar open_files: bytes and mtime kept for each open file handle
+    :ivar open_files: content and mtime kept for each open file handle
     :ivar next_handle: number for the next open file handle
     """
 
@@ -65,7 +67,10 @@ class _FsState:
         default_factory=dict
     )
     next_version: int = 1
-    open_files: dict[int, tuple[bytes, float]] = field(default_factory=dict)
+    frame_validations: _FrameValidations = field(default_factory=_FrameValidations)
+    open_files: dict[int, tuple[bytes | _VerifiedSpan, float]] = field(
+        default_factory=dict
+    )
     next_handle: int = 1
 
 
@@ -75,8 +80,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     FUSE calls the callbacks from several threads. Discovery, refresh and
     tree lookup run under ``_lock``; rendering a node runs outside it,
     because nodes and event-file caches are not changed after creation.
-    ``open`` keeps the rendered bytes until ``release``, so every read and
-    stat through one handle sees one version while the run grows.
+    ``open`` pins a source descriptor or rendered bytes until ``release``.
     Rendered bytes are cached by the data versions of the runs on the path,
     so a change in one run makes only its own files render again.
 
@@ -150,7 +154,8 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         opened = self._open_file(file_handles)
         mode, nlink = stat.S_IFREG | 0o444, 1
         if opened is not None:
-            size, mtime = len(opened[0]), opened[1]
+            content, mtime = opened
+            size = content.size if isinstance(content, _VerifiedSpan) else len(content)
         else:
             node, key = self._locate(path)
             mtime = FileTimes.of(node)
@@ -174,18 +179,22 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     def readdir(self, path: str, *file_handles: object) -> list[str]:
         """Return virtual directory entries."""
         del file_handles
-        node = self._lookup(path)
-        if node["type"] != "dir":
-            raise fuse_error(ENOTDIR)
-        return [".", "..", *sorted(node["children"])]
+        with self._lock:
+            node = self._lookup(path)
+            if not isinstance(node, _DirectoryNode):
+                raise fuse_error(ENOTDIR)
+            names = node.sorted_names()
+        return [".", "..", *names]
 
     def open(self, path: str, flags: int) -> int:
-        """Open a virtual file and keep its current bytes for the handle."""
+        """Open a virtual file and pin its current version for the handle."""
         del flags
         node, key = self._locate(path)
         if node["type"] == "dir":
             raise fuse_error(EISDIR)
-        opened = (self._node_bytes(node, key), FileTimes.of(node))
+        mtime = FileTimes.of(node)
+        span = self._node_span(node)
+        opened = (self._node_bytes(node, key) if span is None else span, mtime)
         with self._lock:
             handle = self._state.next_handle
             self._state.next_handle += 1
@@ -193,20 +202,31 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         return handle
 
     def release(self, path: str, handle: int) -> int:
-        """Free the bytes kept for an open handle."""
+        """Release the version pinned by an open handle."""
         del path
         with self._lock:
-            self._state.open_files.pop(handle, None)
+            opened = self._state.open_files.pop(handle, None)
+        if opened is not None and isinstance(opened[0], _VerifiedSpan):
+            opened[0].close()
         return 0
 
     def read(self, path: str, size: int, offset: int, *file_handles: object) -> bytes:
         """Read a byte range from an open handle, or from the current file."""
         opened = self._open_file(file_handles)
         if opened is not None:
-            return opened[0][offset : offset + size]
+            content = opened[0]
+            if isinstance(content, _VerifiedSpan):
+                return content.read(size, offset)
+            return content[offset : offset + size]
         node, key = self._locate(path)
         if node["type"] == "dir":
             raise fuse_error(EISDIR)
+        span = self._node_span(node)
+        if span is not None:
+            try:
+                return span.read(size, offset)
+            finally:
+                span.close()
         data = self._node_bytes(node, key)
         return data[offset : offset + size]
 
@@ -268,45 +288,42 @@ class TensorBoardFS:  # pcr: noqa: PCR010
     def _lookup(self, path: str) -> dict[str, Any]:
         return self._locate(path)[0]
 
-    def _locate(self, path: str) -> tuple[dict[str, Any], Hashable]:
-        """Return the node at ``path`` and the cache key of its bytes.
+    def _locate(self, path: str) -> tuple[dict[str, Any], RenderKey]:
+        """Return the node at ``path`` and its generation-scoped render key.
 
-        The key names the versions of all runs that can add files at the
-        path; it is read under the same lock as the node, so both match.
+        The key is read under the same lock as the node, so both match.
         """
         parts = _Paths.path_parts(path)
         with self._lock:
-            self._cached_tree()
-            depth = max(
-                end
-                for end in range(len(parts) + 1)
-                if parts[:end] in self._run_places.disk_parts
-            )
+            tree = self._cached_tree()
+            depth = len(parts)
+            disk_parts = self._run_places.disk_parts
+            while (owner := disk_parts.get(parts[:depth])) is None:
+                depth -= 1
             while True:
-                self._activate(self._run_places.disk_parts[parts[:depth]])
-                self._cached_tree()
-                if (
-                    depth == len(parts)
-                    or parts[: depth + 1] not in self._run_places.disk_parts
-                ):
+                self._activate(owner)
+                refreshed = self._cached_tree()
+                if refreshed is not tree:
+                    tree = refreshed
+                    disk_parts = self._run_places.disk_parts
+                if depth == len(parts):
                     break
+                child_owner = disk_parts.get(parts[: depth + 1])
+                if child_owner is None:
+                    break
+                owner = child_owner
                 depth += 1
-            node = self._cached_tree()
+            node = tree
             for part in parts:
                 if node["type"] != "dir" or part not in node["children"]:
                     raise FileNotFoundError(ENOENT, os.strerror(ENOENT), path)
                 node = node["children"][part]
-            runs = self._state.runs
-            # A renamed run folder has other parts on disk than in the tree.
-            disk_parts = self._run_places.disk_parts
-            if node["type"] == "name_map":
-                return node, (self._state.tree_generation, parts)
-            owner = next(
-                disk_parts[parts[:end]]
-                for end in range(len(parts), -1, -1)
-                if parts[:end] in disk_parts
-            )
-            return node, (runs[owner].version, parts)
+            version = None
+            if node["type"] != "name_map":
+                while (owner := disk_parts.get(parts[:depth])) is None:
+                    depth -= 1
+                version = self._state.runs[owner].version
+            return node, (self._renders.scope(version), parts)
 
     def _build_tree(self) -> dict[str, Any]:
         tree = self._run_places.build(
@@ -337,16 +354,21 @@ class TensorBoardFS:  # pcr: noqa: PCR010
 
     def _open_file(
         self, file_handles: tuple[object, ...]
-    ) -> tuple[bytes, float] | None:
+    ) -> tuple[bytes | _VerifiedSpan, float] | None:
         handle = file_handles[0] if file_handles else None
         if not isinstance(handle, int):
             return None
         with self._lock:
             return self._state.open_files.get(handle)
 
-    def _node_size(self, node: dict[str, Any], key: Hashable) -> int:
+    def _node_size(self, node: dict[str, Any], key: RenderKey) -> int:
         if node["type"] == "raw":
             return int(node["frame"].size)
+        if node["type"] in {"binary", "graph"}:
+            stored: BinaryEntry | GraphEntry = node["entry"]
+            if not self._allowed(stored.source_path):
+                raise fuse_error(ENOENT)
+            return stored.blob.size
         # A sidecar can be large, so its size comes from the disk.
         if node["type"] == "sidecar":
             entry: SidecarEntry = node["entry"]
@@ -360,7 +382,38 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             return asset.size
         return len(self._node_bytes(node, key))
 
-    def _node_bytes(self, node: dict[str, Any], key: Hashable) -> bytes:
+    def _node_span(self, node: dict[str, Any]) -> _VerifiedSpan | None:
+        if node["type"] not in {"binary", "graph"}:
+            return None
+        entry: BinaryEntry | GraphEntry = node["entry"]
+        blob = entry.blob
+        if blob.span is None or not blob.range_checksums:
+            return None
+        if not self._allowed(entry.source_path):
+            raise fuse_error(ENOENT)
+        try:
+            file = FileIO(
+                entry.source_path,
+                "rb",
+                opener=lambda path, flags: os.open(path, flags | os.O_NONBLOCK),
+            )
+        except OSError as error:
+            raise fuse_error(EIO) from error
+        try:
+            if not self._allowed(entry.source_path):
+                raise fuse_error(ENOENT)
+            return _VerifiedSpan(
+                file,
+                blob.frame,
+                blob.span,
+                blob.range_checksums,
+                self._state.frame_validations,
+            )
+        except BaseException:
+            file.close()
+            raise
+
+    def _node_bytes(self, node: dict[str, Any], key: RenderKey) -> bytes:
         # Sidecars are files on disk that can change without a new run
         # version, so they are read each time.
         if node["type"] == "sidecar":
@@ -468,8 +521,9 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             self._forget(child)
         self._clear_piece(parts)
         del self._state.directories[parts]
-        self._state.runs.pop(parts, None)
-        self._state.run_trees.pop(parts, None)
+        run = self._state.runs.pop(parts, None)
+        if run is not None:
+            self._drop_run_cache(run)
 
     def _ensure_run(self, run_parts: tuple[str, ...]) -> RunCache:
         if run_parts not in self._state.directories:
@@ -482,6 +536,15 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         version = self._state.next_version
         self._state.next_version += 1
         return version
+
+    def _drop_run_cache(self, run: RunCache) -> None:
+        self._state.run_trees.pop(run.run_parts, None)
+        self._renders.expire(run.version)
+
+    def _change_run_version(self, run: RunCache) -> None:
+        self._drop_run_cache(run)
+        run.version = self._version()
+        self._invalidate_tree()
 
     def _refresh_run(
         self,
@@ -503,8 +566,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         self._refresh_sidecars(run, entries)
         run.refreshed_at = now
         if changed:
-            run.version = self._version()
-            self._invalidate_tree()
+            self._change_run_version(run)
         return changed
 
     def _clear_piece(self, parts: tuple[str, ...]) -> None:
@@ -522,8 +584,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         sidecars = tuple(item for key in sorted(pieces) for item in pieces[key])
         if run.sidecars != sidecars:
             run.sidecars = sidecars
-            run.version = self._version()
-            self._invalidate_tree()
+            self._change_run_version(run)
 
     def _refresh_sidecars(
         self, run: RunCache, entries: list[os.DirEntry[str]] | None
@@ -602,6 +663,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         return tree
 
     def _invalidate_tree(self) -> None:
+        self._renders.expire(None)
         self._state.tree_generation += 1
         self._state.tree_cache = None
 
@@ -617,11 +679,7 @@ class _RunData:
         force: bool,
         log: Callable[[str, object], None] | None,
     ) -> bool:
-        """Refresh event-file caches for a run.
-
-        An unreadable file keeps its previous cache, so one bad file never
-        hides the rest of the run or the mount.
-        """
+        """Refresh each source independently; never publish an unreadable generation."""
         changed = False
         carry: dict[str, dict[str, Any]] = {}
         for source_path in sorted(files):
@@ -638,11 +696,11 @@ class _RunData:
                     )
                     or changed
                 )
-            except FileNotFoundError:
+            except OSError as error:
+                if not isinstance(error, FileNotFoundError):
+                    logger.warning("cannot read event file {}: {}", source_path, error)
                 if run.files.pop(source_path, None) is not None:
                     changed = True
-            except OSError as error:
-                logger.warning("cannot read event file {}: {}", source_path, error)
             if source_path in run.files:
                 carry = run.files[source_path].progress.effective_metadata
         for deleted in set(run.files) - set(files):

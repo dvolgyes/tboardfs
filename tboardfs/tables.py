@@ -1,5 +1,6 @@
 import base64
 from collections import defaultdict
+from dataclasses import dataclass, field
 from io import BytesIO
 import math
 from collections.abc import Iterable, Mapping
@@ -9,7 +10,6 @@ import numpy as np
 import orjson
 import pandas as pd
 
-from tboardfs.constants import SCALAR_COLUMNS
 from tboardfs.decode import _Decode
 from tboardfs.histogram_compress import NORMAL_HISTOGRAM_BPS, compress_histogram
 from tboardfs.model import EventFileCache
@@ -295,32 +295,31 @@ class _TableExport:
         return any(value is None for value in values)
 
 
+@dataclass(slots=True)
+class _ScalarRows:
+    """Collect a tag's scalar columns until the file pass finishes."""
+
+    epoch: list[Any] = field(default_factory=list)
+    step: list[int] = field(default_factory=list)
+    wall_time: list[float] = field(default_factory=list)
+    relative_time: list[float] = field(default_factory=list)
+    value: list[Any] = field(default_factory=list)
+    dtype: np.dtype | None = None
+
+    def arrays(self) -> dict[str, np.ndarray]:
+        """Convert the collected columns to NumPy arrays."""
+        return {
+            "_inherits_epoch": _TableRows.missing_epochs(self.epoch),
+            "epoch": np.asarray(self.epoch, dtype=np.float64),
+            "step": np.asarray(self.step, dtype=np.int64),
+            "wall_time": np.asarray(self.wall_time, dtype=np.float64),
+            "relative_time": np.asarray(self.relative_time, dtype=np.float64),
+            "value": np.asarray(self.value, dtype=self.dtype),
+        }
+
+
 class _TableRows:
     """Convert mutable parse rows to NumPy-backed table columns."""
-
-    @staticmethod
-    def arrays_from_scalar_rows(
-        scalar_rows: dict[str, dict[str, list[Any]]],
-        scalar_dtypes: dict[str, list[np.dtype]],
-    ) -> dict[str, dict[str, np.ndarray]]:
-        """Convert mutable scalar rows to NumPy column arrays."""
-        return {
-            tag: {
-                "_inherits_epoch": _TableRows.missing_epochs(rows["epoch"]),
-                "epoch": np.asarray(rows["epoch"], dtype=np.float64),
-                "step": np.asarray(
-                    rows["step"],
-                    dtype=np.int64 if _Decode.all_ints(rows["step"]) else np.float64,
-                ),
-                "wall_time": np.asarray(rows["wall_time"], dtype=np.float64),
-                "relative_time": np.asarray(rows["relative_time"], dtype=np.float64),
-                "value": np.asarray(
-                    rows["value"],
-                    dtype=_Decode.scalar_array_dtype(scalar_dtypes.get(tag, [])),
-                ),
-            }
-            for tag, rows in scalar_rows.items()
-        }
 
     @staticmethod
     def arrays_from_histogram_rows(
@@ -351,11 +350,6 @@ class _TableRows:
         return np.fromiter(
             (value is None for value in values), dtype=bool, count=len(values)
         )
-
-    @staticmethod
-    def empty_scalar_rows() -> dict[str, list[Any]]:
-        """Create mutable storage for scalar table rows."""
-        return {column: [] for column in SCALAR_COLUMNS}
 
     @staticmethod
     def empty_histogram_rows() -> dict[str, list[Any]]:
@@ -389,7 +383,7 @@ class _TableMerge:
                     merged[tag][column].append(values)
         return {
             tag: {
-                column: np.concatenate(values) if values else np.asarray([])
+                column: values[0] if len(values) == 1 else np.concatenate(values)
                 for column, values in columns.items()
             }
             for tag, columns in merged.items()
@@ -482,6 +476,8 @@ class _TableMerge:
         the metric is one epoch late. Rows at a step without an epoch scalar
         keep the carried epoch. The last epoch written at a step wins.
         """
+        if not tables:
+            return {}
         if not epochs or not len(epochs["step"]):
             return {tag: dict(series) for tag, series in tables.items()}
         backward = epochs["step"][::-1]

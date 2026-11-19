@@ -5,7 +5,7 @@ from typing import Any
 
 from loguru import logger
 
-from tboardfs.paths import NAME_MAP, _Paths
+from tboardfs.paths import NAME_MAP, _DirectoryNode, _Paths
 
 
 class RunPlaces:
@@ -40,7 +40,7 @@ class RunPlaces:
             run_trees: the directory tree of each run, by run path; they are
                 not changed.
         """
-        root: dict[str, Any] = {"type": "dir", "children": {}}
+        root = _DirectoryNode()
         maps: dict[tuple[str, ...], dict[str, str]] = {}
         dirs: dict[tuple[str, ...], dict[str, Any]] = {(): root}
         paths: dict[tuple[str, ...], tuple[str, ...]] = {(): ()}
@@ -56,7 +56,7 @@ class RunPlaces:
                 names = maps.setdefault(prefix[:-1], {})
                 component = _Paths.safe_component(prefix[-1], name_map=names)
                 name = RunPlaces.free_name(component, parent)
-                dirs[prefix] = {"type": "dir", "children": {}}
+                dirs[prefix] = _DirectoryNode()
                 parent["children"][name] = dirs[prefix]
                 paths[prefix] = (*paths[prefix[:-1]], name)
                 if name != component:

@@ -100,28 +100,69 @@ data; use `--logfile` or `--foreground` when you need them.
 
 ### Live Training Runs
 
-Listing a directory discovers its children without indexing every descendant. Opening a path checks the known event
-files in the active run for changes and deletions, even within the discovery interval. New event files, subdirectories
-and sidecars become visible on local discovery; an idle run does not need a background scan. `inf` disables subsequent
-checks in a directory after its first access.
+Accessing a virtual path checks the known event files in the active run, even within the discovery interval.
+
+The check uses device, inode, birth time where available, size, modification time and status-change time; it ignores
+access time.
+
+Unchanged sources need no reopen for indexing.
+
+Local directory discovery finds new event files, subdirectories and sidecars without scanning idle runs.
+
+`--refresh-age-seconds inf` freezes a directory after its first access.
 
 Directory timestamps reflect discovered content, not files in unvisited subdirectories.
 
-Writers should append complete frames and replace the file when rewriting history. tboardfs resumes at the end of the
-last complete frame and checks that frame before reusing its index. A changed file identity, truncation or invalid
-checkpoint causes a fresh index. Identity uses device and inode plus birth time where available; Unix `ctime` is not
-creation time. This scheme does not detect all changes to earlier records in a growing file.
+Append complete frames, and replace the event file when rewriting history.
 
-Each open file keeps the content it had when it was opened, so a read never mixes two versions. Open the file again to
-see new data. If a raw frame, image or graph changes before its first read, tboardfs validates the indexed source rather
-than returning unrelated replacement bytes.
+On growth, tboardfs verifies the last complete frame and resumes at its end, retrying any incomplete tail.
+
+A replacement, a decrease in observed file size, a same-size metadata change or an invalid checkpoint requires a fresh
+index.
+
+A deleted or unreadable source drops out of the active view without invalidating unrelated runs.
+
+Changing an earlier frame *and* growing the same inode can leave old typed rows visible under the append-only
+assumption.
+
+If the filesystem reports identical metadata across a same-size rewrite, a status check alone cannot detect it.
+
+Opening a rendered export pins its bytes; opening a directly indexed binary pins the source descriptor.
+
+Appending, renaming or unlinking that source does not redirect an open handle to a replacement.
+
+An in-place rewrite can make the original binary unavailable: if verification fails, the read returns `EIO` rather than
+mixing versions.
 
 ### Memory and Caching
 
-Rendered files are kept in memory, so `ls -l` followed by `cat` renders a file once. When the cache goes over
-`--cache-size-mb`, the least recently used files are dropped until half the limit is left. New events in a run make only
-the files of that run render again. The limit applies to rendered bytes, not to indexes, directory entries, or bytes
-pinned by open handles.
+The first indexing pass collects scalar columns by tag and records each stored binary's format and byte count.
+
+For unambiguous fields in frames of at least 4 KiB, the index also records the exact payload range.
+
+Listing a directory reuses its sorted names; looking up a raw frame uses its offset without allocating all raw
+filenames.
+
+Stat uses the indexed size of stored binaries and graphs; it does not render them.
+
+On a stable source, a mapped binary read checks only the 4 KiB blocks that overlap the requested range.
+
+If source metadata changes, the reader revalidates the indexed frame against its original CRC before trusting the new
+metadata.
+
+These checks detect accidental corruption, not deliberate tampering; if metadata is identical, a read does not check
+unrequested blocks.
+
+Small frames and ambiguous protobuf layouts use full-frame verification and extraction; derived exports such as CSV and
+NumPy files still require rendering.
+
+Rendered exports use a run-local generation and a shared byte budget.
+
+When `--cache-size-mb` is exceeded, the least recently used renders are dropped until at most half the budget remains.
+
+Changing a run discards its obsolete renders without evicting the renders of other runs.
+
+The budget excludes indexes, directory entries, and content pinned by open handles.
 
 ### Permissions and Memory Maps
 
@@ -501,6 +542,28 @@ lengths above 1 GiB before reading the payload. CRC32C detects accidental damage
   `RunMetadata` or meta graph. The other values of the same event stay.
 - When only a conversion fails, the file with the stored bytes stays, for example `<step>.run_metadata.pb` without its
   `.pbtxt`.
+
+## Measuring Large Runs
+
+The scale test uses 20,000 distinct small images and scalar rows by default, plus a 9 MiB PNG in an event with small
+siblings.
+
+Run the larger case to check append, partial tails, truncation, replacement, deletion and open handles:
+
+```bash
+TBOARDFS_SCALE_COUNT=100000 uv run --locked pytest -q tests/test_scale.py
+```
+
+To time the same workload, generate the corpus once at a new path and run one process per trial:
+
+```bash
+uv run --locked python scripts/benchmark_scale.py --prepare --data /tmp/scale.tfevents
+uv run --locked python scripts/benchmark_scale.py --data /tmp/scale.tfevents
+```
+
+The benchmark measures filesystem callbacks, not kernel FUSE throughput or cold-disk latency.
+
+It checks returned bytes and reports timings and peak process RSS as JSON.
 
 ## Generate Test Data
 

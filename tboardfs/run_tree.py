@@ -7,10 +7,10 @@ from tboardfs.constants import FIXED_TABS
 from tboardfs.file_times import FileTimes
 from tboardfs.graph_files import add_graph_files
 from tboardfs.histogram_files import add_histogram_files
-from tboardfs.model import BinaryEntry, EventFileCache, JsonEntry, RunCache
+from tboardfs.model import EventFileCache, JsonEntry, RunCache
 from tboardfs.open3d_asset import OPEN3D_ASSETS, OPEN3D_PLUGIN
 from tboardfs.open3d_files import Open3DFiles
-from tboardfs.paths import _Paths
+from tboardfs.paths import _DirectoryNode, _Paths
 from tboardfs.raw_frames import RawFrames
 from tboardfs.plugin_files import add_typed_plugin_files
 from tboardfs.restarts import _RestartPurge
@@ -29,9 +29,9 @@ def build_run_tree(
 
     Directory sources include sidecars; a single event file has none.
     """
-    run_node: dict[str, Any] = {"type": "dir", "children": {}}
+    run_node = _DirectoryNode()
     for tab in FIXED_TABS:
-        run_node["children"].setdefault(tab, {"type": "dir", "children": {}})
+        run_node["children"][tab] = _DirectoryNode()
     _RunTree.add_run_files(run_node, run, scalar_formats, step_digits)
     FileTimes.stamp_dirs(run_node)
     return run_node
@@ -48,38 +48,31 @@ class _RunTree:
         step_digits: int,
     ) -> None:
         """Populate one run directory with indexed virtual files."""
-        scalars = _RunTree.merged_scalars(run)
+        caches = _RunTree.sorted_file_caches(run)
+        scalars = _RunTree.merged_scalars(caches)
         files = RunFiles()
-        _RunTree.add_scalar_files(files, run, scalars, scalar_formats)
+        _RunTree.add_scalar_files(files, caches, scalars, scalar_formats)
         epochs = scalars.get("epoch")
-        add_histogram_files(
-            files, _RunTree.sorted_file_caches(run), epochs, scalar_formats, step_digits
-        )
-        _RunTree.add_binary_files(files, run, step_digits)
-        entries = _RunTree.run_json_entries(run)
+        add_histogram_files(files, caches, epochs, scalar_formats, step_digits)
+        _RunTree.add_binary_files(files, caches, step_digits)
+        entries = [entry for cache in caches for entry in cache.json_entries]
         consumed = add_typed_plugin_files(files, entries, scalars, step_digits)
         Open3DFiles.add(files, entries, run.sidecars, step_digits)
         _RunTree.add_json_files(files, entries, step_digits, consumed)
-        add_graph_files(files, _RunTree.sorted_file_caches(run), step_digits)
+        add_graph_files(files, caches, step_digits)
         _RunTree.add_sidecar_files(files, run)
-        RawFrames.add(files, run)
+        RawFrames.add(run_node["children"]["raw"], run, files.name_map)
         files.fill(run_node, run)
-        raw = run_node["children"]["raw"]
-        raw["view"] = "raw"
-        for event in raw["children"].values():
-            event["view"] = "raw"
 
     @staticmethod
     def add_scalar_files(
         files: RunFiles,
-        run: RunCache,
+        caches: list[EventFileCache],
         scalars: dict[str, dict[str, Any]],
         scalar_formats: tuple[str, ...],
     ) -> None:
         """Add the merged scalar tables of one run as export files."""
-        mtimes = _TableMerge.merge_mtimes(
-            cache.scalar_mtimes for cache in _RunTree.sorted_file_caches(run)
-        )
+        mtimes = _TableMerge.merge_mtimes(cache.scalar_mtimes for cache in caches)
         for tag, series in scalars.items():
             for fmt in scalar_formats:
                 files.add_named(
@@ -95,9 +88,11 @@ class _RunTree:
                 )
 
     @staticmethod
-    def add_binary_files(files: RunFiles, run: RunCache, step_digits: int) -> None:
+    def add_binary_files(
+        files: RunFiles, caches: list[EventFileCache], step_digits: int
+    ) -> None:
         """Add lazily extracted binary files for one run."""
-        for entry in _RunTree.run_binaries(run):
+        for entry in (entry for cache in caches for entry in cache.binaries):
             files.add(
                 (entry.kind,),
                 entry.tag,
@@ -139,9 +134,9 @@ class _RunTree:
             )
 
     @staticmethod
-    def merged_scalars(run: RunCache) -> dict[str, dict[str, Any]]:
+    def merged_scalars(caches: list[EventFileCache]) -> dict[str, dict[str, Any]]:
         """Return merged scalar series for one run, with the epoch of each step."""
-        scalars = _TableMerge.merge_run_tables(_RunTree.sorted_file_caches(run))
+        scalars = _TableMerge.merge_run_tables(caches)
         return _TableMerge.sort_scalars(
             _TableMerge.step_epochs(scalars, scalars.get("epoch"))
         )
@@ -181,21 +176,3 @@ class _RunTree:
     def sorted_file_caches(run: RunCache) -> list[EventFileCache]:
         """Return run file caches in source-file order, after restart purges."""
         return _RestartPurge.purge([run.files[path] for path in sorted(run.files)])
-
-    @staticmethod
-    def run_binaries(run: RunCache) -> list[BinaryEntry]:
-        """Return binary entries from all event-file caches."""
-        return [
-            entry
-            for cache in _RunTree.sorted_file_caches(run)
-            for entry in cache.binaries
-        ]
-
-    @staticmethod
-    def run_json_entries(run: RunCache) -> list[JsonEntry]:
-        """Return plugin JSON entries from all event-file caches."""
-        return [
-            entry
-            for cache in _RunTree.sorted_file_caches(run)
-            for entry in cache.json_entries
-        ]

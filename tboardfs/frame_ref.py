@@ -13,6 +13,7 @@ class FrameRef:
     offset: int
     size: int
     checksum: int
+    fingerprint: tuple[int | None, ...] | None = None
 
     @property
     def payload_offset(self) -> int:

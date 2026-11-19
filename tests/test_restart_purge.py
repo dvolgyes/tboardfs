@@ -11,7 +11,11 @@ import numpy as np
 import pytest
 
 from tboardfs import TensorBoardFS
+from tboardfs.indexer import _EventIndexer
+from tboardfs.model import EventFileCache, RunCache
 from tboardfs.proto import compat_pb2
+from tboardfs.restarts import _RestartPurge
+from tboardfs.run_tree import build_run_tree
 
 from test_incremental_parse import PNG, _contents, _frame
 
@@ -91,6 +95,32 @@ def test_start_in_a_later_file_drops_earlier_rows_from_its_step(
     assert _loss(fs) == RESUMED
     assert _histogram_steps(fs) == RESUMED
     assert fs.readdir("/images/img")[2:] == [f"{step:06d}.png" for step in range(7)]
+
+
+def test_run_tree_purges_once_and_reuses_single_file_columns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = tmp_path / "events.out.tfevents.0"
+    second = tmp_path / "events.out.tfevents.1"
+    first.write_bytes(FIRST_RUN)
+    second.write_bytes(_start(3))
+    run = RunCache(())
+    run.files = {path: _EventIndexer.parse_event_file(path) for path in (first, second)}
+    snapshots: list[list[EventFileCache]] = []
+    purge = _RestartPurge.purge
+
+    def record_purge(caches: list[EventFileCache]) -> list[EventFileCache]:
+        purged = purge(caches)
+        snapshots.append(purged)
+        return purged
+
+    monkeypatch.setattr(_RestartPurge, "purge", staticmethod(record_purge))
+    tree = build_run_tree(run, ("csv",), 6)
+    series = tree["children"]["scalars"]["children"]["loss.csv"]["series"]
+    assert len(snapshots) == 1
+    assert series["value"] is snapshots[0][0].scalars["loss"]["value"]
+    assert series["step"].tolist() == [0, 1, 2]
+    assert run.files[first].scalars["loss"]["step"].tolist() == list(range(6))
 
 
 def test_start_in_the_same_file_drops_only_rows_before_it(tmp_path: Path) -> None:

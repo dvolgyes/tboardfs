@@ -1,11 +1,26 @@
 """Least-recently-used cache of rendered virtual file bytes."""
 
 from collections import OrderedDict
-from collections.abc import Hashable
 from threading import Lock
 
 # Approximate memory of one entry besides its bytes: key, dict slot, header.
 ENTRY_OVERHEAD_BYTES = 200
+
+
+class _RenderScope:
+    """Identity of one generation and the paths cached for it."""
+
+    __slots__: tuple[str, ...] = ("_expired", "_paths")
+
+    _expired: bool
+    _paths: set[tuple[str, ...]]
+
+    def __init__(self) -> None:
+        self._expired = False
+        self._paths = set()
+
+
+type RenderKey = tuple[_RenderScope, tuple[str, ...]]
 
 
 class RenderCache:
@@ -26,7 +41,8 @@ class RenderCache:
 
     limit_bytes: int
     size_bytes: int
-    _entries: OrderedDict[Hashable, bytes]
+    _entries: OrderedDict[RenderKey, bytes]
+    _scopes: dict[int | None, _RenderScope]
     _lock: Lock
 
     def __init__(self, limit_bytes: int) -> None:
@@ -43,9 +59,18 @@ class RenderCache:
         self.limit_bytes = limit_bytes
         self.size_bytes = 0
         self._entries = OrderedDict()
+        self._scopes = {}
         self._lock = Lock()
 
-    def get(self, key: Hashable) -> bytes | None:
+    def scope(self, version: int | None) -> _RenderScope:
+        """Return the scope for one run version, or for the active name map."""
+        with self._lock:
+            scope = self._scopes.get(version)
+            if scope is None:
+                scope = self._scopes[version] = _RenderScope()
+            return scope
+
+    def get(self, key: RenderKey) -> bytes | None:
         """Return the bytes for ``key`` and mark them recently used."""
         with self._lock:
             data = self._entries.get(key)
@@ -53,19 +78,38 @@ class RenderCache:
                 self._entries.move_to_end(key)
             return data
 
-    def put(self, key: Hashable, data: bytes) -> None:
+    def put(self, key: RenderKey, data: bytes) -> None:
         """Keep ``data`` for ``key``; drop old entries when over the limit."""
         size = len(data) + ENTRY_OVERHEAD_BYTES
         if size > self.limit_bytes // 2:
             return
         with self._lock:
+            scope, path = key
+            if scope._expired:
+                return
             old = self._entries.pop(key, None)
             if old is not None:
                 self.size_bytes -= len(old) + ENTRY_OVERHEAD_BYTES
             self._entries[key] = data
+            scope._paths.add(path)
             self.size_bytes += size
             if self.size_bytes <= self.limit_bytes:
                 return
             while self.size_bytes > self.limit_bytes // 2:
-                _, dropped = self._entries.popitem(last=False)
+                (evicted_scope, evicted_path), dropped = self._entries.popitem(
+                    last=False
+                )
+                evicted_scope._paths.remove(evicted_path)
                 self.size_bytes -= len(dropped) + ENTRY_OVERHEAD_BYTES
+
+    def expire(self, version: int | None) -> None:
+        """Drop this generation and refuse further inserts for it."""
+        with self._lock:
+            scope = self._scopes.pop(version, None)
+            if scope is None:
+                return
+            scope._expired = True
+            for path in scope._paths:
+                data = self._entries.pop((scope, path))
+                self.size_bytes -= len(data) + ENTRY_OVERHEAD_BYTES
+            scope._paths.clear()
