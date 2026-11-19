@@ -60,7 +60,7 @@ def test_tiff_directory_chain_and_samples(run):
 
 
 @pytest.mark.parametrize(
-    "tag,suffix", [("matrix-npy", "npy"), ("plain-zip", "bin"), ("numeric-npz", "bin")]
+    "tag,suffix", [("matrix-npy", "npy"), ("plain-zip", "zip"), ("numeric-npz", "npz")]
 )
 def test_generic_tensor_files(run, tag, suffix):
     fs, values = run

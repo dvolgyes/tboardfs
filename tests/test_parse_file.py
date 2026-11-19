@@ -220,7 +220,7 @@ def test_detect_versioned_numpy_headers(major: int) -> None:
 def test_numpy_archive_is_not_a_single_array() -> None:
     archive = BytesIO()
     np.savez(archive, sample=np.arange(6))
-    assert detect_extension(archive.getvalue()) == "bin"
+    assert detect_extension(archive.getvalue()) == "npz"
 
 
 def test_export_table_json_spells_infinities_and_nulls_nan() -> None:

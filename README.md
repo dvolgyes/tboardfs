@@ -311,6 +311,15 @@ Filename extensions identify likely content; they do not certify that it will de
 generated tensor view and an embedded file would have the same path, the generated view keeps its name. For example,
 `000007.npy` describes the outer byte tensor and `000007.embedded.npy` contains the original NPY file.
 
+To store a GeoTIFF, put the **encoded TIFF file bytes** in `Summary.Image.encoded_image_string` (legacy) or after the
+width and height strings in an `images` plugin tensor (TF2).
+
+Passing a pixel array to `tf.summary.image` instead produces PNG without the TIFF tags.
+
+Both classic TIFF and BigTIFF export as `.tiff`; a reader such as Rasterio uses the internal offsets and georeferencing.
+
+External world files, `.aux.xml` files and `.ovr` files are not part of the encoded TIFF.
+
 Repeated values with the same tag retain their own payloads even when a writer omits repeated plugin metadata.
 
 ### Text
@@ -489,6 +498,10 @@ scripts/generate_geometry_cases.py --output samples/geometry
 | `generate_media_cases.py` | Legacy media fields and plugin tensors: image channels, static/animated GIF, audio sample widths, and native video containers |
 | `generate_raster_cases.py` | PNG color types and sample depths, baseline and progressive JPEG, timed GIF/APNG/WebP pairs and moving sprites with partial frames, blending and disposal |
 | `generate_embedded_formats.py` | Standard MIDI notes, two-page big-endian 16-bit TIFF, an embedded Fortran-order NPY matrix in string and byte tensors, and plain ZIP versus numeric NPZ |
+| `generate_geotiff_cases.py` | Rasterio writes and reopens classic GeoTIFF and forced BigTIFF with the same projected grid and pixels; both go into legacy and TF2 image layouts |
+| `generate_heic_cases.py` | Real HEVC and AV1 still images with distinguishable colors, in legacy and TF2 image layouts |
+| `generate_wave64_cases.py` | An independently decoded 440 Hz PCM tone in small RF64 and BW64 containers, in legacy and TF2 audio layouts |
+| `generate_office_cases.py` | Standalone DOCX field report, XLSX readings and PPTX briefing in `tests/data/file-types/`; these are file detector tests, not TensorBoard events |
 | `generate_dtype_cases.py` | Both encodings of all 20 supported numeric/boolean dtype IDs, binary strings, and raw recovery of unsupported dtype IDs |
 | `generate_torch_cases.py` | CPU PyTorch scalar precision and actual `add_tensor` encodings, including records with no faithful NumPy preview |
 | `generate_plugin_cases.py` | Unicode text tables, HParams domains, margin/multiline custom charts, projector TSV/sprite/bookmarks, CPU profile and unknown plugin data |
@@ -595,8 +608,8 @@ TF eager and standalone TensorBoard 2.21.
 
 All eight preserve still images, two-frame GIF/APNG/WebP, five audio formats and six silent video containers.
 
-The **extended encoded media** row marks cases tested with standalone `EventFileWriter` but not across the other seven
-paths:
+The **extended encoded media** row marks cases tested with the standalone TensorBoard 2.21.0 writer but not across all
+other writer paths:
 
 - [Still images](tests/test_raster_formats.py): the full PNG color/depth and baseline/progressive JPEG sets, including
   CMYK, plus [single-frame GIF routing](tests/test_media_formats.py).
@@ -605,6 +618,8 @@ paths:
 - [Audio](tests/test_audio_variants.py): ADTS AAC, AAC and ALAC in M4A, PCM AIFF, float WAV and the
   [full integer PCM sample-width set](tests/test_media_formats.py).
 - [Video](tests/test_av_clips.py): synchronized sound and motion in all six containers, not just the silent clips.
+- [Geospatial TIFF](tests/test_geotiff_cases.py), [HEIC and AVIF](tests/test_heic_cases.py), and
+  [RF64 and BW64](tests/test_wave64_cases.py): both the legacy media fields and TF2 plugin tensor layouts.
 
 Other marks distinguish the producer test from a reader behavior that the suite already checks:
 
@@ -652,12 +667,23 @@ The suite checks decoded content and byte preservation, not playback in a specif
 | WAV (8-, 16-, 24-, 32-bit PCM and float32), MP3, FLAC, Ogg/Vorbis, WebM/Opus, ADTS AAC, AAC or ALAC in M4A, PCM AIFF | `audio/`, with the detected extension |
 | MP4, QuickTime, AVI, WebM, Matroska, Ogg/Theora in a custom `video` summary | `videos/`, with `.mp4`, `.mov`, `.avi`, `.webm`, `.mkv`, `.ogg` respectively |
 | TIFF and AVIF images; RIFF-wrapped MIDI audio | Original bytes as `.tiff`, `.avif` and `.rmi` across all eight low-level writer paths; these previously used `.bin` |
+| Classic GeoTIFF and GeoTIFF in BigTIFF (standalone TB 2.21.0, legacy image and TF2 image tensor) | Both `.tiff`; the 3 × 2 raster retains its uint16 samples, 30 m grid and EPSG:32633 CRS |
+| HEIC and AVIF (standalone TB 2.21.0, legacy image and TF2 image tensor) | `.heic` for HEVC, `.avif` for AV1, based on explicit major or compatible brands; generic HEIF alone gives `.heif` and conflicting codec brands give `.bin` |
+| RF64 and BW64 (standalone TB 2.21.0, legacy audio and TF2 audio tensor) | Both `.wav`; the 64-bit size chunk and all 800 original PCM samples survive export |
 | Standard MIDI without a RIFF wrapper | `audio/<tag>/<step>.mid`; the note sequence is preserved |
 | Embedded NumPy array | `.npy` for an eligible binary tensor payload; dtype, byte order and storage order are unchanged |
-| Embedded ZIP and NPZ | Original bytes as `.bin`; a ZIP header alone does not identify a NumPy archive |
+| Embedded ZIP and NumPy archive (standalone TB 2.21.0, binary string tensor) | `.npz` when every member has an NPY name and a recognized NPY header; plain ZIP stays `.zip` |
 
-**Missing fixtures, not unsupported writers:** HEIC versus AVIF inside the same container family; BigTIFF with 64-bit
-image-directory offsets; and RF64/BW64 audio with a `ds64` chunk instead of an ordinary RIFF length.
+**Standalone file detection, not dashboard support:** the tests identify `.docx`, `.xlsx` and `.pptx` from bytes alone
+by matching the package manifest, main document part and internal root relationship.
+
+ZIP inspection does not extract files, load arrays or open documents.
+
+The detector checks at most 128 entries and a 64 KiB central directory, and reads only bounded headers or metadata.
+
+A recognized ZIP without enough evidence for a subtype stays `.zip`; a detected broken ZIP header gives `.bin`.
+
+The extension is not a full integrity check.
 
 The [TF2 image writer](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/plugins/image/summary_v2.py)
 emits PNG and the

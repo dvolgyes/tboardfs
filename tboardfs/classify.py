@@ -7,6 +7,7 @@ import numpy as np
 from tboardfs.constants import DT_STRING, LARGE_TENSOR_THRESHOLD, PLUGIN_TAB
 from tboardfs.model import Scalar
 from tboardfs.tensor import _MAX_NUMPY_DIMS, tensor_to_array
+from tboardfs.zip_types import zip_extension
 
 
 def detect_extension(blob: bytes | None) -> str:
@@ -199,6 +200,10 @@ class _Classifier:
     @staticmethod
     def container_extension(blob: bytes) -> str | None:
         """Resolve containers whose MIME labels can be ambiguous across magic databases."""
+        if blob.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x06\x06")):
+            return zip_extension(blob)
+        if blob.startswith((b"RF64", b"BW64")):
+            return _Classifier.wave64_extension(blob)
         if blob.startswith(b"RIFF") and blob[8:12] == b"RMID":
             return (
                 "rmi"
@@ -210,9 +215,18 @@ class _Classifier:
             return "mid" if 6 <= size <= len(blob) - 8 else None
         if blob.startswith(b"\x93NUMPY"):
             return _Classifier.numpy_extension(blob)
-        if blob[4:8] == b"ftyp" and _Classifier.avif_brand(blob):
-            return "avif"
+        if blob[4:8] == b"ftyp":
+            return _Classifier.image_brand(blob)
         return None
+
+    @staticmethod
+    def wave64_extension(blob: bytes) -> str:
+        """Require the 64-bit WAVE size chunk and its complete entry table."""
+        if len(blob) < 48 or blob[4:16] != b"\xff\xff\xff\xffWAVEds64":
+            return "bin"
+        size = int.from_bytes(blob[16:20], "little")
+        entries = int.from_bytes(blob[44:48], "little")
+        return "wav" if 28 + 12 * entries <= size <= len(blob) - 20 else "bin"
 
     @staticmethod
     def numpy_extension(blob: bytes) -> str | None:
@@ -224,15 +238,30 @@ class _Classifier:
         return "npy" if start < end <= len(blob) and blob[end - 1] == 10 else None
 
     @staticmethod
-    def avif_brand(blob: bytes) -> bool:
-        """Check the major and compatible brands within the first 4 KiB of an ftyp box."""
+    def image_brand(blob: bytes) -> str | None:
+        """Read aligned codec brands from a complete, bounded ISO file-type box."""
         size = int.from_bytes(blob[:4], "big")
-        if not 16 <= size <= len(blob) or size % 4:
-            return False
-        brands = (b"avif", b"avis")
-        return blob[8:12] in brands or any(
-            blob[i : i + 4] in brands for i in range(16, min(size, 4096), 4)
+        start = 8
+        if size == 1:
+            size = int.from_bytes(blob[8:16], "big")
+            start = 16
+        elif size == 0:
+            size = len(blob)
+        if not start + 8 <= size <= min(4096, len(blob)) or size % 4:
+            return "bin"
+        brands = {blob[i : i + 4] for i in range(start + 8, size, 4)}
+        brands.add(blob[start : start + 4])
+        avif = not brands.isdisjoint((b"avif", b"avis"))
+        heic = not brands.isdisjoint(
+            (b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"hevm", b"hevs")
         )
+        if heic and avif:
+            return "bin"
+        if heic:
+            return "heic"
+        if avif:
+            return "avif"
+        return "heif" if not brands.isdisjoint((b"mif1", b"msf1")) else None
 
     @staticmethod
     def extension_from_magic(blob: bytes) -> str | None:
