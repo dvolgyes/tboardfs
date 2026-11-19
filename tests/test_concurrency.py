@@ -14,6 +14,7 @@ import pytest
 
 from tboardfs import TensorBoardFS
 from tboardfs.crc32c import masked_crc32c
+from tboardfs.model import EventFileCache
 from tboardfs.proto import compat_pb2
 import tboardfs.filesystem
 
@@ -74,7 +75,7 @@ def test_state_updates_never_overlap(
     peak = [0]
     counter_lock = threading.Lock()
 
-    def slow_refresh(*args: Any, **kwargs: Any) -> bool:
+    def slow_refresh(*args: Any, **kwargs: Any) -> tuple[bool, EventFileCache | None]:
         with counter_lock:
             active[0] += 1
             peak[0] = max(peak[0], active[0])

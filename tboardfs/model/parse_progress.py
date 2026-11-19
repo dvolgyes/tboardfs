@@ -22,6 +22,7 @@ class ParseProgress:
     :ivar checked_status: device, inode, size, mtime and ctime of the file
         when it was last checked; while they stay the same, the file is not
         opened again
+    :ivar resumed: this parse extended the supplied index instead of replacing it
     """
 
     processed_pos: int = 0
@@ -33,3 +34,4 @@ class ParseProgress:
     initial_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     effective_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     frames: FrameIndex = field(default_factory=FrameIndex)
+    resumed: bool = False

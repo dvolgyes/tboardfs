@@ -13,7 +13,7 @@ from tboardfs.paths import _DirectoryNode
 from tboardfs.proto import compat_pb2
 from tboardfs.render_node import render_node
 from tboardfs.run_files import RunFiles
-from tboardfs.run_tree import build_run_tree
+from tboardfs.run_tree import RunTree
 
 from test_incremental_parse import _files, _frame
 
@@ -237,7 +237,7 @@ def test_equal_sidecar_leaves_and_plugin_roots(tmp_path: Path, reverse: bool) ->
             )
         )
     run = RunCache((), sidecars=tuple(entries))
-    nodes = build_run_tree(run, ("json",), 6)["children"]["profile"]["children"]
+    nodes = RunTree.build(run, ("json",), 6)["children"]["profile"]["children"]
     assert render_node(nodes["trace.txt"]) == b"plugins/profile"
     assert render_node(nodes["trace.txt~2"]) == b"profile"
     fs = TensorBoardFS(tmp_path)

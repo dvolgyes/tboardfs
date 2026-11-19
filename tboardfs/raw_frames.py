@@ -9,7 +9,7 @@ from tboardfs.file_status import FileIdentity
 from tboardfs.frame_index import FrameIndex
 from tboardfs.frame_ref import FrameRef
 from tboardfs.indexed_frame import IndexedFrame
-from tboardfs.model import RunCache
+from tboardfs.model import EventFileCache, RunCache
 from tboardfs.paths import _DirectoryNode, _Paths
 
 _OFFSET_DIGITS = 20
@@ -98,19 +98,34 @@ class RawFrames:
     def add(directory: dict[str, Any], run: RunCache, name_map: dict[str, str]) -> None:
         """Attach one lazy raw directory per source with validated frames."""
         directory["view"] = "raw"
-        for path, cache in run.files.items():
-            basename = _Paths.safe_component(path.name, name_map=name_map)
-            progress = cache.progress
-            if progress.frames.ends:
-                source = _DirectoryNode()
-                source.update(
-                    children=_RawFrameChildren(
-                        path, progress.identity, progress.frames
-                    ),
-                    view="raw",
-                    mtime=0.0,
-                )
-                directory["children"][basename] = source
+        for cache in run.files.values():
+            RawFrames._add_source(directory, cache, name_map)
+
+    @staticmethod
+    def extend(
+        directory: dict[str, Any], cache: EventFileCache, name_map: dict[str, str]
+    ) -> _DirectoryNode:
+        """Publish the appended frame index without replacing other raw listings."""
+        raw = _DirectoryNode()
+        raw.update(view="raw", children=directory["children"].copy())
+        RawFrames._add_source(raw, cache, name_map)
+        return raw
+
+    @staticmethod
+    def _add_source(
+        directory: dict[str, Any], cache: EventFileCache, name_map: dict[str, str]
+    ) -> None:
+        path = cache.source_path
+        basename = _Paths.safe_component(path.name, name_map=name_map)
+        progress = cache.progress
+        if progress.frames.ends:
+            source = _DirectoryNode()
+            source.update(
+                children=_RawFrameChildren(path, progress.identity, progress.frames),
+                view="raw",
+                mtime=0.0,
+            )
+            directory["children"][basename] = source
 
     @staticmethod
     def read(node: dict[str, Any]) -> bytes:

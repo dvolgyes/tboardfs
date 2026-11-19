@@ -20,11 +20,17 @@ from tboardfs.errors import fuse_error
 from tboardfs.file_times import FileTimes
 from tboardfs.file_status import FileIdentity
 from tboardfs.indexer import _EventIndexer
-from tboardfs.model import BinaryEntry, GraphEntry, RunCache, SidecarEntry
+from tboardfs.model import (
+    BinaryEntry,
+    EventFileCache,
+    GraphEntry,
+    RunCache,
+    SidecarEntry,
+)
 from tboardfs.open3d_asset import OPEN3D_PLUGIN, Open3DAsset
 from tboardfs.paths import _DirectoryNode, _Paths
 from tboardfs.run_places import RunPlaces
-from tboardfs.run_tree import build_run_tree
+from tboardfs.run_tree import RunTree
 from tboardfs.sidecar_scan import SidecarScan
 from tboardfs.render_cache import RenderCache, RenderKey
 from tboardfs.render_node import render_node
@@ -348,7 +354,7 @@ class TensorBoardFS:  # pcr: noqa: PCR010
         cached = self._state.run_trees.get(run.run_parts)
         if cached is not None and cached[0] == run.version:
             return cached[1]
-        tree = build_run_tree(run, self.scalar_formats, self.step_digits)
+        tree = RunTree.build(run, self.scalar_formats, self.step_digits)
         self._state.run_trees[run.run_parts] = (run.version, tree)
         return tree
 
@@ -562,12 +568,27 @@ class TensorBoardFS:  # pcr: noqa: PCR010
             else [path for path in run.files if self._allowed(path)]
         )
         log_parse = logger.info if self.log_to_screen else None
-        changed = _RunData.refresh_event_files(run, files, force=force, log=log_parse)
+        changed, base = _RunData.refresh_event_files(
+            run, files, force=force, log=log_parse
+        )
         self._refresh_sidecars(run, entries)
         run.refreshed_at = now
         if changed:
-            self._change_run_version(run)
+            self._publish_changes(run, base)
         return changed
+
+    def _publish_changes(self, run: RunCache, before: EventFileCache | None) -> None:
+        """Extend the last source only when its previous tree and index agree."""
+        cached = self._state.run_trees.get(run.run_parts)
+        self._change_run_version(run)
+        if cached is None or before is None or before.source_path != max(run.files):
+            return
+        after = run.files[before.source_path]
+        tree = RunTree.append(
+            cached[1], run, before, after, self.scalar_formats, self.step_digits
+        )
+        if tree is not None:
+            self._state.run_trees[run.run_parts] = (run.version, tree)
 
     def _clear_piece(self, parts: tuple[str, ...]) -> None:
         local = self._state.directories[parts]
@@ -678,37 +699,41 @@ class _RunData:
         *,
         force: bool,
         log: Callable[[str, object], None] | None,
-    ) -> bool:
-        """Refresh each source independently; never publish an unreadable generation."""
+    ) -> tuple[bool, EventFileCache | None]:
+        """Report a change and the base index if exactly one source resumed."""
         changed = False
+        base = None
         carry: dict[str, dict[str, Any]] = {}
         for source_path in sorted(files):
             old = run.files.get(source_path)
             try:
-                changed = (
-                    _RunData.refresh_event_file(
-                        run,
-                        source_path,
-                        force=force
-                        or (old is not None and old.progress.initial_metadata != carry),
-                        log=log,
-                        initial_metadata=carry,
+                if _RunData.refresh_event_file(
+                    run,
+                    source_path,
+                    force=force
+                    or (old is not None and old.progress.initial_metadata != carry),
+                    log=log,
+                    initial_metadata=carry,
+                ):
+                    base = (
+                        old
+                        if not changed and run.files[source_path].progress.resumed
+                        else None
                     )
-                    or changed
-                )
+                    changed = True
             except OSError as error:
                 if not isinstance(error, FileNotFoundError):
                     logger.warning("cannot read event file {}: {}", source_path, error)
                 if run.files.pop(source_path, None) is not None:
-                    changed = True
+                    changed, base = True, None
             if source_path in run.files:
                 carry = run.files[source_path].progress.effective_metadata
         for deleted in set(run.files) - set(files):
             if log is not None:
                 log("event file removed {}", deleted)
             del run.files[deleted]
-            changed = True
-        return changed
+            changed, base = True, None
+        return changed, base
 
     @staticmethod
     def refresh_event_file(

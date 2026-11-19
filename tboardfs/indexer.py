@@ -175,6 +175,7 @@ class _EventIndexer:
         state = _ParseState()
         processed_pos = 0
         if base_cache is not None:
+            progress.resumed = True
             processed_pos = base_cache.progress.processed_pos
             progress.frames = base_cache.progress.frames.copy()
             state.first_time = base_cache.progress.first_time

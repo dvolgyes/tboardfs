@@ -15,7 +15,7 @@ from tboardfs.model import RunCache, TFRecordError
 from tboardfs.paths import _Paths
 from tboardfs.raw_frames import _RawFrameChildren
 from tboardfs.render_node import render_node
-from tboardfs.run_tree import build_run_tree
+from tboardfs.run_tree import RunTree
 
 
 class _CopyError(OSError):
@@ -86,7 +86,7 @@ class SingleEventTree:
         if cache.progress.processed_pos == 0:
             raise _NoEventError(source_path)
         run.files[source_path] = cache
-        self.tree = build_run_tree(run, scalar_formats, step_digits)
+        self.tree = RunTree.build(run, scalar_formats, step_digits)
 
     def iter_file_paths(
         self, *, prefix: str = "/", view: str | None = None

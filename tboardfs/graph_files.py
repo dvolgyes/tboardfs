@@ -1,8 +1,9 @@
 """Add the graph files of a run to its virtual directory."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 from tboardfs.model import (
+    BinaryEntry,
     EventFileCache,
     GraphEntry,
     GraphSummaryEntry,
@@ -12,40 +13,41 @@ from tboardfs.paths import _Paths
 from tboardfs.run_files import RunFiles
 
 
-def add_graph_files(
-    files: RunFiles,
-    caches: list[EventFileCache],
-    step_digits: int,
-) -> None:
-    """Add graph protobuf files for one run.
+class GraphFiles:
+    """Add written graphs and independent graph summaries to a run."""
 
-    graph.pb is the graph that TensorBoard shows: the newest graph_def, or
-    without one, the graph of the newest TF1 meta graph. A run with several
-    graph_defs also lists each one as graph_<i>.pb in write order.
-    meta_graph.pb is the newest meta graph, with meta_graph_<i>.pb in the same
-    way. A TF2 graph summary is stored as <step>.json (Keras config) or
-    <step>.run_metadata.pb; beside it, <step>.conceptual.pb or <step>.pb is
-    the GraphDef that TensorBoard shows for it, when the summary converts, and
-    <step>.run_metadata.pbtxt is the profile text of a RunMetadata.
-    """
-    entries = [entry for cache in caches for entry in cache.graphs]
-    graphs = [entry for entry in entries if not isinstance(entry, MetaGraphEntry)]
-    meta_graphs = [entry for entry in entries if isinstance(entry, MetaGraphEntry)]
-    _add_written_graphs(files, "graph", graphs)
-    _add_written_graphs(files, "meta_graph", meta_graphs)
-    if not graphs and meta_graphs and meta_graphs[-1].readable:
-        files.add_fixed(
-            ("graphs", "graph.pb"),
-            {
-                "type": "meta_graph_graph",
-                "entry": meta_graphs[-1],
-                "mtime": meta_graphs[-1].wall_time,
-            },
-        )
-    for cache in caches:
-        for entry in cache.binaries:
-            if isinstance(entry, GraphSummaryEntry):
-                _add_summary_files(files, entry, step_digits)
+    @staticmethod
+    def add(files: RunFiles, caches: list[EventFileCache], step_digits: int) -> None:
+        """Add the newest graph of each kind, numbered copies, and summaries.
+
+        Without a graph_def, graph.pb uses the newest readable TF1 meta graph.
+        A TF2 summary may have GraphDef and RunMetadata profile companions.
+        """
+        entries = [entry for cache in caches for entry in cache.graphs]
+        graphs = [entry for entry in entries if not isinstance(entry, MetaGraphEntry)]
+        meta_graphs = [entry for entry in entries if isinstance(entry, MetaGraphEntry)]
+        _add_written_graphs(files, "graph", graphs)
+        _add_written_graphs(files, "meta_graph", meta_graphs)
+        if not graphs and meta_graphs and meta_graphs[-1].readable:
+            files.add_fixed(
+                ("graphs", "graph.pb"),
+                {
+                    "type": "meta_graph_graph",
+                    "entry": meta_graphs[-1],
+                    "mtime": meta_graphs[-1].wall_time,
+                },
+            )
+        for cache in caches:
+            GraphFiles.add_summaries(files, cache.binaries, step_digits)
+
+    @staticmethod
+    def add_summaries(
+        files: RunFiles, entries: Iterable[BinaryEntry], step_digits: int
+    ) -> None:
+        """Add companions for indexed TF2 graph summaries."""
+        summaries = (entry for entry in entries if isinstance(entry, GraphSummaryEntry))
+        for entry in summaries:
+            _add_summary_files(files, entry, step_digits)
 
 
 def _add_written_graphs(

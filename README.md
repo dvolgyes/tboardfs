@@ -117,6 +117,17 @@ Append complete frames, and replace the event file when rewriting history.
 
 On growth, tboardfs verifies the last complete frame and resumes at its end, retrying any incomplete tail.
 
+When only the last event file in filename order grows, the mount can update the affected directories and reuse the rest
+of the run tree.
+
+It updates dependent exports too: an appended epoch can change existing scalar rows, histograms and distributions.
+
+Some changes require a full build of that run's directory tree, for example a restart purge, a change to an earlier
+event file, or a name collision that can move existing files.
+
+Listing a changed directory still returns all its names; an incremental update does not make listing cost independent of
+directory size.
+
 A replacement, a decrease in observed file size, a same-size metadata change or an invalid checkpoint requires a fresh
 index.
 

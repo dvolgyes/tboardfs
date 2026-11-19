@@ -3,7 +3,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from io import BytesIO
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from typing import Any
 
 import numpy as np
@@ -430,19 +430,26 @@ class _TableMerge:
 
     @staticmethod
     def merge_run_tables(
-        caches: Iterable[EventFileCache], *, histograms: bool = False
+        caches: Iterable[EventFileCache],
+        *,
+        histograms: bool = False,
+        tags: set[str] | None = None,
     ) -> dict[str, dict[str, np.ndarray]]:
         """Carry the previous file's last epoch into the next file's early rows."""
-        return _TableMerge.merge_series(_TableMerge._run_pieces(caches, histograms))
+        return _TableMerge.merge_series(
+            _TableMerge._run_pieces(caches, histograms, tags)
+        )
 
     @staticmethod
     def _run_pieces(
-        caches: Iterable[EventFileCache], histograms: bool
+        caches: Iterable[EventFileCache], histograms: bool, tags: set[str] | None
     ) -> Iterable[Mapping[str, Mapping[str, np.ndarray]]]:
         """Yield each file's tables with its initial epoch inherited."""
         carried = np.nan
         for cache in caches:
             tables = cache.histograms if histograms else cache.scalars
+            if tags is not None:
+                tables = {tag: tables[tag] for tag in tags if tag in tables}
             yield _TableMerge._file_tables(tables, carried)
             if "epoch" in cache.scalars:
                 carried = cache.scalars["epoch"]["value"][-1]
@@ -496,11 +503,18 @@ class _TableMerge:
         return aligned
 
     @staticmethod
-    def merge_mtimes(items: Iterable[Mapping[str, float]]) -> dict[str, float]:
+    def merge_mtimes(
+        items: Iterable[Mapping[str, float]], *, tags: Collection[str] | None = None
+    ) -> dict[str, float]:
         """Merge per-file mtimes by keeping the most recent value."""
         merged: dict[str, float] = {}
         for item in items:
-            for tag, mtime in item.items():
+            pairs = (
+                item.items()
+                if tags is None
+                else ((tag, item[tag]) for tag in tags if tag in item)
+            )
+            for tag, mtime in pairs:
                 merged[tag] = max(merged.get(tag, mtime), mtime)
         return merged
 

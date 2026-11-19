@@ -16,16 +16,18 @@ def add_histogram_files(
     epochs: dict[str, Any] | None,
     scalar_formats: tuple[str, ...],
     step_digits: int,
-) -> None:
-    """Add the histogram and distribution tables of one run, with its epochs.
-
-    A tag whose files fail to build is skipped with a warning.
-    """
-    histograms = _TableMerge.merge_run_tables(caches, histograms=True)
+    *,
+    tags: set[str] | None = None,
+) -> bool:
+    """Add the requested tags and report whether all producers succeeded."""
+    histograms = _TableMerge.merge_run_tables(caches, histograms=True, tags=tags)
     histograms = _TableMerge.step_epochs(histograms, epochs)
-    mtimes = _TableMerge.merge_mtimes(cache.histogram_mtimes for cache in caches)
+    mtimes = _TableMerge.merge_mtimes(
+        (cache.histogram_mtimes for cache in caches), tags=tags
+    )
+    complete = True
     for tag, series in histograms.items():
-        skip_failure(
+        built = skip_failure(
             f"histogram {tag!r}",
             partial(
                 _HistogramFiles.add_tag_files,
@@ -35,6 +37,8 @@ def add_histogram_files(
                 step_digits,
             ),
         )
+        complete = bool(built) and complete
+    return complete
 
 
 class _HistogramFiles:
@@ -46,7 +50,7 @@ class _HistogramFiles:
         item: dict[str, Any],
         scalar_formats: tuple[str, ...],
         step_digits: int,
-    ) -> None:
+    ) -> bool:
         """Add the histogram and distribution tables of one tag."""
         tag, series, mtime = item["tag"], item["series"], item["mtime"]
         for step, step_series in _TableMerge.split_steps(series):
@@ -77,6 +81,7 @@ class _HistogramFiles:
                     },
                     step_digits,
                 )
+        return True
 
     @staticmethod
     def add_step_table(files: RunFiles, item: dict[str, Any], step_digits: int) -> None:
