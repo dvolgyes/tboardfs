@@ -62,14 +62,14 @@ repos:
 
   # Source: 200_pyupgrade.yaml [central]
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.21.2
+    rev: v3.22.0
     hooks:
       - id: pyupgrade
         args: [--py312-plus]
 
   # Source: 201_ruff.yaml [central]
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.22
+    rev: v0.17.6
     hooks:
       - id: ruff-check
         name: ruff-check (tests)
@@ -94,7 +94,7 @@ repos:
 
   # Source: 205_autoflake.yaml [central]
   - repo: https://github.com/PyCQA/autoflake
-    rev: v2.3.3 # Use the latest version available
+    rev: v2.4.0 # Use the latest version available
     hooks:
       - id: autoflake
         args:
@@ -140,7 +140,7 @@ repos:
 
   # Source: 450_mypy.yaml [central]
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.3.0
+    rev: v2.4.1
     hooks:
       - id: mypy
         exclude: ^tests/
@@ -155,12 +155,12 @@ repos:
 
   # Source: 900_shfmt.yaml [central]
   - repo: https://github.com/maxwinterstein/shfmt-py
-    rev: v4.0.0
+    rev: v4.2.0
     hooks:
       - id: shfmt
 
   # Source: 950_shellcheck.yaml [central]
   - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.11.0.1
+    rev: v0.11.0.1-1
     hooks:
       - id: shellcheck
