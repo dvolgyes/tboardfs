@@ -1,8 +1,8 @@
 from math import prod
 from typing import Any, cast
 
-from tboardfs.proto_schema import _ProtoParser
 from tboardfs.constants import DT_FLOAT, DT_STRING, LARGE_TENSOR_THRESHOLD
+from tboardfs.proto_schema import _ProtoParser
 from tboardfs.tensor_summary import TAGGED_RUN_METADATA
 
 # SessionLog.SessionStatus.START in the vendored event proto.
@@ -35,12 +35,21 @@ class _SummaryParser:
     @staticmethod
     def parse_event(data: bytes, *, indexing: bool = False) -> dict[str, Any]:
         """Parse one Event protobuf payload."""
-        event_message = cast(Any, _ProtoParser.event(data))
+        message = cast(Any, _ProtoParser.event(data))
+        return _SummaryParser.convert_event(
+            message, message.WhichOneof("what"), indexing=indexing
+        )
+
+    @staticmethod
+    def convert_event(
+        message: object, kind: str | None, *, indexing: bool = False
+    ) -> dict[str, Any]:
+        """Convert an already decoded event, including all values before indexing."""
+        event_message = cast(Any, message)
         event: dict[str, Any] = {
             "wall_time": event_message.wall_time,
             "step": event_message.step,
         }
-        kind = event_message.WhichOneof("what")
         if kind == "summary":
             event["values"] = [
                 _SummaryParser.parse_summary_value(value, indexing=indexing)

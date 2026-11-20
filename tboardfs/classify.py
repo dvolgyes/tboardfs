@@ -130,11 +130,11 @@ class _Classifier:
     @staticmethod
     def binary_kind(value: dict[str, Any]) -> str | None:
         """Classify summary values whose raw bytes should be exposed as files."""
-        image_blob = value.get("image", {}).get("encoded_image_string")
-        if image_blob and bytes(image_blob).startswith((b"GIF87a", b"GIF89a")):
-            return "videos"
-        if image_blob:
-            return "images"
+        image_kind = _Classifier.legacy_image_kind(
+            value.get("image", {}).get("encoded_image_string")
+        )
+        if image_kind is not None:
+            return image_kind
         if value.get("audio", {}).get("encoded_audio_string"):
             return "audio"
 
@@ -154,6 +154,13 @@ class _Classifier:
             ):
                 return "tensors"
         return None
+
+    @staticmethod
+    def legacy_image_kind(blob: bytes | None) -> str | None:
+        """Classify GIF images as videos and omit empty legacy image fields."""
+        if not blob:
+            return None
+        return "videos" if bytes(blob).startswith((b"GIF87a", b"GIF89a")) else "images"
 
     @staticmethod
     def raw_tensor_summary(value: dict[str, Any]) -> bool:

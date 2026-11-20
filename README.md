@@ -262,6 +262,11 @@ mixing versions.
 
 The first indexing pass collects scalar columns by tag and records each stored binary's format and byte count.
 
+If a record contains only `simple_value` scalars and legacy images, with no explicit or inherited metadata, the indexer
+reads the decoded protobuf fields directly into scalar columns and binary entries.
+
+Other records use the general conversion path, including records that mix these values with plugin tensors.
+
 A decoded `scalars` plugin value goes directly into its scalar table; a value that cannot be decoded as a scalar still
 uses the normal plugin handling.
 

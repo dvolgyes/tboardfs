@@ -1,16 +1,18 @@
 """Exercise protobuf extent indexing and verified extraction."""
 
+import json
 import struct
+import wave
 from base64 import b64decode
 from dataclasses import replace
 from errno import EIO
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
-import wave
 
 import magic
 import pytest
+from google.protobuf.message import DecodeError
 
 from scripts.scale_corpus import _ScaleCorpus
 from tboardfs import TensorBoardFS, parse_file
@@ -33,6 +35,61 @@ def _record(payload: bytes) -> bytes:
         + payload
         + struct.pack("<I", masked_crc32c(payload))
     )
+
+
+@pytest.mark.parametrize("malformed", [False, True], ids=["clean", "malformed"])
+def test_mixed_summaries_keep_ordinals_and_clock(
+    tmp_path: Path, malformed: bool
+) -> None:
+    red, green, blue = (
+        _ScaleCorpus.small_png(rgb) for rgb in (0xFF0000, 0x00FF00, 0x0000FF)
+    )
+    first = compat_pb2.Event(step=1, wall_time=100.0)
+    first.summary.value.add(tag="img").image.encoded_image_string = red
+    first.summary.value.add(tag="loss", simple_value=0.0)
+    first.summary.value.add(tag="img").image.encoded_image_string = green
+    first.summary.value.add(tag="epoch", simple_value=4.0)
+
+    mixed = compat_pb2.Event(step=2, wall_time=101.0)
+    scalar = mixed.summary.value.add(tag="loss").tensor
+    scalar.dtype = compat_pb2.DT_DOUBLE
+    scalar.double_val.append(2.5)
+    image = mixed.summary.value.add(tag="img")
+    image.metadata.plugin_data.plugin_name = "images"
+    image.tensor.dtype = compat_pb2.DT_STRING
+    image.tensor.tensor_shape.dim.add(size=3)
+    image.tensor.string_val.extend([b"1", b"1", blue])
+
+    broken = compat_pb2.Event(step=3, wall_time=102.0)
+    broken.summary.value.add(tag="epoch", simple_value=99.0)
+    broken_frame = _record(broken.SerializeToString() + b"\x80") if malformed else b""
+
+    last = compat_pb2.Event(step=4, wall_time=103.0)
+    last.summary.value.add(tag="loss", simple_value=3.0)
+    last.summary.value.add(tag="img").tensor.CopyFrom(image.tensor)
+    path = tmp_path / "events.out.tfevents"
+    path.write_bytes(
+        _record(first.SerializeToString())
+        + _record(mixed.SerializeToString())
+        + broken_frame
+        + _record(last.SerializeToString())
+    )
+    if malformed:
+        with pytest.raises(DecodeError):
+            parse_file(path)
+
+    fs = TensorBoardFS(tmp_path)
+    rows = json.loads(fs.read("/scalars/loss.json", 4096, 0))
+    assert [
+        (row["step"], row["value"], row["epoch"], row["relative_time"]) for row in rows
+    ] == [(1, 0.0, 4.0, 0.0), (2, 2.5, 4.0, 1.0), (4, 3.0, 4.0, 3.0)]
+    for name, expected in (
+        ("000001.png", red),
+        ("000001_v2.png", green),
+        ("000002.png", blue),
+        ("000004.png", blue),
+    ):
+        assert fs.read(f"/images/img/{name}", 4096, 0) == expected
 
 
 def test_duplicate_values_and_multipart_extents(tmp_path: Path) -> None:

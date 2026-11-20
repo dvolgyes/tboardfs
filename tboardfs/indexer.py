@@ -1,14 +1,14 @@
+import os
+import struct
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-import os
 from pathlib import Path
-import struct
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 
+import numpy as np
 from google.protobuf.message import DecodeError
 from loguru import logger
-import numpy as np
 
 from tboardfs.classify import _Classifier
 from tboardfs.constants import PLUGIN_TAB
@@ -17,11 +17,10 @@ from tboardfs.event_source import EventSource
 from tboardfs.file_status import FileIdentity
 from tboardfs.frame_ref import FrameRef
 from tboardfs.indexed_frame import IndexedFrame
+from tboardfs.media_index import _MediaIndex
 from tboardfs.meta_graph import meta_graph_graph_def
 from tboardfs.model import (
-    BinaryEntry,
     EventFileCache,
-    GraphSummaryEntry,
     GraphEntry,
     JsonEntry,
     MetaGraphEntry,
@@ -32,27 +31,24 @@ from tboardfs.model import (
 )
 from tboardfs.model.indexed_blob import IndexedBlob
 from tboardfs.model.parse_progress import _ParseProvenance
-from tboardfs.payload_spans import PayloadSpans, Span
+from tboardfs.payload_spans import PayloadSpans
 from tboardfs.proto_schema import _ProtoParser
 from tboardfs.range_proof import range_proof
-from tboardfs.restarts import _RestartPurge, _offset_restarts
-from tboardfs.run_metadata_text import run_metadata_text
+from tboardfs.restarts import _offset_restarts, _RestartPurge
 from tboardfs.skip_failure import _diagnostic_provenance, _skip_error, _warn_skipped
 from tboardfs.summary import _SummaryParser
-from tboardfs.summary_graph import summary_graph_def
-from tboardfs.tensor_summary import GRAPH_PLUGINS, _TensorSummary
 from tboardfs.tables import (
     _ScalarRows,
     _TableMerge,
     _TableRows,
 )
+from tboardfs.tensor_summary import _TensorSummary
 from tboardfs.tfrecord import iter_tfrecords
 
 # A framed record whose payload cannot be decoded or indexed; framing is intact.
 _MALFORMED_RECORD_ERRORS = (DecodeError, ValueError, struct.error)
 _FLOAT32 = np.dtype("float32")
 _FLOAT64 = np.dtype("float64")
-_LARGE_AUDIO_MEMO_LIMIT = 1 << 20
 
 
 def parse_file(filename: str | Path) -> dict[str, Any]:
@@ -121,8 +117,7 @@ class _ParseState:
     )
     first_time: float | None = None
     epoch: object = None
-    binary_extensions: dict[tuple[str, bytes], str | None] = field(default_factory=dict)
-    large_audio_extension: tuple[bytes, str | None] | None = None
+    media: _MediaIndex = field(default_factory=_MediaIndex)
     clock: _ClockDependencies | None = None
     deferred_tensor_content: list[tuple[int, int, int, int]] | None = None
     retain_tensor_extents: bool = False
@@ -353,32 +348,116 @@ class _EventIndexer:
 
         A summary value that fails to index is skipped, unless strict.
         """
-        first_time, epoch = state.first_time, state.epoch
-        path = cache.source_path
-        event = _SummaryParser.parse_event(record.payload, indexing=True)
-        wall_time = float(event["wall_time"])
-        values = event.get("values", [])
+        message = cast(Any, _ProtoParser.event(record.payload))
+        kind = message.WhichOneof("what")
+        wall_time = message.wall_time
+        spans = PayloadSpans.for_payload(record.payload)
+        if kind == "summary" and _EventIndexer._plain_values(
+            values := message.summary.value, cache.progress.effective_metadata
+        ):
+            index_values = _EventIndexer._index_plain_values
+        else:
+            event = _SummaryParser.convert_event(message, kind, indexing=True)
+            _EventIndexer.add_restart(cache, event, state)
+            _EventIndexer.add_graph(
+                cache, cache.source_path, event, record, wall_time, spans
+            )
+            values = event.get("values", ())
+            index_values = _EventIndexer._index_converted_values
+        first_time = _EventIndexer._first_time(state, wall_time, bool(values))
+        relative_time = np.nan if first_time is None else wall_time - first_time
+        timing = (message.step, wall_time, relative_time)
+        binary_start = len(cache.binaries)
+        epoch = index_values(cache, record, state, values, timing, spans, strict)
+        if len(cache.binaries) - binary_start > 1 and len(values) > 1:
+            _EventIndexer._deduplicate_binaries(cache, binary_start)
+        state.first_time, state.epoch = first_time, epoch
+
+    @staticmethod
+    def _plain_values(
+        values: Iterable[Any], metadata: dict[str, dict[str, Any]]
+    ) -> bool:
+        """Choose one path for the whole record before mutating its index."""
+        for value in values:
+            if (
+                value.WhichOneof("value") not in ("simple_value", "image")
+                or value.HasField("metadata")
+                or value.tag in metadata
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _index_plain_values(
+        cache: EventFileCache,
+        record: Record,
+        state: _ParseState,
+        values: Iterable[Any],
+        timing: tuple[int, float, float],
+        spans: PayloadSpans | None,
+        strict: bool,
+    ) -> object:
+        """Write ordinary protobuf fields directly to scalar columns or binary entries."""
+        epoch = state.epoch
+        step, wall_time, _ = timing
+        for ordinal, value in enumerate(values):
+            tag = value.tag
+            if value.HasField("simple_value"):
+                epoch = _EventIndexer.add_scalar(
+                    state, tag, value.simple_value, _FLOAT32, epoch, timing
+                )
+                continue
+            try:
+                state.media.add_legacy_image(
+                    cache,
+                    ordinal,
+                    record,
+                    value.image.encoded_image_string,
+                    (tag, step, wall_time),
+                    spans,
+                )
+            except Exception as error:
+                if not _skip_error(
+                    error,
+                    f"value {tag!r} at step {step} in {cache.source_path}",
+                    strict=strict,
+                ):
+                    raise
+        return epoch
+
+    @staticmethod
+    def _first_time(
+        state: _ParseState, wall_time: float, has_values: bool
+    ) -> float | None:
+        first_time = state.first_time
         clock = state.clock
-        if clock is not None and values and not clock.reads_first_time:
+        if clock is not None and has_values and not clock.reads_first_time:
             clock.reads_first_time = True
             clock.writes_first_time = first_time is None
-        if first_time is None and values:
-            first_time = wall_time
-        relative_time = np.nan if first_time is None else wall_time - first_time
-        timing = (event["step"], wall_time, relative_time)
-        _EventIndexer.add_restart(cache, event, state)
-        spans = PayloadSpans.for_payload(record.payload)
-        _EventIndexer.add_graph(cache, path, event, record, wall_time, spans)
-        binary_start = len(cache.binaries)
+        return wall_time if first_time is None and has_values else first_time
+
+    @staticmethod
+    def _index_converted_values(
+        cache: EventFileCache,
+        record: Record,
+        state: _ParseState,
+        values: Iterable[dict[str, Any]],
+        timing: tuple[int, float, float],
+        spans: PayloadSpans | None,
+        strict: bool,
+    ) -> object:
+        path = cache.source_path
+        metadata = cache.progress.effective_metadata
+        epoch = state.epoch
         for ordinal, value in enumerate(values):
             tag = value["tag"]
             if "plugin_name" in value:
-                cache.progress.effective_metadata[tag] = {
+                metadata[tag] = {
                     "plugin_name": value["plugin_name"],
                     "plugin_content": value.get("plugin_content", b""),
                 }
-            elif tag in cache.progress.effective_metadata:
-                value.update(cache.progress.effective_metadata[tag])
+            elif tag in metadata:
+                value.update(metadata[tag])
             if len(value) == 2 and "simple_value" in value:
                 epoch = _EventIndexer.add_scalar(
                     state, tag, value["simple_value"], _FLOAT32, epoch, timing
@@ -395,14 +474,16 @@ class _EventIndexer:
                     raise
             else:
                 epoch = epoch if indexed is None else indexed
-        if len(values) > 1 and len(cache.binaries) - binary_start > 1:
-            seen: set[tuple[str, str, str, str]] = set()
-            for entry in cache.binaries[binary_start:]:
-                key = (entry.kind, entry.tag, entry.suffix, entry.extension)
-                if key in seen:
-                    entry.suffix += f"_v{entry.value_ordinal}"
-                seen.add(key)
-        state.first_time, state.epoch = first_time, epoch
+        return epoch
+
+    @staticmethod
+    def _deduplicate_binaries(cache: EventFileCache, binary_start: int) -> None:
+        seen: set[tuple[str, str, str, str]] = set()
+        for entry in cache.binaries[binary_start:]:
+            key = (entry.kind, entry.tag, entry.suffix, entry.extension)
+            if key in seen:
+                entry.suffix += f"_v{entry.value_ordinal}"
+            seen.add(key)
 
     @staticmethod
     def add_restart(
@@ -512,14 +593,13 @@ class _EventIndexer:
             _EventIndexer.add_histogram(
                 cache, value, state, (epoch, step, wall_time, relative_time)
             )
-        _EventIndexer.add_binary(
+        state.media.add_binary(
             cache,
             ordinal,
             record,
             value,
             (tag, step, wall_time),
             spans,
-            state,
         )
         if plain_media:
             return epoch
@@ -532,7 +612,7 @@ class _EventIndexer:
     def add_scalar(
         state: _ParseState,
         tag: str,
-        value: int | float,
+        value: float,
         dtype: np.dtype,
         epoch: object,
         timing: tuple[int, float, float],
@@ -589,135 +669,6 @@ class _EventIndexer:
             rows["bucket_right"].append(right)
             rows["count"].append(count)
         cache.histogram_mtimes[tag] = wall_time
-
-    @staticmethod
-    def add_binary(
-        cache: EventFileCache,
-        ordinal: int,
-        record: Record,
-        value: dict[str, Any],
-        identity: tuple[str, Any, float],
-        spans: PayloadSpans | None,
-        state: _ParseState,
-    ) -> None:
-        """Index a binary summary value lazily by source record position."""
-        tag, step, wall_time = identity
-        tensor = value.get("tensor", {})
-        strings = tensor.get("string_val", ())
-        parts = _EventIndexer.binary_parts(value, tensor, len(strings))
-        if parts is None:
-            return
-        frame = record.reference(
-            cache.progress.identity, fingerprint=cache.progress.checked_status
-        )
-        candidates: list[Span] | None = None
-        for part_kind, part, suffix in parts:
-            data = _Classifier.binary_blob(value) if part is None else strings[part]
-            if data is None:
-                continue
-            extension = _EventIndexer.binary_extension(value, part_kind, data, state)
-            if extension is None:
-                continue
-            if spans is not None and candidates is None:
-                candidates = _EventIndexer.binary_candidates(
-                    spans, ordinal, value, part, len(strings)
-                )
-            span = (
-                spans.match(candidates[0 if part is None else part], data)
-                if spans is not None and candidates
-                else None
-            )
-            entry_type = GraphSummaryEntry if part_kind == "graphs" else BinaryEntry
-            entry = entry_type(
-                source_path=cache.source_path,
-                tag=tag,
-                kind=part_kind,
-                step=step,
-                wall_time=wall_time,
-                value_ordinal=ordinal,
-                blob=IndexedBlob(
-                    frame,
-                    len(data),
-                    span,
-                    range_proof(data) if span is not None else b"",
-                ),
-                extension=extension,
-                part=part,
-                suffix=suffix,
-            )
-            if isinstance(entry, GraphSummaryEntry):
-                graph, profile = _TensorSummary.graph_views(value)
-                entry.converts = graph and summary_graph_def(entry, data) is not None
-                entry.profiles = profile and run_metadata_text(entry, data) is not None
-            cache.binaries.append(entry)
-
-    @staticmethod
-    def binary_parts(
-        value: dict[str, Any], tensor: dict[str, Any], strings: int
-    ) -> Iterable[tuple[str, int | None, str]] | None:
-        """Select tensor samples or the bytes of one legacy summary value."""
-        if tensor:
-            parts = _TensorSummary.media_parts(value)
-            if parts is not None:
-                return parts
-            plugin = _Classifier.plugin_name(value)
-            if plugin in {"images", "audio"} or plugin in GRAPH_PLUGINS:
-                return None
-        kind = _Classifier.binary_kind(value)
-        if kind is None:
-            return None
-        if strings and not tensor.get("tensor_content"):
-            width = len(str(strings - 1))
-            return (
-                (kind, i, f"_{i:0{width}d}" if strings > 1 else "")
-                for i in range(strings)
-            )
-        return [(kind, None, "")]
-
-    @staticmethod
-    def binary_extension(
-        value: dict[str, Any],
-        kind: str,
-        data: bytes,
-        state: _ParseState,
-    ) -> str | None:
-        """Reuse exact-byte media classifications within this parse."""
-        if kind == "tensors" and value.get("packed_float32"):
-            return "bin"
-        size = len(data)
-        if size <= 4096 and kind != "graphs":
-            cached = state.binary_extensions
-            key = (kind, data)
-            if key in cached:
-                return cached[key]
-            if len(cached) == 128:
-                cached.clear()
-            cached[key] = extension = _TensorSummary.part_extension(value, kind, data)
-            return extension
-        if kind == "audio" and size <= _LARGE_AUDIO_MEMO_LIMIT:
-            previous = state.large_audio_extension
-            if previous is not None and data == previous[0]:
-                return previous[1]
-            extension = _TensorSummary.part_extension(value, kind, data)
-            state.large_audio_extension = (data, extension)
-            return extension
-        return _TensorSummary.part_extension(value, kind, data)
-
-    @staticmethod
-    def binary_candidates(
-        spans: PayloadSpans,
-        ordinal: int,
-        value: dict[str, Any],
-        part: int | None,
-        string_count: int,
-    ) -> list[Span]:
-        """Reject ambiguous field merges and mismatched repeated-field counts."""
-        if part is not None:
-            found = spans.value_fields(ordinal, 8, 8)
-            return found if len(found) == string_count else []
-        field = 4 if "image" in value else 6 if "audio" in value else 8
-        found = spans.value_fields(ordinal, field, 4)
-        return found if len(found) == 1 else []
 
     @staticmethod
     def add_plugin(

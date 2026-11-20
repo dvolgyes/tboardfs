@@ -88,10 +88,8 @@ class _TensorSummary:
         return None
 
     @staticmethod
-    def part_extension(value: dict[str, Any], kind: str, blob: bytes) -> str | None:
+    def part_extension(kind: str, blob: bytes) -> str | None:
         """Choose an extension per item, omitting small unrecognized generic fields."""
-        if kind == "graphs":
-            return GRAPH_PLUGINS[_Classifier.plugin_name(value)][1]
         if kind == "tensors":
             return _Classifier.embedded_extension(blob)
         return detect_extension(blob)
