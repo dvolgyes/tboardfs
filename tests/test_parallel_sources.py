@@ -196,6 +196,9 @@ def test_sibling_status_resolves_aliases_again_after_retargeting(
         (directory / "source").write_bytes(content)
         (directory / "link").symlink_to(Path("..") / directory.name / "source")
     (first / mountpoint.name).touch()
+    nested = first / "nested"
+    nested.mkdir()
+    (nested / "source").write_bytes(b"nested source")
     second_status = second.stat()
     original_open = os.open
     original_stat = os.stat
@@ -225,7 +228,11 @@ def test_sibling_status_resolves_aliases_again_after_retargeting(
                     alias / name, mountpoint=mountpoint
                 )
                 assert stat(alias / name).st_size == len(target.name)
+            assert stat(second / "source").st_size == 6
             if target == first:
+                assert stat(alias / "nested" / "source").st_size == len(
+                    b"nested source"
+                )
                 assert stat(alias / mountpoint.name).st_size == 0
             else:
                 with pytest.raises(FileNotFoundError):

@@ -14,6 +14,8 @@ from tboardfs.decode import _Decode
 from tboardfs.histogram_compress import NORMAL_HISTOGRAM_BPS, compress_histogram
 from tboardfs.model import EventFileCache
 
+_HISTOGRAM_PERCENTILES = tuple(point / 100 for point in NORMAL_HISTOGRAM_BPS)
+
 # Two-space indents, keys such as numbers as text, a final newline, and
 # NumPy arrays that json_value lets through.
 _JSON_OPTIONS = (
@@ -520,25 +522,38 @@ class _TableMerge:
         """Derive TensorBoard distribution rows from histogram buckets.
 
         Each observation starts at a marked bucket. Percentiles are in percent.
+        Metadata dtypes are inferred from the selected bucket scalars.
         """
-        out = defaultdict(list)
+        bounds = _TableMerge.event_bounds(series)
+        if not bounds:
+            return {}
         buckets = np.column_stack(
             [
                 np.asarray(series.get(column, []), dtype=np.float64)
                 for column in ("bucket_left", "bucket_right", "count")
             ]
         )
-        epochs = series.get("epoch", np.full(len(buckets), np.nan))
-        for start, stop in _TableMerge.event_bounds(series):
-            values = compress_histogram(buckets[start:stop])
-            for point, value in zip(NORMAL_HISTOGRAM_BPS, values, strict=True):
-                out["step"].append(series["step"][start])
-                out["epoch"].append(epochs[start])
-                out["wall_time"].append(series["wall_time"][start])
-                out["relative_time"].append(series["relative_time"][start])
-                out["percentile"].append(point / 100)
-                out["value"].append(value)
-        return {key: np.asarray(value) for key, value in out.items()}
+        starts = [start for start, _ in bounds]
+        width = len(NORMAL_HISTOGRAM_BPS)
+        values = [
+            value
+            for start, stop in bounds
+            for value in compress_histogram(buckets[start:stop])
+        ]
+        metadata: dict[str, np.ndarray] = {}
+        for name in ("step", "epoch", "wall_time", "relative_time"):
+            if name == "epoch" and name not in series:
+                metadata[name] = np.full(len(values), np.nan)
+            else:
+                column = series[name]
+                metadata[name] = np.asarray([column[start] for start in starts]).repeat(
+                    width, axis=0
+                )
+        return {
+            **metadata,
+            "percentile": np.tile(_HISTOGRAM_PERCENTILES, len(bounds)),
+            "value": np.asarray(values),
+        }
 
     @staticmethod
     def event_bounds(series: dict[str, np.ndarray]) -> list[tuple[int, int]]:

@@ -12,6 +12,7 @@ def compress_histogram(buckets: np.ndarray) -> list[float]:
     A port of compress_histogram in tensorboard/plugins/distribution/compressor.py
     (TensorBoard 2.21). The value interpolates linearly inside the bucket that
     holds the basis point, clamped to the first left and last right edge.
+    Each basis point uses an independent scalar lookup, even with nonfinite weights.
 
     Args:
         buckets: rows of (left, right, count).
@@ -21,26 +22,17 @@ def compress_histogram(buckets: np.ndarray) -> list[float]:
     edges = (float(buckets[0, 0]), float(buckets[-1, 1]))
     counts = buckets[:, 2]
     weights = np.cumsum(counts * NORMAL_HISTOGRAM_BPS[-1] / (counts.sum() or 1.0))
+    rights = buckets[:, 1]
+    lowest, highest = edges
     values: list[float] = []
     for point in NORMAL_HISTOGRAM_BPS:
-        value = _value_at(point, weights, buckets[:, 1], edges)
-        if value is None:
+        index = int(weights.searchsorted(point, side="right"))
+        if index == len(weights):
             break
-        values.append(value)
-    return values + [edges[1]] * (len(NORMAL_HISTOGRAM_BPS) - len(values))
-
-
-def _value_at(
-    point: int, weights: np.ndarray, rights: np.ndarray, edges: tuple[float, float]
-) -> float | None:
-    """Interpolate one basis point, or None past the last non-empty bucket."""
-    lowest, highest = edges
-    # The first bucket with more weight than the point is never empty, so
-    # TensorBoard's loop that skips empty buckets has no effect here.
-    index = int(np.searchsorted(weights, point, side="right"))
-    if index == len(weights):
-        return None
-    before = float(weights[index - 1]) if index else 0.0
-    left = max(float(rights[index - 1]), lowest) if index and before else lowest
-    right = min(float(rights[index]), highest)
-    return left + (point - before) / (float(weights[index]) - before) * (right - left)
+        before = float(weights[index - 1]) if index else 0.0
+        left = max(float(rights[index - 1]), lowest) if index and before else lowest
+        right = min(float(rights[index]), highest)
+        values.append(
+            left + (point - before) / (float(weights[index]) - before) * (right - left)
+        )
+    return values + [highest] * (len(NORMAL_HISTOGRAM_BPS) - len(values))

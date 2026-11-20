@@ -191,10 +191,13 @@ Listing a run or looking up a path inside it indexes the event files directly in
 
 A recursive `find MOUNTPOINT` enters each listed run, so its first traversal still indexes them all.
 
-When the source contains only sibling runs and their folder names need no encoding or renaming, opening or refreshing
-one run replaces its branch without rebuilding populated siblings.
+When only leaf runs have exports and all run folders retain their original names, updating a leaf run replaces its
+branch without rebuilding populated siblings.
 
-Adding or removing a directory, nesting runs, or resolving a folder-name collision uses full placement instead.
+This works for sibling runs and for runs nested below grouping directories.
+
+Adding or removing a directory, changing a run with child runs, or resolving a folder-name collision uses full
+placement.
 
 After a run is indexed, accessing its virtual paths checks known event files even within the discovery interval.
 
@@ -259,8 +262,18 @@ The first indexing pass collects scalar columns by tag and records each stored b
 
 For unambiguous fields in frames of at least 4 KiB, the index also records the exact payload range.
 
-Listing a directory reuses its sorted names; looking up a raw frame uses its offset without allocating all raw
-filenames.
+Directory listings return names and file types together.
+
+Code that needs only names and types can use `os.scandir()` and `entry.is_dir(follow_symlinks=False)` without a separate
+`stat` for every file.
+
+To list file paths without FUSE, use `tboardfs-file list --view both SOURCE`.
+
+Directories reuse their sorted names for listings.
+
+An exact name lookup uses a mapping.
+
+Raw frame lookup searches sorted byte offsets without allocating all raw filenames.
 
 Stat uses the indexed size of stored binaries and graphs; it does not render them.
 

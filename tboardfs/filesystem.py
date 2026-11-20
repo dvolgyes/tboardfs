@@ -352,9 +352,9 @@ class TensorBoardFS:
         tree, owner = self._refresh_lookup(parts, directory_attrs=directory_attrs)
         node = tree
         for part in parts:
-            if node["type"] != "dir" or part not in node["children"]:
+            if node["type"] != "dir" or (child := node["children"].get(part)) is None:
                 raise FileNotFoundError(ENOENT, os.strerror(ENOENT), path)
-            node = node["children"][part]
+            node = child
         run = self._state.runs.get(owner)
         version = None if node["type"] == "name_map" or run is None else run.version
         return node, (self._renders.scope(version), parts)
@@ -790,8 +790,8 @@ class TensorBoardFS:
         if (
             parts
             and snapshot.root is not None
-            and self._run_places.flat
-            and parts in self._run_places.disk_parts
+            and not self._state.directories[parts].children
+            and self._run_places.can_update(parts)
         ):
             snapshot.dirty.add(parts)
         else:

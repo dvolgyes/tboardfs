@@ -139,32 +139,37 @@ class _RunData:
         retained = 0
         for source_path in sorted(files):
             old = run.files.get(source_path)
+            reparse = force or (
+                old is not None and old.progress.initial_metadata != carry
+            )
             try:
-                if _RunData._refresh_source(
-                    run,
-                    source_path,
-                    old=old,
-                    force=force
-                    or (old is not None and old.progress.initial_metadata != carry),
-                    log=log,
-                    initial_metadata=carry,
-                    options=options,
-                    hit=hits.get(source_path),
-                    stat=stat,
+                if (
+                    reparse
+                    or old is None
+                    or FileIdentity.fingerprint(stat(source_path))
+                    != old.progress.checked_status
                 ):
-                    base = (
-                        old
-                        if not changed and run.files[source_path].progress.resumed
-                        else None
+                    current = _RunData._update_source(
+                        source_path,
+                        old=old,
+                        force=reparse,
+                        log=log,
+                        initial_metadata=carry,
+                        options=options,
+                        hit=hits.get(source_path),
                     )
+                    run.files[source_path] = current
+                    base = old if not changed and current.progress.resumed else None
                     changed = True
+                else:
+                    current = old
             except OSError as error:
                 if not isinstance(error, FileNotFoundError):
                     logger.warning("cannot read event file {}: {}", source_path, error)
                 if run.files.pop(source_path, None) is not None:
                     changed, base = True, None
                 continue
-            carry = run.files[source_path].progress.effective_metadata
+            carry = current.progress.effective_metadata
             retained += 1
         if retained != len(run.files):
             for deleted in set(run.files) - set(files):
@@ -175,8 +180,7 @@ class _RunData:
         return changed, base
 
     @staticmethod
-    def _refresh_source(
-        run: RunCache,
+    def _update_source(
         source_path: Path,
         *,
         old: EventFileCache | None,
@@ -185,22 +189,13 @@ class _RunData:
         initial_metadata: dict[str, dict[str, Any]],
         options: _IndexOptions,
         hit: _IndexHit | None,
-        stat: Callable[[Path], os.stat_result],
-    ) -> bool:
-        """Reuse an unchanged source, or load or parse a current index."""
-        if (
-            not force
-            and old is not None
-            and FileIdentity.fingerprint(stat(source_path))
-            == old.progress.checked_status
-        ):
-            return False
+    ) -> EventFileCache:
+        """Load or parse an index after detecting a new or changed source."""
         disk = options.disk if old is None else None
         if disk is not None and hit is not None:
             cached = disk.load(hit, source_path, initial_metadata)
             if cached is not None:
-                run.files[source_path] = cached
-                return True
+                return cached
         if log is not None:
             log("parsing {}", source_path)
         cache = _RunData.parse_event_file(
@@ -210,14 +205,13 @@ class _RunData:
             options=options,
             force=force,
         )
-        run.files[source_path] = cache
         if (
             disk is not None
             and cache.progress.provenance.cacheable
             and cache.progress.processed_pos == cache.progress.last_checked_size
         ):
             disk.save(cache, hit)
-        return True
+        return cache
 
     @staticmethod
     def parse_event_file(

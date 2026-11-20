@@ -147,11 +147,11 @@ class SingleEventTree:
     def _lookup_parts(self, parts: tuple[str, ...]) -> dict[str, Any]:
         node = self.tree
         for part in parts:
-            if node["type"] != "dir" or part not in node["children"]:
+            if node["type"] != "dir" or (child := node["children"].get(part)) is None:
                 raise FileNotFoundError(
                     ENOENT, os.strerror(ENOENT), _Paths.join_path(parts)
                 )
-            node = cast(dict[str, Any], node["children"][part])
+            node = cast(dict[str, Any], child)
         return node
 
     @staticmethod

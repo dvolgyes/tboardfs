@@ -3,10 +3,11 @@
 from io import BytesIO
 from pathlib import Path
 
+import magic
 import numpy as np
 import pytest
 
-from tboardfs import TensorBoardFS
+from tboardfs import TensorBoardFS, parse_file
 from tboardfs.proto import compat_pb2
 from test_incremental_parse import _files, _frame
 
@@ -66,3 +67,47 @@ def test_small_uint8_file_keeps_distinct_outer_array(tmp_path: Path) -> None:
     )
     assert outer.dtype == np.uint8 and outer.tobytes() == inner
     assert fs.read("/tensors/wrapped/000007.embedded.npy", 4096, 0) == inner
+
+
+def test_numeric_tensor_file_type_uses_full_active_magic_rules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A matching prefix, length and numeric dtype cannot establish the file type."""
+    offset = 65540
+    marker = b"UNIQUE-END"
+    rules = tmp_path / "magic"
+    rules.write_text(
+        f"{offset} string UNIQUE-END png image custom late-offset control\n"
+        "!:mime application/octet-stream\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAGIC", str(rules))
+    monkeypatch.setattr(magic, "_instances", {})
+    opaque = bytes(1 << 20)
+    recognized = opaque[:offset] + marker + opaque[offset + len(marker) :]
+    path = tmp_path / "events.out.tfevents.types"
+    with path.open("wb") as stream:
+        for step, content in enumerate((opaque, opaque, recognized, recognized)):
+            event = compat_pb2.Event(step=step)
+            tensor = event.summary.value.add(tag="typed").tensor
+            tensor.dtype = compat_pb2.DT_FLOAT
+            tensor.tensor_shape.dim.add(size=len(content) // 4)
+            tensor.tensor_content = content
+            frame = _frame(event)
+            stream.write(frame)
+
+    assert [entry.extension for entry in parse_file(path)["binary_entries"]] == [
+        "bin",
+        "bin",
+        "png",
+        "png",
+    ]
+
+    rules.write_text(
+        f"{offset} string UNIQUE-END gif image alternate\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(magic, "_instances", {})
+    path.write_bytes(frame)
+    assert [entry.extension for entry in parse_file(path)["binary_entries"]] == [
+        "gif",
+    ]

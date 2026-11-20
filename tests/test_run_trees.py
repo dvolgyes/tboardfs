@@ -315,3 +315,48 @@ def test_flat_run_removals_refresh_listings_and_inherited_times(tmp_path: Path) 
     assert "loss.json" in _node(before, "/run_a/scalars")["children"]
     assert _node(middle, "/run_a")["mtime"] == 110
     assert "loss.json" in _node(middle, "/run_b/scalars")["children"]
+
+
+def test_grouped_leaf_changes_preserve_placement_and_inherited_times(
+    tmp_path: Path,
+) -> None:
+    """Blank groups inherit even lower times without changing old snapshots."""
+    newest = tmp_path / "a/newest" / EVENTS
+    older = tmp_path / "z/older" / EVENTS
+    for event, wall_time in [(newest, 100), (older, 40)]:
+        event.parent.mkdir(parents=True)
+        event.write_bytes(_tensor(1, wall_time, "metric", 1))
+    (tmp_path / "a/blank").mkdir()
+    (tmp_path / "b/blank/leaf").mkdir(parents=True)
+
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, scalar_formats="json")
+    before = fs.virtual_tree()
+    placement = fs._run_places.disk_parts
+    old_names = _node(before, "/a").sorted_names()
+    assert old_names == ("blank", "newest")
+    assert fs.readdir("/") == [".", "..", "a", "b", "z"]
+
+    _append_records(newest, _tensor(1, 60, "metric", 2))
+    fs.readdir("/a/newest")
+    middle = fs._cached_tree()
+    assert fs._run_places.disk_parts is placement
+    assert _node(middle, "/a").sorted_names() is old_names
+    assert _node(middle, "/z") is _node(before, "/z")
+    assert middle["mtime"] == 60
+    for path in ("/a/blank", "/b", "/b/blank", "/b/blank/leaf"):
+        assert _node(before, path)["mtime"] == 100
+        assert _node(middle, path)["mtime"] == 60
+    _assert_fresh(fs, tmp_path)
+
+    newest.unlink()
+    assert fs.readdir("/a/newest") == [".", ".."]
+    older.unlink()
+    assert fs.readdir("/z/older") == [".", ".."]
+    after = fs._cached_tree()
+    assert fs._run_places.disk_parts is placement
+    assert middle["mtime"] == 60
+    assert _node(middle, "/a/newest")["children"]
+    assert after["mtime"] == 0
+    for path in ("/a", "/a/blank", "/a/newest", "/b", "/b/blank/leaf", "/z"):
+        assert _node(after, path)["mtime"] == 0
+    _assert_fresh(fs, tmp_path)
