@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable, Sequence
 
+from tboardfs.leaf_spec import LeafSpec
 from tboardfs.model import (
     BinaryEntry,
     EventFileCache,
@@ -31,11 +32,12 @@ class GraphFiles:
         if not graphs and meta_graphs and meta_graphs[-1].readable:
             files.add_fixed(
                 ("graphs", "graph.pb"),
-                {
-                    "type": "meta_graph_graph",
-                    "entry": meta_graphs[-1],
-                    "mtime": meta_graphs[-1].wall_time,
-                },
+                LeafSpec(
+                    "meta_graph_graph",
+                    meta_graphs[-1].wall_time,
+                    "entry",
+                    meta_graphs[-1],
+                ),
             )
         for cache in caches:
             GraphFiles.add_summaries(files, cache.binaries, step_digits)
@@ -66,7 +68,7 @@ def _add_written_graphs(
     for name, graph in named:
         files.add_fixed(
             ("graphs", name),
-            {"type": "graph", "entry": graph, "mtime": graph.wall_time},
+            LeafSpec("graph", graph.wall_time, "entry", graph),
         )
 
 
@@ -81,12 +83,12 @@ def _add_summary_files(
             ("graphs",),
             entry.tag,
             f"{step}.{name}",
-            {"type": "graph_def", "entry": entry, "mtime": entry.wall_time},
+            LeafSpec("graph_def", entry.wall_time, "entry", entry),
         )
     if entry.profiles:
         files.add(
             ("graphs",),
             entry.tag,
             f"{step}.run_metadata.pbtxt",
-            {"type": "run_metadata_text", "entry": entry, "mtime": entry.wall_time},
+            LeafSpec("run_metadata_text", entry.wall_time, "entry", entry),
         )

@@ -6,6 +6,7 @@ from typing import Any, cast
 from google.protobuf.message import DecodeError, Message
 
 from tboardfs.constants import DT_STRING
+from tboardfs.leaf_spec import LeafSpec
 from tboardfs.model import JsonEntry, SidecarEntry
 from tboardfs.open3d_asset import OPEN3D_ASSETS, OPEN3D_DIRECTORY, OPEN3D_PLUGIN
 from tboardfs.open3d_schema import GEOMETRY_PROPERTIES, GeometryIndex
@@ -46,7 +47,7 @@ class Open3DFiles:
                     OPEN3D_DIRECTORY,
                     entry.tag,
                     f"{_Paths.step_name(entry.step, step_digits)}.manifest.json",
-                    {"type": "json", "data": manifest, "mtime": entry.wall_time},
+                    LeafSpec("json", entry.wall_time, "data", manifest),
                 )
 
     @staticmethod

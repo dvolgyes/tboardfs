@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import numpy as np
 
+from tboardfs.leaf_spec import LeafSpec
 from tboardfs.mesh_ply import ply_bytes
 from tboardfs.model import JsonEntry
 from tboardfs.paths import _Paths
@@ -42,9 +43,9 @@ class _MeshGroup:
 def mesh_nodes(
     entries: list[JsonEntry],
     step_digits: int,
-) -> tuple[list[tuple[str, str, dict[str, Any]]], set[int]]:
+) -> tuple[list[tuple[str, str, LeafSpec]], set[int]]:
     """Return the mesh tag, file name and node of each mesh file."""
-    nodes: list[tuple[str, str, dict[str, Any]]] = []
+    nodes: list[tuple[str, str, LeafSpec]] = []
     consumed: set[int] = set()
     for (tag, step_number), group in sorted(_MeshFiles.groups(entries).items()):
         if _MESH_VERTEX not in group.components:
@@ -112,40 +113,29 @@ class _MeshFiles:
         return groups
 
     @staticmethod
-    def files(step: str, group: _MeshGroup) -> list[tuple[str, dict[str, Any]]]:
+    def files(step: str, group: _MeshGroup) -> list[tuple[str, LeafSpec]]:
         """Return the names and nodes of the OBJ, PLY, NPZ, and metadata files."""
         mesh = {
             label: group.components[key]
             for key, label in _MESH_COMPONENTS
             if key in group.components
         }
-        nodes = []
+        nodes: list[tuple[str, LeafSpec]] = []
         obj = _MeshFiles.obj_text(mesh)
         if obj is not None:
-            nodes.append(
-                (f"{step}.obj", {"type": "obj", "data": obj, "mtime": group.mtime})
-            )
+            nodes.append((f"{step}.obj", LeafSpec("obj", group.mtime, "data", obj)))
         ply = _MeshFiles.ply(mesh)
         if ply is not None:
-            nodes.append(
-                (f"{step}.ply", {"type": "bytes", "data": ply, "mtime": group.mtime})
-            )
+            nodes.append((f"{step}.ply", LeafSpec("bytes", group.mtime, "data", ply)))
         handle = BytesIO()
         np.savez(handle, **mesh)
         nodes.append(
-            (
-                f"{step}.npz",
-                {"type": "bytes", "data": handle.getvalue(), "mtime": group.mtime},
-            )
+            (f"{step}.npz", LeafSpec("bytes", group.mtime, "data", handle.getvalue()))
         )
         nodes.append(
             (
                 f"{step}.json",
-                {
-                    "type": "json",
-                    "data": _MeshFiles.metadata(group),
-                    "mtime": group.mtime,
-                },
+                LeafSpec("json", group.mtime, "data", _MeshFiles.metadata(group)),
             )
         )
         return nodes

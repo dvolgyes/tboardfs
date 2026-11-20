@@ -138,6 +138,10 @@ Without `--disk-index`, tboardfs neither reads nor writes persistent indexes.
 The first mount pays for parsing, hashing and writing; subsequent hits avoid protobuf parsing and file-type detection
 but still verify the source and build the virtual tree.
 
+The tree stores the resolved names, including collision suffixes, before a directory is listed.
+
+Listing a directory does not construct its typed file nodes; looking up a file constructs only that node.
+
 Only complete, stable parses without skipped records or conversion warnings are saved.
 
 Within a mount, appends still extend the in-memory index; a later mount reparses a changed file rather than trusting a

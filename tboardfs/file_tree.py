@@ -11,11 +11,17 @@ from tboardfs.constants import DEFAULT_SCALAR_FORMATS
 from tboardfs.filesystem import TensorBoardFS
 from tboardfs.host_publish import OutputPublisher, _OutputConflictError
 from tboardfs.indexer import _EventIndexer
+from tboardfs.leaf_spec import LeafSpec, LeafValue
 from tboardfs.model import RunCache, TFRecordError
 from tboardfs.paths import _Paths
 from tboardfs.raw_frames import _RawFrameChildren
 from tboardfs.render_node import render_node
+from tboardfs.run_listing import RunListing
 from tboardfs.run_tree import RunTree
+
+
+def _render_leaf(value: LeafValue) -> bytes:
+    return render_node(LeafSpec.node(value))
 
 
 class _CopyError(OSError):
@@ -128,7 +134,7 @@ class SingleEventTree:
                 for parts, node in self._iter_files(self.tree, (), view):
                     target = outdir_path.joinpath(*parts)
                     written = OutputPublisher.publish(
-                        root, parts, partial(render_node, node), existing
+                        root, parts, partial(_render_leaf, node), existing
                     )
                     (copied if written else skipped).append(_Paths.join_path(parts))
         except (OSError, TFRecordError) as error:
@@ -149,24 +155,45 @@ class SingleEventTree:
         return node
 
     @staticmethod
-    def _selected(node: dict[str, Any], view: str) -> bool:
-        return view == "both" or view == ("raw" if node["type"] == "raw" else "typed")
+    def _selected(node: LeafValue, view: str) -> bool:
+        return view == "both" or view == (
+            "raw" if LeafSpec.kind_of(node) == "raw" else "typed"
+        )
 
     def _iter_files(
-        self, node: dict[str, Any], parts: tuple[str, ...], view: str
-    ) -> Iterator[tuple[tuple[str, ...], dict[str, Any]]]:
-        if node["type"] != "dir":
+        self, node: LeafValue, parts: tuple[str, ...], view: str
+    ) -> Iterator[tuple[tuple[str, ...], LeafValue]]:
+        if not isinstance(node, dict) or node["type"] != "dir":
             if self._selected(node, view):
                 yield parts, node
             return
+        path = list(parts)
+        stack = [self._children(node, view)]
+        while stack:
+            for name, child in stack[-1]:
+                if isinstance(child, dict) and child["type"] == "dir":
+                    path.append(name)
+                    stack.append(self._children(child, view))
+                    break
+                if self._selected(child, view):
+                    yield (*path, name), child
+            else:
+                stack.pop()
+                if stack:
+                    path.pop()
+
+    @staticmethod
+    def _children(node: dict[str, Any], view: str) -> Iterator[tuple[str, LeafValue]]:
+        """Yield ordered child names and compact entries without expanding a subtree."""
         if view == "typed" and node.get("view") == "raw":
             return
         children = node["children"]
         if isinstance(children, _RawFrameChildren):
-            for name, child in children.iter_nodes():
-                yield (*parts, name), child
+            yield from children.iter_nodes()
             return
+        entries = children.entries if isinstance(children, RunListing) else children
         for name in sorted(
-            children, key=lambda n: n + ("/" if children[n]["type"] == "dir" else "")
+            entries,
+            key=lambda n: n + ("/" if LeafSpec.kind_of(entries[n]) == "dir" else ""),
         ):
-            yield from self._iter_files(children[name], (*parts, name), view)
+            yield name, entries[name]

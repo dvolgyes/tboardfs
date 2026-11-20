@@ -6,6 +6,7 @@ from tboardfs.array_json import array_to_json
 from tboardfs.constants import DT_STRING
 from tboardfs.custom_scalars import custom_scalar_layout_json
 from tboardfs.hparams import hparams_json
+from tboardfs.leaf_spec import LeafSpec
 from tboardfs.mesh import mesh_nodes
 from tboardfs.model import JsonEntry
 from tboardfs.paths import _Paths
@@ -81,11 +82,12 @@ class _TypedPluginFiles:
             return
         files.add_fixed(
             ("hparams", "hparams.json"),
-            {
-                "type": "json",
-                "data": hparams_json(hparams, scalars),
-                "mtime": max(e.wall_time for e in hparams),
-            },
+            LeafSpec(
+                "json",
+                max(e.wall_time for e in hparams),
+                "data",
+                hparams_json(hparams, scalars),
+            ),
         )
         consumed.update(id(entry) for entry in hparams)
 
@@ -99,11 +101,12 @@ class _TypedPluginFiles:
             return
         files.add_fixed(
             ("custom_scalars", "layout.json"),
-            {
-                "type": "json",
-                "data": custom_scalar_layout_json(layouts),
-                "mtime": max(e.wall_time for e in layouts),
-            },
+            LeafSpec(
+                "json",
+                max(e.wall_time for e in layouts),
+                "data",
+                custom_scalar_layout_json(layouts),
+            ),
         )
         consumed.update(id(entry) for entry in layouts)
 
@@ -122,18 +125,13 @@ class _TypedPluginFiles:
                 ("pr_curves",),
                 entry.tag,
                 f"{step}.{fmt}",
-                {
-                    "type": "table",
-                    "series": table,
-                    "format": fmt,
-                    "mtime": entry.wall_time,
-                },
+                LeafSpec("table", entry.wall_time, "series", table, format=fmt),
             )
         files.add(
             ("pr_curves",),
             entry.tag,
             f"{step}.npy",
-            {"type": "npy", "data": data, "mtime": entry.wall_time},
+            LeafSpec("npy", entry.wall_time, "data", data),
         )
         return {id(entry)}
 
@@ -158,13 +156,13 @@ class _TypedPluginFiles:
             ("tensors",),
             entry.tag,
             f"{step}.json",
-            {"type": "json", "data": json_data, "mtime": entry.wall_time},
+            LeafSpec("json", entry.wall_time, "data", json_data),
         )
         files.add(
             ("tensors",),
             entry.tag,
             f"{step}.npy",
-            {"type": "npy", "data": data, "mtime": entry.wall_time},
+            LeafSpec("npy", entry.wall_time, "data", data),
         )
         return {id(entry)}
 

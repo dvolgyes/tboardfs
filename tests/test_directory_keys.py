@@ -1,6 +1,6 @@
 """Directory listings follow published trees without repeating warm work."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,7 @@ def test_warm_listing_reuses_sorted_keys_across_unrelated_refresh(
     sorts = []
 
     def counting_sorted(values: Iterable[str], **kwargs: Any) -> list[str]:
-        if isinstance(values, dict) and "loss.json" in values:
+        if isinstance(values, Mapping) and "loss.json" in values:
             sorts.append(1)
         return sorted(values, **kwargs)
 

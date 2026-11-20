@@ -6,6 +6,7 @@ from typing import Any
 from loguru import logger
 
 from tboardfs.paths import NAME_MAP, _DirectoryNode, _Paths
+from tboardfs.run_listing import RunListing
 
 
 class RunPlaces:
@@ -61,7 +62,10 @@ class RunPlaces:
                 paths[prefix] = (*paths[prefix[:-1]], name)
                 if name != component:
                     renamed[prefix] = paths[prefix]
-            dirs[run_parts]["children"].update(run_trees[run_parts]["children"])
+            children = run_trees[run_parts]["children"]
+            dirs[run_parts]["children"] = (
+                children.copy() if isinstance(children, RunListing) else dict(children)
+            )
         for parts, names in maps.items():
             if names:
                 children = dirs[parts]["children"]

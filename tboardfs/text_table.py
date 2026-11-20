@@ -1,10 +1,9 @@
 """Render text summary tensors as TensorBoard shows them."""
 
-from typing import Any
-
 import numpy as np
 
 from tboardfs.array_json import array_to_json
+from tboardfs.leaf_spec import LeafSpec
 from tboardfs.model import JsonEntry
 from tboardfs.tensor import _TensorDType
 
@@ -24,7 +23,7 @@ class _TextTable:
     """
 
     @staticmethod
-    def nodes(entry: JsonEntry) -> list[tuple[str, dict[str, Any]]]:
+    def nodes(entry: JsonEntry) -> list[tuple[str, LeafSpec]]:
         """Return (file suffix, node) pairs for one text entry.
 
         The list is empty when the entry has no strings, or when they do not
@@ -39,12 +38,10 @@ class _TextTable:
             return []
         cells, dtype = preview
         text = _TextTable.markdown(cells).encode()
-        nodes = [("txt", {"type": "bytes", "data": text, "mtime": entry.wall_time})]
+        nodes = [("txt", LeafSpec("bytes", entry.wall_time, "data", text))]
         if cells.size > 1:
             data = array_to_json(cells, dtype=dtype)
-            nodes.append(
-                ("json", {"type": "json", "data": data, "mtime": entry.wall_time})
-            )
+            nodes.append(("json", LeafSpec("json", entry.wall_time, "data", data)))
         return nodes
 
     @staticmethod

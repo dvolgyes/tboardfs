@@ -3,6 +3,7 @@
 from functools import partial
 from typing import Any
 
+from tboardfs.leaf_spec import LeafSpec
 from tboardfs.model import EventFileCache
 from tboardfs.paths import _Paths
 from tboardfs.run_files import RunFiles
@@ -90,10 +91,7 @@ class _HistogramFiles:
             (item["tab"],),
             item["tag"],
             f"{_Paths.step_name(item['step'], step_digits)}.{item['fmt']}",
-            {
-                "type": "table",
-                "series": item["series"],
-                "format": item["fmt"],
-                "mtime": item["mtime"],
-            },
+            LeafSpec(
+                "table", item["mtime"], "series", item["series"], format=item["fmt"]
+            ),
         )

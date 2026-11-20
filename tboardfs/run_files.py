@@ -1,18 +1,15 @@
 """Collect the virtual files of one run, then give each tag a directory that no file has."""
 
-from collections.abc import Iterator
-from dataclasses import dataclass
-from typing import Any
+from collections import defaultdict
+from collections.abc import Container, Iterable, Iterator
+from dataclasses import dataclass, field
+from typing import Any, ClassVar
 
-from tboardfs.model import RunCache
+from tboardfs.leaf_spec import LeafSpec, LeafValue
+from tboardfs.model import BinaryEntry, RunCache
 from tboardfs.paths import NAME_MAP, _Paths
-from tboardfs.run_tree_edit import (
-    _IMPLICIT_PRODUCERS,
-    _LogicalFile,
-    _RunLeaf,
-    _RunListing,
-    _TreeEdits,
-)
+from tboardfs.run_listing import RunListing, _LogicalFile
+from tboardfs.run_tree_edit import _IMPLICIT_PRODUCERS, _RunLeaf, _TreeEdits
 from tboardfs.tag_paths import TagPaths
 
 
@@ -29,34 +26,39 @@ class _PathHistory:
     renamed: frozenset[str]
     unstable: bool
 
-    def permits(self, file: "_RunFile", path: _Path) -> bool:
+    def permits(self, scope: _TagScope | None, path: _Path) -> bool:
         """Reject edits that could change a prior collision resolution."""
         if path in self.directories:
             return False
-        if file.tag is None:
-            return True
-        return file.tag not in self.renamed and file.scope() in self.scopes
+        return scope is None or (scope[1] not in self.renamed and scope in self.scopes)
 
 
-class _RunChildren(_RunListing):
+class _RunChildren(RunListing):
     """A run listing with exceptional path history kept out of virtual nodes."""
 
-    __slots__: tuple[str, ...] = ("history",)
+    __slots__: ClassVar[tuple[str, ...]] = ("history",)
 
     history: _PathHistory
 
-    def __init__(self, children: dict[str, Any], history: _PathHistory) -> None:
-        super().__init__(
-            children,
-            logical=children.logical if isinstance(children, _RunListing) else None,
-        )
+    def __init__(
+        self, children: RunListing | dict[str, Any], history: _PathHistory
+    ) -> None:
+        if isinstance(children, RunListing):
+            super().__init__(children.entries, logical=children.logical)
+        else:
+            super().__init__(children)
         self.history = history
 
     def copy(self) -> "_RunChildren":
         """Copy the listing and retain its immutable path history."""
-        copied = _RunChildren(self, self.history)
-        copied.logical = self.logical.copy()
-        return copied
+        return _RunChildren(super().copy(), self.history)
+
+
+def _listing(directory: dict[str, Any]) -> RunListing:
+    children = directory["children"]
+    if not isinstance(children, RunListing):
+        children = directory["children"] = RunListing(children)
+    return children
 
 
 @dataclass(slots=True)
@@ -70,7 +72,7 @@ class _RunFile:
     root: tuple[str, ...]
     tag: str | None
     name: str
-    node: dict[str, Any]
+    node: LeafValue
     named: bool
     identity: str = ""
     producer: str = ""
@@ -112,7 +114,7 @@ class _RunFile:
         """Identify an embedded filename that a cold build can generate."""
         return (
             self.root == ("tensors",)
-            and self.node["type"] == "binary"
+            and LeafSpec.kind_of(self.node) == "binary"
             and ".embedded." in self.name
         )
 
@@ -126,15 +128,118 @@ class _RunFile:
 
     def store(self, directory: dict[str, Any], name: str) -> None:
         """Insert the original leaf, recording only non-inferable provenance."""
-        children = directory["children"]
+        children = _listing(directory)
         if self.producer in _IMPLICIT_PRODUCERS:
-            if isinstance(children, _RunListing):
-                children.logical.pop(name, None)
+            children.logical.pop(name, None)
         else:
-            if not isinstance(children, _RunListing):
-                children = directory["children"] = _RunListing(children)
             children.logical[name] = self.logical()
-        children[name] = self.node
+        children.set_leaf(name, self.node)
+
+
+def _embedded(name: str) -> str:
+    stem, ext = name.rsplit(".", 1)
+    return f"{stem}.embedded.{ext}"
+
+
+@dataclass(slots=True)
+class _BinaryGroup:
+    """One indexed binary batch's files in a single tag directory."""
+
+    root: _Path
+    tag: str
+    names: dict[str, BinaryEntry] = field(default_factory=dict)
+    long_names: set[str] = field(default_factory=set)
+
+    def add(self, name: str, entry: BinaryEntry) -> None:
+        """Keep the latest entry and its position in producer order."""
+        size = len(name)
+        can_shorten = size > 255 or (size > 63 and not name.isascii())
+        if name in self.names:
+            del self.names[name]
+        self.names[name] = entry
+        if can_shorten:
+            self.long_names.add(name)
+
+    def scope(self) -> _TagScope:
+        """Return the scope used by cold collision and append checks."""
+        return self.root, self.tag, False
+
+    def parent(self, tags: TagPaths) -> _Path:
+        """Return the shared resolved parent of every entry in the group."""
+        return (*self.root, *tags.dir_parts(self.tag))
+
+    def resolve_names(self, views: set[str], name_map: dict[str, str]) -> None:
+        """Fit long names and move embedded payloads beside generated views."""
+        embedded = {name: _embedded(name) for name in views if name in self.names}
+        if not embedded and not self.long_names:
+            return
+        changed: dict[str, str] = {}
+        for name in self.long_names | embedded.keys():
+            alias = embedded.get(name, name)
+            resolved = _Paths.fit(alias, alias, name_map)
+            if resolved != name:
+                changed[name] = resolved
+        if changed:
+            self.names = {
+                changed.get(name, name): entry for name, entry in self.names.items()
+            }
+
+
+type _Stage = _RunFile | _BinaryGroup
+type _CollisionSource = _RunFile | BinaryEntry
+type _SourceNames = dict[str, dict[str, _CollisionSource]]
+
+
+class _Collisions(dict[_Path, _SourceNames]):
+    """Reserved leaf names and their competing sources, grouped by parent."""
+
+    def reserve(self, path: _Path) -> None:
+        """Reserve a contested name before collecting its producer candidates."""
+        self.setdefault(path[:-1], {}).setdefault(path[-1], {})
+
+
+class _Directories(dict[_Path, dict[str, Any] | None]):
+    """Known directory paths and their nodes once created during publication."""
+
+    def remember(self, parent: _Path) -> None:
+        """Register an intended directory and any unknown ancestors."""
+        while parent and parent not in self:
+            self[parent] = None
+            parent = parent[:-1]
+
+    def open(self, run_node: dict[str, Any], parent: _Path) -> dict[str, Any]:
+        """Return the directory, creating it in the run on first use."""
+        directory = self.get(parent)
+        if directory is None:
+            directory = self[parent] = _Paths.mkdirs(run_node, parent)
+        return directory
+
+
+@dataclass(slots=True)
+class _LeafPaths:
+    """Membership over exceptional paths and grouped ordinary binary names."""
+
+    files: set[_Path] = field(default_factory=set)
+    groups: defaultdict[_Path, list[dict[str, BinaryEntry]]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
+
+    def track(self, file: _Stage, tags: TagPaths, name_map: dict[str, str]) -> _Path:
+        """Index a stage and return its resolved leaf or group parent path."""
+        if isinstance(file, _BinaryGroup):
+            parent = file.parent(tags)
+            self.groups[parent].append(file.names)
+            return parent
+        path = file.path(tags, name_map)
+        self.files.add(path)
+        return path
+
+    def contains(self, path: _Path) -> bool:
+        """Check for a leaf without expanding grouped names into full paths."""
+        if path in self.files:
+            return True
+        groups = self.groups.get(path[:-1])
+        return groups is not None and any(path[-1] in names for names in groups)
 
 
 class RunFiles:
@@ -146,10 +251,10 @@ class RunFiles:
     hides another. A later observation of the same logical file replaces it.
 
     Attributes:
-        files: the files in the order that they were added.
+        files: ordered producer stages; indexed binaries share one stage per tag.
     """
 
-    files: list[_RunFile]
+    files: list[_Stage]
     name_map: dict[str, str]
 
     def __init__(self) -> None:
@@ -161,7 +266,7 @@ class RunFiles:
         root: tuple[str, ...],
         tag: str,
         name: str,
-        node: dict[str, Any],
+        node: LeafValue,
         *,
         producer: str = "",
     ) -> None:
@@ -175,7 +280,7 @@ class RunFiles:
         root: tuple[str, ...],
         tag: str,
         extension: str,
-        node: dict[str, Any],
+        node: LeafValue,
         *,
         producer: str = "",
     ) -> None:
@@ -185,10 +290,25 @@ class RunFiles:
         )
 
     def add_fixed(
-        self, parts: tuple[str, ...], node: dict[str, Any], *, identity: str = ""
+        self, parts: tuple[str, ...], node: LeafValue, *, identity: str = ""
     ) -> None:
         """Add a generated file or a sidecar with a distinct source identity."""
         self.files.append(_RunFile(parts[:-1], None, parts[-1], node, False, identity))
+
+    def add_binaries(self, entries: Iterable[BinaryEntry], step_digits: int) -> None:
+        """Group one ordered producer batch by singleton root and reversible tag path."""
+        roots: defaultdict[str, dict[str, _BinaryGroup]] = defaultdict(dict)
+        for entry in entries:
+            groups = roots[entry.kind]
+            group = groups.get(entry.tag)
+            if group is None:
+                group = groups[entry.tag] = _BinaryGroup((entry.kind,), entry.tag)
+                self.files.append(group)
+            name = (
+                f"{_Paths.step_name(entry.step, step_digits)}{entry.suffix}"
+                f".{entry.extension}"
+            )
+            group.add(name, entry)
 
     def patch(
         self, tree: dict[str, Any], run: RunCache, *, raw: dict[str, Any]
@@ -216,14 +336,49 @@ class RunFiles:
         tags = TagPaths(self._tag_names(), {}, self.name_map)
         edits = _TreeEdits()
         for file in self.files:
-            path = file.path(tags, self.name_map)
-            if self.name_map or not file.patchable_name(path):
-                return None
-            if history is not None and not history.permits(file, path):
-                return None
-            if not edits.add(path, _RunLeaf(file.node, file.logical())):
+            if not self._patch_stage(edits, file, tags, history):
                 return None
         return edits
+
+    def _patch_stage(
+        self,
+        edits: _TreeEdits,
+        file: _Stage,
+        tags: TagPaths,
+        history: _PathHistory | None,
+    ) -> bool:
+        if isinstance(file, _BinaryGroup):
+            return self._patch_binaries(edits, file, tags, history)
+        path = file.path(tags, self.name_map)
+        if self.name_map or not file.patchable_name(path):
+            return False
+        if history is not None and not history.permits(file.scope(), path):
+            return False
+        return edits.add(path, _RunLeaf(file.node, file.logical()))
+
+    def _patch_binaries(
+        self,
+        edits: _TreeEdits,
+        group: _BinaryGroup,
+        tags: TagPaths,
+        history: _PathHistory | None,
+    ) -> bool:
+        parent = group.parent(tags)
+        if self.name_map or parent[0] in ("raw", NAME_MAP):
+            return False
+        scope = group.scope()
+        for name, entry in group.names.items():
+            if group.root == ("tensors",) and ".embedded." in name:
+                return False
+            path = (*parent, _Paths.fit(name, name, self.name_map))
+            if self.name_map or (
+                history is not None and not history.permits(scope, path)
+            ):
+                return False
+            logical = (group.root, group.tag, name, False, "", "binary")
+            if not edits.add(path, _RunLeaf(entry, logical)):
+                return False
+        return True
 
     def fill(self, run_node: dict[str, Any], run: RunCache) -> None:
         """Add every file to the directory of a run.
@@ -233,7 +388,7 @@ class RunFiles:
             run: the run, which keeps its moved tags so a run that grows
                 logs each move once.
         """
-        self._separate_tensor_payloads()
+        self._prepare_names()
         tags, paths, leaves, history = self._resolve_paths()
         tags.log(run)
         if self._insert_files(run_node, paths, leaves):
@@ -241,33 +396,28 @@ class RunFiles:
         if history is not None:
             run_node["children"] = _RunChildren(run_node["children"], history)
         if self.name_map:
-            run_node["children"][NAME_MAP] = {
-                "type": "name_map",
-                "data": self.name_map,
-            }
+            _listing(run_node).set_leaf(
+                NAME_MAP, {"type": "name_map", "data": self.name_map}
+            )
 
     def _tag_names(self) -> dict[str, None]:
         return dict.fromkeys(file.tag for file in self.files if file.tag is not None)
 
     def _resolve_paths(
         self,
-    ) -> tuple[TagPaths, list[_Path], set[_Path], _PathHistory | None]:
+    ) -> tuple[TagPaths, list[_Path], _LeafPaths, _PathHistory | None]:
         blocked: dict[_Path, str] = {}
         scopes: set[_TagScope] = set()
         historical_dirs: set[_Path] = set()
         tag_names = self._tag_names()
         while True:
             tags = TagPaths(tag_names, blocked, self.name_map)
-            paths = [file.path(tags, self.name_map) for file in self.files]
-            leaves = set(paths)
-            found = self.blocked_dirs(paths, leaves)
+            leaves = _LeafPaths()
+            paths = [leaves.track(file, tags, self.name_map) for file in self.files]
+            found = self._blocked_dirs(paths, leaves)
             if found.keys() <= blocked.keys():
                 break
-            for scope, path in self._scoped_paths(paths):
-                scopes.add(scope)
-                historical_dirs.update(
-                    path[:end] for end in range(len(scope[0]) + 1, len(path))
-                )
+            self._record_history(paths, scopes, historical_dirs)
             blocked |= found
         history = None
         if blocked:
@@ -279,116 +429,217 @@ class RunFiles:
             )
         return tags, paths, leaves, history
 
-    def _separate_tensor_payloads(self) -> None:
-        """Keep embedded bytes next to a generated tensor view with the same filename."""
-        payloads = [
-            f
-            for f in self.files
-            if f.root == ("tensors",) and f.node["type"] == "binary"
-        ]
+    def _record_history(
+        self, paths: list[_Path], scopes: set[_TagScope], directories: set[_Path]
+    ) -> None:
+        for scope, parent in self._scoped_parents(paths):
+            scopes.add(scope)
+            directories.update(self._tag_prefixes(scope[0], parent))
+
+    def _prepare_names(self) -> None:
+        """Separate embedded tensor views and fit ordinary binary names once."""
+        views = self._matching_tensor_views()
+        empty: set[str] = set()
+        for file in self.files:
+            if isinstance(file, _BinaryGroup):
+                file.resolve_names(
+                    views.get(file.tag, empty) if file.root == ("tensors",) else empty,
+                    self.name_map,
+                )
+            elif (
+                views
+                and file.root == ("tensors",)
+                and file.name in views.get(file.tag, empty)
+                and LeafSpec.kind_of(file.node) == "binary"
+            ):
+                file.name = _embedded(file.name)
+
+    def _matching_tensor_views(self) -> dict[str | None, set[str]]:
+        payloads = self._tensor_payload_names()
+        views: defaultdict[str | None, set[str]] = defaultdict(set)
         if not payloads:
-            return
-        views = {
-            (f.tag, f.name)
-            for f in self.files
-            if f.root == ("tensors",) and f.node["type"] != "binary"
-        }
-        for payload in payloads:
-            if (payload.tag, payload.name) in views:
-                stem, ext = payload.name.rsplit(".", 1)
-                payload.name = f"{stem}.embedded.{ext}"
+            return views
+        for file in self.files:
+            if not isinstance(file, _RunFile) or file.root != ("tensors",):
+                continue
+            names = payloads.get(file.tag)
+            if (
+                names is not None
+                and any(file.name in batch for batch in names)
+                and LeafSpec.kind_of(file.node) != "binary"
+            ):
+                views[file.tag].add(file.name)
+        return views
+
+    def _tensor_payload_names(self) -> dict[str | None, list[Container[str]]]:
+        payloads: defaultdict[str | None, list[Container[str]]] = defaultdict(list)
+        for file in self.files:
+            if file.root != ("tensors",):
+                continue
+            if isinstance(file, _BinaryGroup):
+                payloads[file.tag].append(file.names)
+            elif LeafSpec.kind_of(file.node) == "binary":
+                payloads[file.tag].append((file.name,))
+        return payloads
 
     def _insert_files(
         self,
         run_node: dict[str, Any],
-        paths: list[tuple[str, ...]],
-        leaves: set[tuple[str, ...]],
+        paths: list[_Path],
+        leaves: _LeafPaths,
     ) -> bool:
-        directories: dict[_Path, dict[str, Any] | None] = {}
-        for path in leaves:
-            parent = path[:-1]
-            while parent and parent not in directories:
-                directories[parent] = None
-                parent = parent[:-1]
-        collisions: dict[tuple[str, ...], dict[str, _RunFile]] = {
-            path: {} for path in leaves & directories.keys()
-        }
-        unstable = False
+        directories = _Directories()
         for path, file in zip(paths, self.files, strict=True):
-            if file.identity:
-                collisions.setdefault(path, {})
-            if path[0] == "raw" or file.nonstandard_tensor():
-                unstable = True
+            directories.remember(self._stage_parent(file, path))
+        collisions = self._find_collisions(paths, leaves, directories)
         for path, file in zip(paths, self.files, strict=True):
-            sources = collisions.get(path)
-            if sources is None:
-                parent = path[:-1]
-                directory = directories.get(parent)
-                if directory is None:
-                    directory = directories[parent] = _Paths.mkdirs(run_node, parent)
-                file.store(directory, path[-1])
-            else:
-                sources[file.identity] = file
+            self._store_stage(run_node, file, path, directories, collisions)
         moved = self._insert_collisions(run_node, directories, leaves, collisions)
-        return unstable or moved
+        return moved or any(
+            path[0] == "raw"
+            or (isinstance(file, _RunFile) and file.nonstandard_tensor())
+            for path, file in zip(paths, self.files, strict=True)
+        )
+
+    def _find_collisions(
+        self, paths: list[_Path], leaves: _LeafPaths, directories: _Directories
+    ) -> _Collisions:
+        collisions = _Collisions()
+        for path in directories:
+            if leaves.contains(path):
+                collisions.reserve(path)
+        for path, file in zip(paths, self.files, strict=True):
+            if isinstance(file, _RunFile) and file.identity:
+                collisions.reserve(path)
+        return collisions
+
+    def _store_stage(
+        self,
+        run_node: dict[str, Any],
+        file: _Stage,
+        path: _Path,
+        directories: _Directories,
+        collisions: _Collisions,
+    ) -> None:
+        parent = self._stage_parent(file, path)
+        names = collisions.get(parent)
+        if isinstance(file, _BinaryGroup):
+            directory = directories.open(run_node, parent)
+            self._store_group(_listing(directory), file, names)
+            return
+        sources = None if names is None else names.get(path[-1])
+        if sources is not None:
+            sources[file.identity] = file
+            return
+        file.store(directories.open(run_node, parent), path[-1])
+
+    @staticmethod
+    def _store_group(
+        listing: RunListing,
+        group: _BinaryGroup,
+        collisions: _SourceNames | None,
+    ) -> None:
+        logical = listing.logical
+        if collisions is None:
+            for name in group.names.keys() & logical.keys() if logical else ():
+                del logical[name]
+            listing.entries.update(group.names)
+            return
+        for name, entry in group.names.items():
+            sources = collisions.get(name)
+            if sources is not None:
+                sources[""] = entry
+                continue
+            logical.pop(name, None)
+            listing.set_leaf(name, entry)
 
     def _insert_collisions(
         self,
         run_node: dict[str, Any],
-        directories: dict[_Path, dict[str, Any] | None],
-        leaves: set[_Path],
-        collisions: dict[_Path, dict[str, _RunFile]],
+        directories: _Directories,
+        leaves: _LeafPaths,
+        collisions: _Collisions,
     ) -> bool:
-        unstable = False
-        for path, sources in collisions.items():
-            directory = _Paths.mkdirs(run_node, path[:-1])
-            number = 1
-            for index, source in enumerate(sorted(sources)):
-                resolved = path
-                if index or path in directories:
-                    unstable = True
-                    resolved, number = self._free_leaf(
-                        path, number, leaves, directories
-                    )
-                    leaves.add(resolved)
-                sources[source].store(directory, resolved[-1])
-        return unstable
+        moved = False
+        for parent, names in collisions.items():
+            directory = _Paths.mkdirs(run_node, parent)
+            for name, sources in names.items():
+                moved |= self._insert_sources(
+                    directory, (*parent, name), sources, leaves, directories
+                )
+        return moved
+
+    def _insert_sources(
+        self,
+        directory: dict[str, Any],
+        path: _Path,
+        sources: dict[str, _CollisionSource],
+        leaves: _LeafPaths,
+        directories: _Directories,
+    ) -> bool:
+        number = 1
+        for index, identity in enumerate(sorted(sources)):
+            resolved = path
+            if index or path in directories:
+                resolved, number = self._free_leaf(path, number, leaves, directories)
+                leaves.files.add(resolved)
+            self._store_source(directory, resolved[-1], sources[identity])
+        return number != 1
+
+    @staticmethod
+    def _store_source(
+        directory: dict[str, Any], name: str, source: _CollisionSource
+    ) -> None:
+        if isinstance(source, _RunFile):
+            source.store(directory, name)
+            return
+        listing = _listing(directory)
+        listing.logical.pop(name, None)
+        listing.set_leaf(name, source)
 
     def _free_leaf(
         self,
         path: _Path,
         number: int,
-        leaves: set[_Path],
-        directories: dict[_Path, dict[str, Any] | None],
+        leaves: _LeafPaths,
+        directories: _Directories,
     ) -> tuple[_Path, int]:
         original = _Paths.decode_component(path[-1], name_map=self.name_map)
         while True:
             number += 1
             name = _Paths.fit(f"{path[-1]}~{number}", original, self.name_map)
             resolved = (*path[:-1], name)
-            if resolved not in leaves and resolved not in directories:
+            if not leaves.contains(resolved) and resolved not in directories:
                 return resolved, number
 
-    def blocked_dirs(
-        self, paths: list[tuple[str, ...]], leaves: set[tuple[str, ...]]
-    ) -> dict[tuple[str, ...], str]:
+    def _blocked_dirs(self, paths: list[_Path], leaves: _LeafPaths) -> dict[_Path, str]:
         """Return the tag directories that are also files, below their roots.
 
         Each value is the path of the file, for the warning.
         """
         found: dict[tuple[str, ...], str] = {}
-        for (root, _, _), path in self._scoped_paths(paths):
-            for end in range(len(root) + 1, len(path)):
-                prefix = path[:end]
-                if prefix in leaves:
-                    found.setdefault(prefix[len(root) :], "/".join(prefix))
+        for root, prefix in self._scoped_prefixes(paths):
+            if leaves.contains(prefix):
+                found.setdefault(prefix[len(root) :], "/".join(prefix))
         return found
 
-    def _scoped_paths(self, paths: list[_Path]) -> Iterator[tuple[_TagScope, _Path]]:
-        """Yield one representative path per tagged scope in this resolution."""
+    def _scoped_prefixes(self, paths: list[_Path]) -> Iterator[tuple[_Path, _Path]]:
+        for (root, _, _), parent in self._scoped_parents(paths):
+            yield from ((root, prefix) for prefix in self._tag_prefixes(root, parent))
+
+    def _scoped_parents(self, paths: list[_Path]) -> Iterator[tuple[_TagScope, _Path]]:
+        """Yield one parent per tagged scope in this resolution."""
         checked: set[_TagScope] = set()
         for path, file in zip(paths, self.files, strict=True):
             scope = file.scope()
             if scope is not None and scope not in checked:
                 checked.add(scope)
-                yield scope, path
+                yield scope, self._stage_parent(file, path)
+
+    @staticmethod
+    def _tag_prefixes(root: _Path, parent: _Path) -> Iterator[_Path]:
+        return (parent[:end] for end in range(len(root) + 1, len(parent) + 1))
+
+    @staticmethod
+    def _stage_parent(file: _Stage, path: _Path) -> _Path:
+        return path if isinstance(file, _BinaryGroup) else path[:-1]

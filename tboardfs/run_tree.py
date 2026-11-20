@@ -1,6 +1,5 @@
 """Build the virtual tab directories and files of one TensorBoard run."""
 
-from collections.abc import Iterable
 from functools import partial
 from typing import Any
 
@@ -8,7 +7,8 @@ from tboardfs.constants import FIXED_TABS
 from tboardfs.file_times import FileTimes
 from tboardfs.graph_files import GraphFiles
 from tboardfs.histogram_files import add_histogram_files
-from tboardfs.model import BinaryEntry, EventFileCache, JsonEntry, RunCache
+from tboardfs.leaf_spec import LeafSpec
+from tboardfs.model import EventFileCache, JsonEntry, RunCache
 from tboardfs.open3d_asset import OPEN3D_ASSETS, OPEN3D_PLUGIN
 from tboardfs.open3d_files import Open3DFiles
 from tboardfs.paths import _DirectoryNode, _Paths
@@ -77,7 +77,7 @@ class RunTree:
             )
         ):
             return None
-        _Projection.add_binary_entries(files, binaries, step_digits)
+        files.add_binaries(binaries, step_digits)
         consumed = add_typed_plugin_files(files, entries, {}, step_digits)
         _Projection.add_json_files(files, entries, step_digits, consumed)
         GraphFiles.add_summaries(files, binaries, step_digits)
@@ -220,8 +220,8 @@ class _Projection:
         _Projection.add_scalar_files(files, caches, scalars, scalar_formats)
         epochs = scalars.get("epoch")
         _ = add_histogram_files(files, caches, epochs, scalar_formats, step_digits)
-        _Projection.add_binary_entries(
-            files, (entry for cache in caches for entry in cache.binaries), step_digits
+        files.add_binaries(
+            (entry for cache in caches for entry in cache.binaries), step_digits
         )
         entries = [entry for cache in caches for entry in cache.json_entries]
         consumed = add_typed_plugin_files(files, entries, scalars, step_digits)
@@ -251,29 +251,11 @@ class _Projection:
                     ("scalars",),
                     tag,
                     fmt,
-                    {
-                        "type": "scalar",
-                        "series": series,
-                        "format": fmt,
-                        "mtime": mtimes.get(tag, 0.0),
-                    },
+                    LeafSpec(
+                        "scalar", mtimes.get(tag, 0.0), "series", series, format=fmt
+                    ),
                     producer="scalar",
                 )
-
-    @staticmethod
-    def add_binary_entries(
-        files: RunFiles, entries: Iterable[BinaryEntry], step_digits: int
-    ) -> None:
-        """Add lazy binary leaves from indexed entries, in write order."""
-        for entry in entries:
-            files.add(
-                (entry.kind,),
-                entry.tag,
-                f"{_Paths.step_name(entry.step, step_digits)}{entry.suffix}"
-                f".{entry.extension}",
-                {"type": "binary", "entry": entry, "mtime": entry.wall_time},
-                producer="binary",
-            )
 
     @staticmethod
     def add_json_files(
@@ -304,7 +286,7 @@ class _Projection:
                 _Projection.json_entry_root(tab, entry, files.name_map),
                 entry.tag,
                 f"{step}.json",
-                {"type": "json", "data": entry.payload, "mtime": entry.wall_time},
+                LeafSpec("json", entry.wall_time, "data", entry.payload),
                 producer="fallback" if tab in {"tensors", "pr_curves"} else "",
             )
 
@@ -332,11 +314,7 @@ class _Projection:
             root = OPEN3D_ASSETS if sidecar.tab == OPEN3D_PLUGIN else (sidecar.tab,)
             files.add_fixed(
                 (*root, *parts),
-                {
-                    "type": "sidecar",
-                    "entry": sidecar,
-                    "mtime": sidecar.mtime_ns / 1e9,
-                },
+                LeafSpec("sidecar", sidecar.mtime_ns / 1e9, "entry", sidecar),
                 identity=str(sidecar.source_path),
             )
 
