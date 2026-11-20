@@ -1,6 +1,7 @@
 """Reject source replacements without following a path into the mount."""
 
-from errno import EINVAL, ENOENT
+from errno import EACCES, EINVAL, ENOENT
+import json
 import os
 from pathlib import Path
 
@@ -9,6 +10,9 @@ import pytest
 from tboardfs import TensorBoardFS, parallel_index
 from tboardfs.event_source import EventSource
 from tboardfs.paths import _Paths
+from tboardfs.proto import compat_pb2
+
+from test_incremental_parse import _frame
 
 
 @pytest.mark.parametrize("mounted", [False, True])
@@ -115,6 +119,178 @@ def test_cold_fallback_rechecks_retargeted_symlink(
     monkeypatch.setattr(parallel_index, "parallel_index", decline)
     monkeypatch.setattr(_Paths, "is_file", guard_is_file)
 
-    assert fs.getattr("/")["st_size"] == 0
+    fs.readdir("/")
     assert attempted
     assert not fs._state.runs[()].files
+
+
+def _scalar_record(step: int) -> bytes:
+    event = compat_pb2.Event(wall_time=100.0 + step, step=step)
+    event.summary.value.add(tag="loss", simple_value=float(step))
+    return _frame(event)
+
+
+def test_live_siblings_share_a_guarded_walk_and_refresh_immediately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = tmp_path / "training" / "live"
+    run.mkdir(parents=True)
+    mountpoint = tmp_path / "mount"
+    mountpoint.mkdir()
+    paths = [run / f"events.out.tfevents.{step:02}" for step in range(24)]
+    for step, path in enumerate(paths):
+        path.write_bytes(_scalar_record(step))
+    fs = TensorBoardFS(run, mountpoint=mountpoint, refresh_age_seconds=3600)
+    virtual = "/scalars/loss.json"
+
+    def steps() -> list[int]:
+        return [row["step"] for row in json.loads(fs.read(virtual, 1 << 20, 0))]
+
+    assert steps() == list(range(24))
+    assert len(fs._state.runs[()].files) == len(paths)
+    original_open = os.open
+    ancestor_opens = 0
+
+    def count_open(path: str | Path, flags: int, *, dir_fd: int | None = None) -> int:
+        nonlocal ancestor_opens
+        assert path != mountpoint.name
+        if path == run.name:
+            ancestor_opens += 1
+        return original_open(path, flags, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", count_open)
+    assert steps() == list(range(24))
+    assert 0 < ancestor_opens < len(paths) // 2
+
+    with paths[-1].open("ab") as stream:
+        stream.write(_scalar_record(30))
+    assert steps() == [*range(24), 30]
+
+    replacement = run / "replacement"
+    replacement.write_bytes(_scalar_record(31))
+    os.replace(replacement, paths[-1])
+    assert steps() == [*range(23), 31]
+
+    paths[0].unlink()
+    assert steps() == [*range(1, 23), 31]
+    assert paths[0] not in fs._state.runs[()].files
+
+    blocked = mountpoint / "blocked"
+    blocked.write_bytes(_scalar_record(40))
+    paths[-1].unlink()
+    paths[-1].symlink_to(blocked)
+    assert steps() == list(range(1, 23))
+    assert paths[-1] not in fs._state.runs[()].files
+
+
+def test_sibling_status_resolves_aliases_again_after_retargeting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    alias = tmp_path / "alias"
+    mountpoint = second / "mount"
+    first.mkdir()
+    mountpoint.mkdir(parents=True)
+    for directory, content in ((first, b"first"), (second, b"second")):
+        (directory / "source").write_bytes(content)
+        (directory / "link").symlink_to(Path("..") / directory.name / "source")
+    (first / mountpoint.name).touch()
+    second_status = second.stat()
+    original_open = os.open
+    original_stat = os.stat
+
+    def guard_mount(path: str | Path, dir_fd: int | None) -> None:
+        if path == mountpoint.name and dir_fd is not None:
+            assert not os.path.samestat(os.fstat(dir_fd), second_status)
+
+    def guard_open(path: str | Path, flags: int, *, dir_fd: int | None = None) -> int:
+        guard_mount(path, dir_fd)
+        return original_open(path, flags, dir_fd=dir_fd)
+
+    def guard_stat(
+        path: str | Path, *, dir_fd: int | None = None, follow_symlinks: bool = True
+    ) -> os.stat_result:
+        guard_mount(path, dir_fd)
+        return original_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(os, "open", guard_open)
+    monkeypatch.setattr(os, "stat", guard_stat)
+    for target in (first, second):
+        alias.unlink(missing_ok=True)
+        alias.symlink_to(target, target_is_directory=True)
+        with EventSource._sibling_stat(alias, mountpoint=mountpoint) as stat:
+            for name in ("source", "link"):
+                assert stat(alias / name) == EventSource.stat(
+                    alias / name, mountpoint=mountpoint
+                )
+                assert stat(alias / name).st_size == len(target.name)
+            if target == first:
+                assert stat(alias / mountpoint.name).st_size == 0
+            else:
+                with pytest.raises(FileNotFoundError):
+                    stat(alias / mountpoint.name)
+
+    alias.unlink()
+    alias.symlink_to(mountpoint, target_is_directory=True)
+    with EventSource._sibling_stat(alias, mountpoint=mountpoint) as stat:
+        with pytest.raises(FileNotFoundError):
+            stat(alias / "source")
+
+
+def test_sibling_status_falls_back_when_parent_cannot_be_opened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = tmp_path / "run"
+    run.mkdir()
+    source = run / "source"
+    source.touch()
+    mountpoint = tmp_path / "mount"
+    original_open = os.open
+    faults = 0
+
+    def deny_once(path: str | Path, flags: int, *, dir_fd: int | None = None) -> int:
+        nonlocal faults
+        if path == run.name and not faults:
+            faults += 1
+            raise PermissionError(EACCES, "permission denied", path)
+        return original_open(path, flags, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", deny_once)
+    with EventSource._sibling_stat(run, mountpoint=mountpoint) as stat:
+        assert faults == 1
+        assert stat(source).st_size == 0
+        with pytest.raises(FileNotFoundError):
+            stat(run / "missing")
+
+
+@pytest.mark.parametrize("mounted", [False, True])
+def test_directory_status_rejects_a_retarget_into_private_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mounted: bool
+) -> None:
+    storage = tmp_path / "indexes"
+    storage.mkdir()
+    (storage / "run").mkdir()
+    source = tmp_path / "source"
+    source.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(source)
+    mountpoint = tmp_path / "mount" if mounted else None
+    assert (
+        EventSource.directory_stat(alias, mountpoint=mountpoint, storage=storage)
+        == source.stat()
+    )
+    original_open = os.open
+
+    def retarget_on_open(
+        path: str | Path, flags: int, *, dir_fd: int | None = None
+    ) -> int:
+        assert path != storage.name
+        if path == alias.name:
+            alias.unlink()
+            alias.symlink_to(storage / "run")
+        return original_open(path, flags, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", retarget_on_open)
+    with pytest.raises(FileNotFoundError):
+        EventSource.directory_stat(alias, mountpoint=mountpoint, storage=storage)

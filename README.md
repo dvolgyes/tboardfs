@@ -88,7 +88,7 @@ tboardfs runs in the background by default. With `--foreground`, it stays in the
 | -- | -- | -- |
 | `--scalar-format LIST` | `json,tsv,npz` | Comma-separated table formats for scalars, histograms and distributions: `json`, `tsv`, `csv`, `npz`. |
 | `--step-digits N` | `6` | Zero-padding width of step file names, from 1 to 20. |
-| `--refresh-age-seconds S` | `150` | Minimum interval between local searches for new files and directories. Use `0` for immediate discovery or `inf` to freeze each directory after first access. |
+| `--refresh-age-seconds S` | `150` | Minimum interval between local searches for new files and directories (`0` for immediate discovery, `inf` to freeze each directory after its first scan). |
 | `--cache-size-mb N` | `1024` | Memory for rendered files. `0` turns the cache off. |
 | `-j N`, `--index-workers N` | `1` | Maximum workers per cold file index (`1` keeps indexing serial). |
 | `--disk-index` | off | Reuse verified per-file indexes across mounts. |
@@ -185,18 +185,36 @@ Deleting the cache while unmounted loses only the speedup, not the event data.
 
 ### Live Training Runs
 
-Accessing a virtual path checks the known event files in the active run, even within the discovery interval.
+`ls -l MOUNTPOINT` can show run directories without indexing their event files.
+
+Listing a run or looking up a path inside it indexes the event files directly in that run, not those in sibling runs.
+
+A recursive `find MOUNTPOINT` enters each listed run, so its first traversal still indexes them all.
+
+After a run is indexed, accessing its virtual paths checks known event files even within the discovery interval.
 
 The check uses device, inode, birth time where available, size, modification time and status-change time; it ignores
 access time.
 
 Unchanged sources need no reopen for indexing.
 
+For regular files in one directory, a live refresh resolves the directory once and checks each file relative to it.
+
+This avoids repeated directory lookups without adding a delay before tboardfs sees an append.
+
 Local directory discovery finds new event files, subdirectories and sidecars without scanning idle runs.
 
-`--refresh-age-seconds inf` freezes a directory after its first access.
+`--refresh-age-seconds inf` freezes a directory after its first listing or lookup inside it.
 
-Directory timestamps reflect discovered content, not files in unvisited subdirectories.
+Before tboardfs indexes a run, `stat` reports its parent's published time if it is nonzero.
+
+Otherwise it uses the backing directory's modification time, without opening event files.
+
+If tboardfs cannot safely read that directory's metadata, `stat` reports time zero for that lookup.
+
+Listing the run discovers its contents, so its timestamp can change even if no process wrote to it.
+
+After indexing, `stat` reports the newest discovered content time and checks for changes in live mode.
 
 Append complete frames, and replace the event file when rewriting history.
 

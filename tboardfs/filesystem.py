@@ -16,6 +16,7 @@ from tboardfs.constants import (
     DEFAULT_SCALAR_FORMATS,
 )
 from tboardfs.errors import fuse_error
+from tboardfs.event_source import EventSource
 from tboardfs.file_times import FileTimes
 from tboardfs.model import (
     BinaryEntry,
@@ -173,8 +174,7 @@ class TensorBoardFS:
             content, mtime = opened
             size = content.size if isinstance(content, _VerifiedSpan) else len(content)
         else:
-            node, key = self._locate(path)
-            mtime = FileTimes.of(node)
+            node, key, mtime = self._getattr_node(path)
             if node["type"] == "dir":
                 mode, nlink, size = stat.S_IFDIR | 0o555, 2, 0
             else:
@@ -308,42 +308,94 @@ class TensorBoardFS:
     def _lookup(self, path: str) -> dict[str, Any]:
         return self._locate(path)[0]
 
+    def _getattr_node(self, path: str) -> tuple[dict[str, Any], RenderKey, float]:
+        with self._lock:
+            node, key = self._locate_locked(path, directory_attrs=True)
+            mtime = FileTimes.of(node)
+            if mtime:
+                return node, key, mtime
+            owner = self._run_places.disk_parts.get(key[1])
+            if owner is None or self._state.directories[owner].scanned_at is not None:
+                return node, key, mtime
+        return node, key, self._backing_directory_time(owner)
+
+    def _backing_directory_time(self, owner: tuple[str, ...]) -> float:
+        index = self._state.index
+        try:
+            return EventSource.directory_stat(
+                self.source.joinpath(*owner),
+                mountpoint=index.mountpoint,
+                storage=index.storage,
+            ).st_mtime
+        except OSError:
+            return 0.0
+
     def _locate(self, path: str) -> tuple[dict[str, Any], RenderKey]:
         """Return the node at ``path`` and its generation-scoped render key.
 
         The key is read under the same lock as the node, so both match.
         """
-        parts = _Paths.path_parts(path)
         with self._lock:
+            return self._locate_locked(path, directory_attrs=False)
+
+    def _locate_locked(
+        self, path: str, *, directory_attrs: bool
+    ) -> tuple[dict[str, Any], RenderKey]:
+        parts = _Paths.path_parts(path)
+        tree, owner = self._refresh_lookup(parts, directory_attrs=directory_attrs)
+        node = tree
+        for part in parts:
+            if node["type"] != "dir" or part not in node["children"]:
+                raise FileNotFoundError(ENOENT, os.strerror(ENOENT), path)
+            node = node["children"][part]
+        run = self._state.runs.get(owner)
+        version = None if node["type"] == "name_map" or run is None else run.version
+        return node, (self._renders.scope(version), parts)
+
+    def _refresh_lookup(
+        self, parts: tuple[str, ...], *, directory_attrs: bool
+    ) -> tuple[dict[str, Any], tuple[str, ...]]:
+        tree = self._cached_tree()
+        depth, owner = self._lookup_start(parts, directory_attrs=directory_attrs)
+        while True:
+            if (
+                directory_attrs
+                and depth == len(parts)
+                and self._state.directories[owner].scanned_at is None
+            ):
+                return tree, owner
+            self._activate(owner)
             tree = self._cached_tree()
-            depth = len(parts)
+            if depth == len(parts):
+                break
+            child_owner = self._run_places.disk_parts.get(parts[: depth + 1])
+            if child_owner is None:
+                break
+            owner = child_owner
+            depth += 1
+        return tree, self._mapped_owner(parts, depth)[1]
+
+    def _lookup_start(
+        self, parts: tuple[str, ...], *, directory_attrs: bool
+    ) -> tuple[int, tuple[str, ...]]:
+        depth, owner = self._mapped_owner(parts, len(parts))
+        if directory_attrs and depth == len(parts) and depth:
+            now = time.time()
             disk_parts = self._run_places.disk_parts
-            while (owner := disk_parts.get(parts[:depth])) is None:
-                depth -= 1
-            while True:
-                self._activate(owner)
-                refreshed = self._cached_tree()
-                if refreshed is not tree:
-                    tree = refreshed
-                    disk_parts = self._run_places.disk_parts
-                if depth == len(parts):
-                    break
-                child_owner = disk_parts.get(parts[: depth + 1])
-                if child_owner is None:
-                    break
-                owner = child_owner
-                depth += 1
-            node = tree
-            for part in parts:
-                if node["type"] != "dir" or part not in node["children"]:
-                    raise FileNotFoundError(ENOENT, os.strerror(ENOENT), path)
-                node = node["children"][part]
-            version = None
-            if node["type"] != "name_map":
-                while (owner := disk_parts.get(parts[:depth])) is None:
-                    depth -= 1
-                version = self._state.runs[owner].version
-            return node, (self._renders.scope(version), parts)
+            for ancestor_depth in range(depth):
+                ancestor = disk_parts[parts[:ancestor_depth]]
+                scanned_at = self._state.directories[ancestor].scanned_at
+                if scanned_at is None or now - scanned_at >= self.refresh_age_seconds:
+                    return ancestor_depth, ancestor
+        return depth, owner
+
+    def _mapped_owner(
+        self, parts: tuple[str, ...], depth: int
+    ) -> tuple[int, tuple[str, ...]]:
+        disk_parts = self._run_places.disk_parts
+        while (owner := disk_parts.get(parts[:depth])) is None:
+            depth -= 1
+        return depth, owner
 
     def _build_tree(self) -> dict[str, Any]:
         tree = self._run_places.build(

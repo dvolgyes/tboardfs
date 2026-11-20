@@ -115,22 +115,42 @@ class _RunData:
         options: _IndexOptions,
     ) -> tuple[bool, EventFileCache | None]:
         """Report a change and the base index if exactly one source resumed."""
+        parent = files[0].parent if len(files) > 1 and run.files and not force else None
+        with EventSource._sibling_stat(parent, mountpoint=options.mountpoint) as stat:
+            return _RunData._refresh_sources(
+                run, files, force=force, log=log, options=options, stat=stat
+            )
+
+    @staticmethod
+    def _refresh_sources(
+        run: RunCache,
+        files: list[Path],
+        *,
+        force: bool,
+        log: Callable[[str, object], None] | None,
+        options: _IndexOptions,
+        stat: Callable[[Path], os.stat_result],
+    ) -> tuple[bool, EventFileCache | None]:
+        """Apply status changes and carry metadata in source order."""
         changed = False
         base = None
         carry: dict[str, dict[str, Any]] = {}
         hits = options.candidates(files, run)
+        retained = 0
         for source_path in sorted(files):
             old = run.files.get(source_path)
             try:
-                if _RunData.refresh_event_file(
+                if _RunData._refresh_source(
                     run,
                     source_path,
+                    old=old,
                     force=force
                     or (old is not None and old.progress.initial_metadata != carry),
                     log=log,
                     initial_metadata=carry,
                     options=options,
                     hit=hits.get(source_path),
+                    stat=stat,
                 ):
                     base = (
                         old
@@ -143,34 +163,35 @@ class _RunData:
                     logger.warning("cannot read event file {}: {}", source_path, error)
                 if run.files.pop(source_path, None) is not None:
                     changed, base = True, None
-            if source_path in run.files:
-                carry = run.files[source_path].progress.effective_metadata
-        for deleted in set(run.files) - set(files):
-            if log is not None:
-                log("event file removed {}", deleted)
-            del run.files[deleted]
-            changed, base = True, None
+                continue
+            carry = run.files[source_path].progress.effective_metadata
+            retained += 1
+        if retained != len(run.files):
+            for deleted in set(run.files) - set(files):
+                if log is not None:
+                    log("event file removed {}", deleted)
+                del run.files[deleted]
+                changed, base = True, None
         return changed, base
 
     @staticmethod
-    def refresh_event_file(
+    def _refresh_source(
         run: RunCache,
         source_path: Path,
         *,
+        old: EventFileCache | None,
         force: bool,
         log: Callable[[str, object], None] | None,
         initial_metadata: dict[str, dict[str, Any]],
         options: _IndexOptions,
         hit: _IndexHit | None,
+        stat: Callable[[Path], os.stat_result],
     ) -> bool:
-        """Check a known source; open and parse it only when its status changes."""
-        old = run.files.get(source_path)
+        """Reuse an unchanged source, or load or parse a current index."""
         if (
             not force
             and old is not None
-            and FileIdentity.fingerprint(
-                EventSource.stat(source_path, mountpoint=options.mountpoint)
-            )
+            and FileIdentity.fingerprint(stat(source_path))
             == old.progress.checked_status
         ):
             return False
