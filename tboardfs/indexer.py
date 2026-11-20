@@ -38,7 +38,7 @@ from tboardfs.range_proof import range_proof
 from tboardfs.restarts import _RestartPurge, _offset_restarts
 from tboardfs.run_metadata_text import run_metadata_text
 from tboardfs.skip_failure import _diagnostic_provenance, _skip_error, _warn_skipped
-from tboardfs.summary import parse_event
+from tboardfs.summary import _SummaryParser
 from tboardfs.summary_graph import summary_graph_def
 from tboardfs.tensor_summary import GRAPH_PLUGINS, _TensorSummary
 from tboardfs.tables import (
@@ -353,7 +353,7 @@ class _EventIndexer:
         """
         first_time, epoch = state.first_time, state.epoch
         path = cache.source_path
-        event = parse_event(record.payload)
+        event = _SummaryParser.parse_event(record.payload, indexing=True)
         wall_time = float(event["wall_time"])
         values = event.get("values", [])
         clock = state.clock
@@ -682,6 +682,8 @@ class _EventIndexer:
         cached: dict[tuple[str, bytes], str | None],
     ) -> str | None:
         """Reuse file-type decisions for small, byte-identical media."""
+        if kind == "tensors" and value.get("packed_float32"):
+            return "bin"
         if len(data) > 4096 or kind == "graphs":
             return _TensorSummary.part_extension(value, kind, data)
         key = (kind, data)

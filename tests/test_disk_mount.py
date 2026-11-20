@@ -92,7 +92,7 @@ def test_disk_mount_rejects_same_size_rewrite(roots: tuple[Path, Path]) -> None:
 def test_disk_mount_rebuilds_blake2b_entry_without_removing_it(
     roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Keep a schema-1 catalog row and reuse its schema-2 replacement."""
+    """Keep the old BLAKE2b catalog row and reuse its XXH3 replacement."""
     source, storage = roots
     event = source / "events.out.tfevents.1"
     raw = _loss(1, 1.0)

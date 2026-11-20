@@ -69,10 +69,23 @@ def test_small_uint8_file_keeps_distinct_outer_array(tmp_path: Path) -> None:
     assert fs.read("/tensors/wrapped/000007.embedded.npy", 4096, 0) == inner
 
 
-def test_numeric_tensor_file_type_uses_full_active_magic_rules(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("dtype", "width", "first", "revised"),
+    [
+        (compat_pb2.DT_FLOAT, 4, "bin", "bin"),
+        (compat_pb2.DT_DOUBLE, 8, "png", "gif"),
+        (compat_pb2.DT_UINT8, 1, "png", "gif"),
+    ],
+)
+def test_raw_tensor_file_type_under_custom_magic_rules(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dtype: int,
+    width: int,
+    first: str,
+    revised: str,
 ) -> None:
-    """A matching prefix, length and numeric dtype cannot establish the file type."""
+    """Only packed float32 ignores custom rules that match beyond the prefix."""
     offset = 65540
     marker = b"UNIQUE-END"
     rules = tmp_path / "magic"
@@ -90,8 +103,8 @@ def test_numeric_tensor_file_type_uses_full_active_magic_rules(
         for step, content in enumerate((opaque, opaque, recognized, recognized)):
             event = compat_pb2.Event(step=step)
             tensor = event.summary.value.add(tag="typed").tensor
-            tensor.dtype = compat_pb2.DT_FLOAT
-            tensor.tensor_shape.dim.add(size=len(content) // 4)
+            tensor.dtype = dtype
+            tensor.tensor_shape.dim.add(size=len(content) // width)
             tensor.tensor_content = content
             frame = _frame(event)
             stream.write(frame)
@@ -99,8 +112,8 @@ def test_numeric_tensor_file_type_uses_full_active_magic_rules(
     assert [entry.extension for entry in parse_file(path)["binary_entries"]] == [
         "bin",
         "bin",
-        "png",
-        "png",
+        first,
+        first,
     ]
 
     rules.write_text(
@@ -109,5 +122,5 @@ def test_numeric_tensor_file_type_uses_full_active_magic_rules(
     monkeypatch.setattr(magic, "_instances", {})
     path.write_bytes(frame)
     assert [entry.extension for entry in parse_file(path)["binary_entries"]] == [
-        "gif",
+        revised,
     ]

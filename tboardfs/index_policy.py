@@ -28,7 +28,7 @@ from tboardfs.proto import (
     mesh_plugin_data_pb2,
 )
 
-_SCHEMA = 2  # Persist XXH3-128 source fingerprints instead of BLAKE2b.
+_SCHEMA = 3
 _MAX_RULE_BYTES = 128 << 20
 
 

@@ -1,6 +1,7 @@
 from types import MappingProxyType
 
 TENSORBOARD_EVENT_GLOB = "events.out.tfevents*"
+DT_FLOAT = 1
 DT_UINT8 = 4
 # TensorProto dtype of a string tensor.
 DT_STRING = 7

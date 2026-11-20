@@ -554,6 +554,8 @@ A supported tensor has a `.npy` preview and a `.json` preview with its `shape`, 
 - Each string member and each `uint8` content field can expose a recognized file, even below 1 KiB.
 - Short labels and unrecognized short fields do not get extra files, even beside a larger member.
 - At 1 KiB or above, a field can also have an opaque `.bin` or plain `.txt` export.
+- A well-formed packed `float32` tensor of 1 KiB or more keeps its raw `.bin` export even if the bytes match a known
+  file format.
 - These files contain the original field bytes, not the enclosing record.
 - Use `raw` to recover the full frame, including unsupported types and plugin metadata.
 

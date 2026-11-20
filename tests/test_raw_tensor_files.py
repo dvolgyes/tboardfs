@@ -6,6 +6,9 @@ without a plugin name keeps its raw file.
 """
 
 from collections.abc import Callable
+from io import BytesIO
+import json
+import wave
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +19,7 @@ from tboardfs.proto import compat_pb2, mesh_plugin_data_pb2
 
 from test_incremental_parse import _files, _frame
 
-DT_FLOAT, DT_DOUBLE, DT_STRING = 1, 2, 7
+DT_FLOAT, DT_DOUBLE, DT_UINT8, DT_STRING = 1, 2, 4, 7
 Fill = Callable[[compat_pb2.Summary.Value], None]
 
 
@@ -103,3 +106,101 @@ def test_the_fixture_point_clouds_have_no_raw_copy() -> None:
     fs = TensorBoardFS(Path(__file__).resolve().parent.parent / "test-logs/meshes")
 
     assert [path for path in _files(fs) if path.startswith("/tensors/")] == []
+
+
+def _wave_payload(size: int) -> bytes:
+    """Make a mono, 400 Hz square wave with an exact total file size."""
+    frames = size - 44
+    cycle = bytes([96] * 10 + [160] * 10)
+    samples = (cycle * ((frames + len(cycle) - 1) // len(cycle)))[:frames]
+    with BytesIO() as out:
+        with wave.open(out, "wb") as audio:
+            audio.setparams((1, 1, 8000, 0, "NONE", "not compressed"))
+            audio.writeframes(samples)
+        payload = out.getvalue()
+    assert len(payload) == size
+    return payload
+
+
+def _packed_tensor(
+    payload: bytes, *shape: int, dtype: int = DT_FLOAT
+) -> compat_pb2.TensorProto:
+    tensor = compat_pb2.TensorProto(dtype=dtype, tensor_content=payload)
+    for size in shape:
+        tensor.tensor_shape.dim.add(size=size)
+    return tensor
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["float-first", "float-last"])
+def test_packed_float_raw_files_skip_embedded_detection(
+    tmp_path: Path, reverse: bool
+) -> None:
+    """Identical bytes cannot share a file-type decision across tensor types."""
+    wav = _wave_payload(1024)
+    float_tensor = _packed_tensor(wav, 16, 16)
+    unknown_rank = _packed_tensor(wav, 16, 16)
+    unknown_rank.tensor_shape.unknown_rank = True
+    repeated = _packed_tensor(wav, 16, 16)
+    repeated.float_val.append(1.0)
+    wrong_value_field = _packed_tensor(wav, 16, 16)
+    wrong_value_field.int_val.append(1)
+    conflicting_string = _packed_tensor(wav, 16, 16)
+    conflicting_string.string_val.append(b"not the packed payload")
+    variant = _packed_tensor(wav, 16, 16)
+    variant.variant_val.add(type_name="extra")
+    float8 = _packed_tensor(wav, 16, 16)
+    float8.float8_val = b"extra"
+    uint8 = _packed_tensor(wav, len(wav), dtype=DT_UINT8)
+    double = _packed_tensor(wav, 8, 16, dtype=DT_DOUBLE)
+    string = compat_pb2.TensorProto(dtype=DT_STRING, string_val=[wav])
+    cases = [
+        ("packed", float_tensor, "bin"),
+        ("max_rank", _packed_tensor(wav, 256, *([1] * 253)), "bin"),
+        ("excess_rank", _packed_tensor(wav, 256, *([1] * 254)), "wav"),
+        ("uint8", uint8, "wav"),
+        ("size_mismatch", _packed_tensor(wav, 16, 15), "wav"),
+        ("unknown_rank", unknown_rank, "wav"),
+        ("missing_shape", _packed_tensor(wav), "wav"),
+        ("negative_dims", _packed_tensor(wav, -16, -16), "wav"),
+        ("repeated", repeated, "wav"),
+        ("wrong_value_field", wrong_value_field, "wav"),
+        ("conflicting_string", conflicting_string, "wav"),
+        ("variant", variant, "wav"),
+        ("float8", float8, "wav"),
+        ("double", double, "wav"),
+        ("string", string, "wav"),
+        ("small", _packed_tensor(_wave_payload(1020), 15, 17), None),
+    ]
+    event = compat_pb2.Event(step=1, wall_time=1.0)
+    for tag, tensor, _ in reversed(cases) if reverse else cases:
+        value = event.summary.value.add(tag=tag, tensor=tensor)
+        value.metadata.plugin_data.plugin_name = "tensors"
+    event.summary.value.add(tag="explicit_audio").audio.encoded_audio_string = wav
+    (tmp_path / "events.out.tfevents.1.host").write_bytes(_frame(event))
+    fs = TensorBoardFS(tmp_path)
+
+    for tag, _, suffix in cases:
+        directory = f"/tensors/{tag}"
+        raw_files = {
+            name
+            for name in fs.readdir(directory)
+            if name not in {".", "..", "000001.json", "000001.npy"}
+        }
+        if suffix is None:
+            assert raw_files == set()
+        else:
+            name = f"000001.{suffix}"
+            assert raw_files == {name}
+            assert fs.read(f"{directory}/{name}", len(wav) + 1, 0) == wav
+    assert fs.read("/audio/explicit_audio/000001.wav", len(wav) + 1, 0) == wav
+
+    with BytesIO(fs.read("/tensors/packed/000001.npy", 4096, 0)) as encoded:
+        floats = np.load(encoded, allow_pickle=False)
+    assert floats.dtype == np.dtype("<f4") and floats.shape == (16, 16)
+    assert floats.tobytes() == wav
+    metadata = json.loads(fs.read("/tensors/packed/000001.json", 65536, 0))
+    assert metadata == {
+        "dtype": "float32",
+        "shape": [16, 16],
+        "values": floats.tolist(),
+    }

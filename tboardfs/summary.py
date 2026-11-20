@@ -1,7 +1,8 @@
+from math import prod
 from typing import Any, cast
 
 from tboardfs.proto_schema import _ProtoParser
-from tboardfs.constants import DT_STRING
+from tboardfs.constants import DT_FLOAT, DT_STRING, LARGE_TENSOR_THRESHOLD
 from tboardfs.tensor_summary import TAGGED_RUN_METADATA
 
 # SessionLog.SessionStatus.START in the vendored event proto.
@@ -19,6 +20,8 @@ _TENSOR_VALUE_FIELDS = (
     (16, "uint32_val"),
     (17, "uint64_val"),
 )
+_PACKED_FIELDS = frozenset(("dtype", "shape", "tensor_content"))
+_MAX_TENSOR_RANK = 254
 
 
 def parse_event(data: bytes) -> dict[str, Any]:
@@ -30,7 +33,7 @@ class _SummaryParser:
     """Convert TensorBoard protobuf messages to parser dictionaries."""
 
     @staticmethod
-    def parse_event(data: bytes) -> dict[str, Any]:
+    def parse_event(data: bytes, *, indexing: bool = False) -> dict[str, Any]:
         """Parse one Event protobuf payload."""
         event_message = cast(Any, _ProtoParser.event(data))
         event: dict[str, Any] = {
@@ -40,7 +43,7 @@ class _SummaryParser:
         kind = event_message.WhichOneof("what")
         if kind == "summary":
             event["values"] = [
-                _SummaryParser.parse_summary_value(value)
+                _SummaryParser.parse_summary_value(value, indexing=indexing)
                 for value in event_message.summary.value
             ]
         elif kind == "tagged_run_metadata":
@@ -74,7 +77,9 @@ class _SummaryParser:
         }
 
     @staticmethod
-    def parse_summary_value(value_message: object) -> dict[str, Any]:
+    def parse_summary_value(
+        value_message: object, *, indexing: bool = False
+    ) -> dict[str, Any]:
         """Convert a SummaryValue protobuf message to the internal shape."""
         message = cast(Any, value_message)
         value: dict[str, Any] = {"tag": message.tag}
@@ -91,7 +96,14 @@ class _SummaryParser:
         elif kind == "tensor":
             if not message.tag:
                 value["tag"] = message.node_name
-            value["tensor"] = _SummaryParser.parse_tensor(message.tensor)
+            tensor = _SummaryParser.parse_tensor(message.tensor)
+            value["tensor"] = tensor
+            if (
+                indexing
+                and tensor["dtype"] == DT_FLOAT
+                and _SummaryParser.packed_float32(tensor, message.tensor)
+            ):
+                value["packed_float32"] = True
         if message.HasField("metadata"):
             value.update(_SummaryParser.parse_summary_metadata(message.metadata))
         return value
@@ -154,3 +166,19 @@ class _SummaryParser:
         if strings := message.string_val:
             tensor["string_val"] = list(strings)
         return tensor
+
+    @staticmethod
+    def packed_float32(tensor: dict[str, Any], tensor_message: object) -> bool:
+        """Trust the numeric layout only when it accounts for the whole raw export."""
+        if tensor.keys() != _PACKED_FIELDS:
+            return False
+        size = len(tensor["tensor_content"])
+        shape = tensor["shape"]
+        if size < LARGE_TENSOR_THRESHOLD or not 0 < len(shape) <= _MAX_TENSOR_RANK:
+            return False
+        if min(shape) <= 0 or 4 * prod(shape) != size:
+            return False
+        message = cast(Any, tensor_message)
+        return not (
+            message.resource_handle_val or message.variant_val or message.float8_val
+        )
