@@ -1,9 +1,9 @@
 """Plan and index bounded TFRecord ranges from a checked source snapshot."""
 
+import os
 from dataclasses import dataclass, field
 from errno import EINVAL, EISDIR, ELOOP, ENOENT, ENOTDIR, ENXIO
 from itertools import pairwise
-import os
 from pathlib import Path
 from stat import S_ISREG
 from typing import Any
@@ -20,9 +20,9 @@ from tboardfs.model import EventFileCache, Record, TFRecordError
 from tboardfs.skip_failure import _ReplayRecordError, _speculative_record
 from tboardfs.tables import _ScalarRows
 from tboardfs.tfrecord import (
-    DEFAULT_MAX_RECORD_SIZE,
     _FOOTER_SIZE,
     _HEADER_SIZE,
+    DEFAULT_MAX_RECORD_SIZE,
     _iter_tfrecords,
     _read_header,
 )
@@ -88,11 +88,12 @@ class Segment:
                 _check_snapshot(
                     path, EventSource.stat(path, mountpoint=mountpoint), expected
                 )
+                previous = None
                 while offset < size:
-                    _, length = _read_header(
-                        handle, offset, size, DEFAULT_MAX_RECORD_SIZE
+                    previous = _read_header(
+                        handle, offset, size, DEFAULT_MAX_RECORD_SIZE, previous
                     )
-                    following = offset + _HEADER_SIZE + length + _FOOTER_SIZE
+                    following = offset + _HEADER_SIZE + previous[1] + _FOOTER_SIZE
                     if target_index < n and target_index * size <= following * n:
                         last_target = min(n - 1, following * n // size)
                         midpoint = (offset + following) * n
@@ -165,7 +166,7 @@ class Segment:
                 progress.checked_status = expected
                 progress.last_checked_size = status.st_size
                 handle.seek(start)
-                for record in _iter_tfrecords(handle, end):
+                for record in _iter_tfrecords(handle, end=end):
                     _index_record(cache, record, state)
                     position = record.record_offset + record.total_size
                     progress.frames.append(position, record.payload_crc)

@@ -1,30 +1,30 @@
 """Index complete cold event files in isolated workers and reduce in file order."""
 
+import os
 from collections import deque
 from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from contextlib import suppress
 from errno import EAGAIN, EMFILE, ENFILE, ENOMEM
 from multiprocessing import current_process, get_context
-import os
 from pathlib import Path
 from struct import pack
 from typing import Any, BinaryIO
 
-from loguru import logger
 import numpy as np
+from loguru import logger
 
 from tboardfs.event_source import EventSource
 from tboardfs.file_status import FileIdentity
 from tboardfs.index_segment import (
+    _SOURCE_RACE_ERRNOS,
     Fingerprint,
     Job,
     Metadata,
     Segment,
-    _SOURCE_RACE_ERRNOS,
-    _SegmentError,
     _check_snapshot,
     _index_record,
+    _SegmentError,
 )
 from tboardfs.index_transport import _PackedResult, packed_work
 from tboardfs.indexer import _ParseState
@@ -72,7 +72,7 @@ class _Seed:
         handle: BinaryIO, end: int, cache: EventFileCache, state: _ParseState
     ) -> None:
         limit = min(end, _PREFIX_BYTES)
-        records = _iter_tfrecords(handle, end)
+        records = _iter_tfrecords(handle, end=end)
         count = 0
         while count < _PREFIX_RECORDS and handle.tell() < limit:
             _index_record(cache, next(records), state)

@@ -44,7 +44,7 @@ from tboardfs.tables import (
     _TableRows,
 )
 from tboardfs.tensor_summary import _TensorSummary
-from tboardfs.tfrecord import iter_tfrecords
+from tboardfs.tfrecord import _iter_tfrecords
 
 # A framed record whose payload cannot be decoded or indexed; framing is intact.
 _MALFORMED_RECORD_ERRORS = (DecodeError, ValueError, struct.error)
@@ -286,7 +286,7 @@ class _EventIndexer:
         provenance = progress.provenance
         token = _diagnostic_provenance.set(provenance)
         try:
-            for record in iter_tfrecords(handle):
+            for record in _iter_tfrecords(handle):
                 progress.processed_pos = record.record_offset + record.total_size
                 progress.frames.append(progress.processed_pos, record.payload_crc)
                 try:

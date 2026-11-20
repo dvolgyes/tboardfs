@@ -1,27 +1,27 @@
 import base64
-from collections.abc import Iterator
-from io import BytesIO
 import errno
 import json
 import os
 import stat
-from pathlib import Path
 import struct
+from collections.abc import Iterator
+from io import BytesIO
+from pathlib import Path
 from typing import BinaryIO
 
 import numpy as np
 import pytest
 
+import tboardfs.indexer
 from tboardfs import FIXED_TABS, TensorBoardFS, find_tensorboard_files, parse_file
 from tboardfs.classify import detect_extension
+from tboardfs.crc32c import masked_crc32c
 from tboardfs.file_tree import SingleEventTree
+from tboardfs.model import Record, TFRecordError
 from tboardfs.proto import compat_pb2
 from tboardfs.summary import parse_event
 from tboardfs.tables import export_table
-from tboardfs.crc32c import masked_crc32c
-from tboardfs.model import Record, TFRecordError
 from tboardfs.tfrecord import iter_tfrecords
-import tboardfs.indexer
 
 
 def _varint(value: int) -> bytes:
@@ -114,8 +114,8 @@ def _event_record(
     step: int,
     values: list[object],
 ) -> bytes:
-    Event = getattr(compat_pb2, "Event")
-    Summary = getattr(compat_pb2, "Summary")
+    Event = compat_pb2.Event
+    Summary = compat_pb2.Summary
     return _record(
         Event(
             wall_time=wall_time,
@@ -126,8 +126,8 @@ def _event_record(
 
 
 def _tensor_value(tag: str, dtype: int, field_name: str, value: int) -> object:
-    SummaryValue = getattr(compat_pb2, "Summary").Value
-    TensorProto = getattr(compat_pb2, "TensorProto")
+    SummaryValue = compat_pb2.Summary.Value
+    TensorProto = compat_pb2.TensorProto
     tensor = TensorProto(dtype=dtype)
     getattr(tensor, field_name).append(value)
     return SummaryValue(tag=tag, tensor=tensor)
@@ -299,8 +299,8 @@ def test_parse_file_reads_integer_tensor_scalars(tmp_path: Path) -> None:
 
 def test_parse_event_reads_negative_integer_tensors_as_signed_values() -> None:
     """Vendored protobuf parsing returns signed Python integers."""
-    Event = getattr(compat_pb2, "Event")
-    Summary = getattr(compat_pb2, "Summary")
+    Event = compat_pb2.Event
+    Summary = compat_pb2.Summary
     event = Event(
         wall_time=5.0,
         step=9,
@@ -571,7 +571,7 @@ def test_filesystem_reads_records_appended_during_a_parse(
     """Records appended while a parse runs are read on the next refresh."""
     path = tmp_path / "events.out.tfevents"
     path.write_bytes(_record(_event(100.0, 1, [_simple_value("loss", 2.0)])))
-    original = tboardfs.indexer.iter_tfrecords
+    original = tboardfs.indexer._iter_tfrecords
     appended = []
 
     def append_during_parse(handle: BinaryIO) -> Iterator[Record]:
@@ -582,10 +582,10 @@ def test_filesystem_reads_records_appended_during_a_parse(
                     writer.write(_record(appended[0]))
             yield record
 
-    monkeypatch.setattr(tboardfs.indexer, "iter_tfrecords", append_during_parse)
+    monkeypatch.setattr(tboardfs.indexer, "_iter_tfrecords", append_during_parse)
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
     assert len(json.loads(fs.read("/scalars/loss.json", 10000, 0))) == 1
-    monkeypatch.setattr(tboardfs.indexer, "iter_tfrecords", original)
+    monkeypatch.setattr(tboardfs.indexer, "_iter_tfrecords", original)
 
     rows = json.loads(fs.read("/scalars/loss.json", 10000, 0))
 
@@ -780,8 +780,8 @@ def test_copy_all_refuses_symlink_escape(tmp_path: Path) -> None:
 
 
 def _histogram_value(tag: str, limits: list[float], counts: list[float]) -> object:
-    SummaryValue = getattr(compat_pb2, "Summary").Value
-    HistogramProto = getattr(compat_pb2, "HistogramProto")
+    SummaryValue = compat_pb2.Summary.Value
+    HistogramProto = compat_pb2.HistogramProto
     histo = HistogramProto(min=0.0, max=limits[-1], bucket_limit=limits, bucket=counts)
     return SummaryValue(tag=tag, histo=histo)
 
@@ -852,8 +852,8 @@ def test_distribution_keeps_repeated_step_events_apart(tmp_path: Path) -> None:
 
 def test_histogram_with_missing_step_field_is_exported_once(tmp_path: Path) -> None:
     """A step omitted on the wire still yields one non-empty step file."""
-    Event = getattr(compat_pb2, "Event")
-    Summary = getattr(compat_pb2, "Summary")
+    Event = compat_pb2.Event
+    Summary = compat_pb2.Summary
     value = _histogram_value("w", [1.0, 2.0], [1.0, 1.0])
     payloads = [
         Event(wall_time=wall, summary=Summary(value=[value])).SerializeToString()

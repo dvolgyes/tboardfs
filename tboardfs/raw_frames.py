@@ -1,7 +1,7 @@
 """Expose each validated source frame without interpreting its payload."""
 
-from bisect import bisect_left
 import os
+from bisect import bisect_left
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any, ClassVar
@@ -13,7 +13,7 @@ from tboardfs.frame_ref import FrameRef
 from tboardfs.indexed_frame import IndexedFrame
 from tboardfs.model import EventFileCache, RunCache, TFRecordError
 from tboardfs.paths import _DirectoryNode, _Paths
-from tboardfs.tfrecord import iter_tfrecords
+from tboardfs.tfrecord import _iter_tfrecords
 
 _OFFSET_DIGITS = 20
 _EXTENSION = ".tfrecord"
@@ -104,7 +104,7 @@ class RawFrames:
         with EventSource.open(path) as handle:
             identity = FileIdentity.of(os.fstat(handle.fileno()))
             try:
-                for record in iter_tfrecords(handle):
+                for record in _iter_tfrecords(handle):
                     frames.append(
                         record.record_offset + record.total_size, record.payload_crc
                     )

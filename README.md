@@ -708,6 +708,12 @@ version 2 or later.
 Frame verification is independent of typed conversion. tboardfs checks both masked CRC32C fields and rejects payload
 lengths above 1 GiB before reading the payload. CRC32C detects accidental damage; it does not authenticate the producer.
 
+Protobuf decodes the payload but does not check either TFRecord checksum.
+
+The reader reuses a validated length only if the next 12 header bytes match exactly, including the stored checksum.
+
+It still checks that the frame fits and recomputes the checksum of each payload.
+
 - **Single event file:** `list`, `get` and `copy-all` fail on a corrupt frame or an incomplete tail. No single-file
   salvage option is available.
 
