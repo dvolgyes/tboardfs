@@ -1,7 +1,7 @@
 """Register virtual-tree commands for event files and log directories."""
 
-from pathlib import PurePosixPath
 import sys
+from pathlib import PurePosixPath
 from typing import cast
 
 import click

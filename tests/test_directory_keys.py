@@ -5,11 +5,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from test_open_handles import _append
 
 from tboardfs import TensorBoardFS, paths
 from tboardfs.file_times import FileTimes
-
-from test_open_handles import _append
 
 EVENTS = "events.out.tfevents.host"
 

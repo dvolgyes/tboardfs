@@ -1,12 +1,12 @@
 """Check the small real-writer portion of the scale corpus without generating 1 GiB."""
 
+import json
+import struct
 from base64 import b64decode
 from collections.abc import Iterator
 from hashlib import sha256
 from io import BytesIO
-import json
 from pathlib import Path
-import struct
 
 import numpy as np
 import pytest

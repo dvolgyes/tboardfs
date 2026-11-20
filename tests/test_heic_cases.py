@@ -1,9 +1,9 @@
 """Check HEVC and AV1 HEIF exports without importing image codecs."""
 
+from test_tf_producer_cases import CORPUS, _events
+
 from tboardfs import TensorBoardFS
 from tboardfs.classify import detect_extension
-
-from test_tf_producer_cases import CORPUS, _events
 
 
 def test_heic_and_avif_image_and_tensor_exports() -> None:

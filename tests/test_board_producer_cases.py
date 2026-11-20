@@ -1,14 +1,14 @@
 """Read real producer edge cases without importing either writer stack."""
 
-from base64 import b64decode
 import json
-from pathlib import Path
 import struct
-
-from tboardfs import TensorBoardFS
+from base64 import b64decode
+from pathlib import Path
 
 from test_incremental_parse import _files
 from test_proto3_reference import _fields, _values
+
+from tboardfs import TensorBoardFS
 
 CASES = Path(__file__).parent / "data" / "producer-cases"
 

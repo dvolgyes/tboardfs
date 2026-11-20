@@ -1,17 +1,17 @@
 """Read pinned Torch, Lightning, and TensorBoardX outputs without the writers."""
 
+import json
 from hashlib import sha256
 from io import BytesIO
-import json
 
 import numpy as np
-from plyfile import PlyData
 import pytest
+from plyfile import PlyData
+from test_tf_producer_cases import CORPUS
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
 from tboardfs.tfrecord import iter_tfrecords
-from test_tf_producer_cases import CORPUS
 
 
 @pytest.fixture(params=["torch-matrix", "lightning-matrix"])

@@ -9,12 +9,11 @@ from typing import Any
 import numpy as np
 import orjson
 import pytest
+from test_incremental_parse import _files, _frame
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
 from tboardfs.tables import _TableExport
-
-from test_incremental_parse import _files, _frame
 
 DT_FLOAT = 1
 CONTENT = b"\x08\x96\x01\xff\xfe"

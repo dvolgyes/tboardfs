@@ -6,8 +6,8 @@
 """Write controlled TensorProto encodings with TensorBoard's RecordWriter."""
 
 import argparse
-from pathlib import Path
 import struct
+from pathlib import Path
 
 from tensorboard.compat.proto import event_pb2
 from tensorboard.summary.writer.record_writer import RecordWriter

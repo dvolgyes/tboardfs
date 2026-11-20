@@ -45,35 +45,35 @@ def _literal_maps(name: str) -> list[dict[str | int, str | int]]:
 
 def test_beholder_arrays_config_and_section_statistics() -> None:
     (config,) = _literal_maps("config.pkl")
-    assert config == dict(
-        values="arrays",
-        mode="current",
-        scaling="layer",
-        colormap="grayscale",
-        FPS=10,
-        window_size=15,
-        is_recording=False,
-        show_all=False,
-    )
+    assert config == {
+        "values": "arrays",
+        "mode": "current",
+        "scaling": "layer",
+        "colormap": "grayscale",
+        "FPS": 10,
+        "window_size": 15,
+        "is_recording": False,
+        "show_all": False,
+    }
     assert _literal_maps("section-info.pkl") == [
-        dict(
-            name=0,
-            shape="(2, 3)",
-            min="-3.000e+00",
-            mean="3.333e-01",
-            max="3.000e+00",
-            range="6.000e+00",
-            height=128,
-        ),
-        dict(
-            name=1,
-            shape="(8,)",
-            min="0.000e+00",
-            mean="3.500e+00",
-            max="7.000e+00",
-            range="7.000e+00",
-            height=128,
-        ),
+        {
+            "name": 0,
+            "shape": "(2, 3)",
+            "min": "-3.000e+00",
+            "mean": "3.333e-01",
+            "max": "3.000e+00",
+            "range": "6.000e+00",
+            "height": 128,
+        },
+        {
+            "name": 1,
+            "shape": "(8,)",
+            "min": "0.000e+00",
+            "mean": "3.500e+00",
+            "max": "7.000e+00",
+            "range": "7.000e+00",
+            "height": 128,
+        },
     ]
 
 

@@ -1,9 +1,9 @@
 """Pack lazy binary entries and source-backed tensor descriptors for worker IPC."""
 
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import struct
+from dataclasses import dataclass
+from pathlib import Path
 from typing import BinaryIO, Self
 
 from tboardfs.crc32c import masked_crc32c
@@ -16,8 +16,8 @@ from tboardfs.index_segment import (
     _SOURCE_RACE_ERRNOS,
     Job,
     Segment,
-    _SegmentError,
     _check_snapshot,
+    _SegmentError,
 )
 from tboardfs.model import EventFileCache
 from tboardfs.model.binary_entry import BinaryEntry
@@ -25,7 +25,6 @@ from tboardfs.model.indexed_blob import IndexedBlob, _BlobRef, _Evidence, _Frame
 from tboardfs.tensor import _TensorDType
 from tboardfs.tensor_source import TensorSource
 from tboardfs.tfrecord import _FOOTER_SIZE, _HEADER_SIZE
-
 
 type _Labels = tuple[str, str, str, str]
 

@@ -1,16 +1,15 @@
 """A run folder with the name of an entry of the run above it gets its own name."""
 
-from collections.abc import Iterator
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
-from loguru import logger
 import pytest
+from loguru import logger
+from test_incremental_parse import _frame
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _frame
 
 
 def _write_run(run_dir: Path, step: int, **values: float) -> None:

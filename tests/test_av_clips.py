@@ -1,13 +1,12 @@
 """Export verified moving clips with both audio and video streams intact."""
 
-from hashlib import sha256
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
 
 from tboardfs import TensorBoardFS
-
 
 ROOT = Path(__file__).parent / "data" / "producer-cases" / "av-clips"
 

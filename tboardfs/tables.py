@@ -1,10 +1,10 @@
 import base64
+import math
 from collections import defaultdict
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from importlib import import_module
 from io import BytesIO
-import math
-from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import Any
 
 import numpy as np

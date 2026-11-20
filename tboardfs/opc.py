@@ -1,7 +1,7 @@
 """Recognize Office and OpenDocument packages from bounded XML metadata."""
 
-from dataclasses import dataclass, field
 import pyexpat
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from zipfile import ZIP_STORED, ZipFile
 

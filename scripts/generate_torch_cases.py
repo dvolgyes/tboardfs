@@ -12,12 +12,11 @@
 """Generate real PyTorch SummaryWriter scalar and tensor records."""
 
 import argparse
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
-
 
 SCALAR = 16_777_219.0
 

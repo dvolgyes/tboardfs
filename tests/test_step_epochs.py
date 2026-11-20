@@ -8,10 +8,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from test_incremental_parse import _frame
+
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _frame
 
 ROOT = Path(__file__).resolve().parent.parent
 

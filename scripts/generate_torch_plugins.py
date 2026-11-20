@@ -15,14 +15,14 @@
 """Generate native PyTorch summaries, projector assets, and a CPU Kineto trace."""
 
 import argparse
-from io import BytesIO
 import json
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
+import torch
 from PIL import Image
 from tensorboard.backend.event_processing.event_file_loader import LegacyEventFileLoader
-import torch
 from torch.profiler import (
     ProfilerActivity,
     profile,

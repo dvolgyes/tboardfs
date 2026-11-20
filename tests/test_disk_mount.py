@@ -3,17 +3,16 @@
 import os
 from pathlib import Path
 
-from click.testing import CliRunner
 import pytest
 import xxhash
+from click.testing import CliRunner
+from test_incremental_parse import _contents, _frame, _loss
+from test_payload_spans import _PNG as PNG
+from test_tf2_summaries import _images
 
 from tboardfs import TensorBoardFS, cli, filesystem, index_policy, parallel_index
 from tboardfs.index_catalog import CacheCatalog
 from tboardfs.indexer import _EventIndexer
-
-from test_incremental_parse import _contents, _frame, _loss
-from test_payload_spans import _PNG as PNG
-from test_tf2_summaries import _images
 
 
 @pytest.fixture

@@ -1,14 +1,13 @@
 """Export native media unchanged and distinguish ambiguous container signatures."""
 
-from hashlib import sha256
 import json
+from hashlib import sha256
 
 import pytest
+from test_tf_producer_cases import CORPUS, _events
 
 from tboardfs import TensorBoardFS
 from tboardfs.media_containers import media_extension
-from test_tf_producer_cases import CORPUS, _events
-
 
 _CASES = "media-containers"
 

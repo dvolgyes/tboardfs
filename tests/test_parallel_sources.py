@@ -1,18 +1,17 @@
 """Reject source replacements without following a path into the mount."""
 
-from errno import EACCES, EINVAL, ENOENT
 import json
 import os
+from errno import EACCES, EINVAL, ENOENT
 from pathlib import Path
 
 import pytest
+from test_incremental_parse import _frame
 
 from tboardfs import TensorBoardFS, parallel_index
 from tboardfs.event_source import EventSource
 from tboardfs.paths import _Paths
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _frame
 
 
 @pytest.mark.parametrize("mounted", [False, True])
@@ -240,9 +239,11 @@ def test_sibling_status_resolves_aliases_again_after_retargeting(
 
     alias.unlink()
     alias.symlink_to(mountpoint, target_is_directory=True)
-    with EventSource._sibling_stat(alias, mountpoint=mountpoint) as stat:
-        with pytest.raises(FileNotFoundError):
-            stat(alias / "source")
+    with (
+        EventSource._sibling_stat(alias, mountpoint=mountpoint) as stat,
+        pytest.raises(FileNotFoundError),
+    ):
+        stat(alias / "source")
 
 
 def test_sibling_status_falls_back_when_parent_cannot_be_opened(
@@ -292,9 +293,11 @@ def test_sibling_status_pins_parent_until_next_refresh(
         run.symlink_to(mountpoint, target_is_directory=True)
         assert stat(source).st_size == 3
 
-    with EventSource._sibling_stat(run, mountpoint=mountpoint) as stat:
-        with pytest.raises(FileNotFoundError):
-            stat(source)
+    with (
+        EventSource._sibling_stat(run, mountpoint=mountpoint) as stat,
+        pytest.raises(FileNotFoundError),
+    ):
+        stat(source)
 
     run.unlink()
     run.mkdir()

@@ -1,13 +1,6 @@
-from typing import cast
-
 from google.protobuf.message import Message
 
-from tboardfs.proto import (
-    compat_pb2,
-    custom_scalar_layout_pb2,
-    hparams_plugin_data_pb2,
-    mesh_plugin_data_pb2,
-)
+from tboardfs.proto import _messages
 
 
 class _ProtoParser:
@@ -16,27 +9,27 @@ class _ProtoParser:
     @staticmethod
     def event(data: bytes) -> Message:
         """Parse a TensorFlow Event message."""
-        message = cast(Message, getattr(compat_pb2, "Event")())
+        message: Message = _messages.EVENT()
         message.ParseFromString(data)
         return message
 
     @staticmethod
     def custom_scalar_layout(data: bytes) -> Message:
         """Parse a TensorBoard custom scalars Layout message."""
-        message = cast(Message, getattr(custom_scalar_layout_pb2, "Layout")())
+        message: Message = _messages.LAYOUT()
         message.ParseFromString(data)
         return message
 
     @staticmethod
     def mesh_plugin_data(data: bytes) -> Message:
         """Parse a TensorBoard mesh MeshPluginData message."""
-        message = cast(Message, getattr(mesh_plugin_data_pb2, "MeshPluginData")())
+        message: Message = _messages.MESH_PLUGIN_DATA()
         message.ParseFromString(data)
         return message
 
     @staticmethod
     def hparams_plugin_data(data: bytes) -> Message:
         """Parse a TensorBoard hparams HParamsPluginData message."""
-        message = cast(Message, getattr(hparams_plugin_data_pb2, "HParamsPluginData")())
+        message: Message = _messages.HPARAMS_PLUGIN_DATA()
         message.ParseFromString(data)
         return message

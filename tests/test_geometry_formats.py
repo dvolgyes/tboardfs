@@ -1,16 +1,15 @@
 """Read native TensorBoardX geometry, weighted PR and raw statistics offline."""
 
 import csv
-from io import BytesIO, StringIO
 import json
+from io import BytesIO, StringIO
 from pathlib import Path
 
 import numpy as np
-from plyfile import PlyData
 import pytest
+from plyfile import PlyData
 
 from tboardfs import TensorBoardFS
-
 
 RUN = Path(__file__).parent / "data" / "producer-cases" / "geometry"
 FIELDS = (

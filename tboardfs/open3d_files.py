@@ -119,9 +119,7 @@ class Open3DFiles:
         )
 
     @staticmethod
-    def _references(
-        refs: Iterable[Message], step: int | float
-    ) -> dict[str, int] | None:
+    def _references(refs: Iterable[Message], step: float) -> dict[str, int] | None:
         result: dict[str, int] = {}
         for reference in refs:
             ref = cast(Any, reference)

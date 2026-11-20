@@ -1,7 +1,7 @@
 """Bounded, data-only primitives for the persistent index body."""
 
-from io import BytesIO
 import struct
+from io import BytesIO
 from typing import Any, cast
 
 import numpy as np
@@ -13,6 +13,10 @@ _SIGNED = struct.Struct("<q")
 _FLOAT = struct.Struct("<d")
 _MAX_DEPTH = 32
 _MAX_VALUE_NODES = 4_000_000
+
+
+class _IndexValueError(ValueError):
+    """A cache value does not conform to the persistent index format."""
 
 
 class _IndexWriter:
@@ -126,7 +130,7 @@ class _IndexWriter:
             for item in value:
                 self.value(item, depth=depth + 1)
         else:
-            raise ValueError(f"unsupported index value: {type(value).__name__}")
+            raise _IndexValueError(f"unsupported index value: {type(value).__name__}")
 
 
 class _IndexReader:

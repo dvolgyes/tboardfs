@@ -1,11 +1,11 @@
 """Publish complete virtual files without following destination links."""
 
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager, suppress
 import os
-from pathlib import Path
 import secrets
 import stat
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
+from pathlib import Path
 
 
 class _OutputConflictError(FileExistsError):

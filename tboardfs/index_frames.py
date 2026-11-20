@@ -1,8 +1,8 @@
 """Frame and graph evidence in a whole-file persistent index."""
 
+import sys
 from array import array
 from bisect import bisect_left
-import sys
 
 from tboardfs.frame_index import FrameIndex
 from tboardfs.frame_ref import FrameRef

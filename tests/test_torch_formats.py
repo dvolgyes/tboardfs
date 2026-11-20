@@ -1,15 +1,15 @@
 """Verify high-level PyTorch writer records without importing PyTorch."""
 
-from io import BytesIO
 import json
+from io import BytesIO
 
 import numpy as np
 import pytest
+from test_incremental_parse import _files
+from test_tf_producer_cases import CORPUS, _events
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
-from test_incremental_parse import _files
-from test_tf_producer_cases import CORPUS, _events
 
 
 @pytest.fixture(scope="module")

@@ -1,20 +1,19 @@
 """A growing run publishes immutable trees equivalent to a fresh mount."""
 
-from errno import ENOENT
 import json
+from errno import ENOENT
 from pathlib import Path
 from typing import Any
 
 import pytest
-
-from tboardfs import TensorBoardFS
-from tboardfs.proto import compat_pb2
-from tboardfs.render_node import render_node
-
 from test_hparams import _start as _hparams_start
 from test_incremental_parse import _contents, _frame
 from test_open_handles import _append
 from test_restart_purge import _start, _version
+
+from tboardfs import TensorBoardFS
+from tboardfs.proto import compat_pb2
+from tboardfs.render_node import render_node
 
 EVENTS = "events.out.tfevents.host"
 

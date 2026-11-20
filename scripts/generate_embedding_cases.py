@@ -6,14 +6,13 @@
 """Generate four TensorBoardX projector layouts from labeled star portraits."""
 
 import argparse
-from hashlib import sha256
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 from tensorboardX import SummaryWriter
-
 
 STARS = (
     ("Étoile", "amber", 4, 5, (255, 192, 0)),

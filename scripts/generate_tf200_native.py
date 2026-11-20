@@ -14,11 +14,12 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 from tensorboard.plugins import projector
-from tensorboard.plugins.custom_scalar import layout_pb2, summary as custom_scalar
+from tensorboard.plugins.custom_scalar import layout_pb2
+from tensorboard.plugins.custom_scalar import summary as custom_scalar
 from tensorboard.plugins.hparams import api as hp
 from tensorboard.plugins.mesh import summary as mesh
-from tensorboard.plugins.profile import trace_events_pb2
 from tensorboard.plugins.pr_curve import summary as pr
+from tensorboard.plugins.profile import trace_events_pb2
 
 
 def _plugins(output: Path) -> None:

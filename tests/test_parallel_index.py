@@ -1,14 +1,18 @@
 """Cold range indexing matches serial frame, table, and mounted output."""
 
+import os
+import struct
 from collections.abc import Iterator
 from multiprocessing import active_children
-import os
 from pathlib import Path
-import struct
 from typing import Never
 
 import numpy as np
 import pytest
+from test_incremental_parse import _contents, _frame, _loss
+from test_payload_spans import _PNG as PNG
+from test_restart_purge import _start, _version
+from test_tf2_summaries import _images
 
 from tboardfs import TensorBoardFS
 from tboardfs import parallel_index as cold
@@ -17,11 +21,6 @@ from tboardfs.index_segment import Job, Metadata, Segment
 from tboardfs.index_transport import _PackedResult
 from tboardfs.indexer import _EventIndexer
 from tboardfs.model import EventFileCache
-
-from test_incremental_parse import _contents, _frame, _loss
-from test_payload_spans import _PNG as PNG
-from test_restart_purge import _start, _version
-from test_tf2_summaries import _images
 
 _STEP = 2**53 + 1
 _SOURCE = "events.out.tfevents.host"

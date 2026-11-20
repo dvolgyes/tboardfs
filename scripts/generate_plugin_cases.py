@@ -10,8 +10,11 @@ from pathlib import Path
 
 import tensorflow as tf
 from tensorboard.plugins import projector
-from tensorboard.plugins.custom_scalar import layout_pb2, summary as custom_scalar
-from tensorboard.plugins.hparams import api as hp, api_pb2, summary as hp_summary
+from tensorboard.plugins.custom_scalar import layout_pb2
+from tensorboard.plugins.custom_scalar import summary as custom_scalar
+from tensorboard.plugins.hparams import api as hp
+from tensorboard.plugins.hparams import api_pb2
+from tensorboard.plugins.hparams import summary as hp_summary
 
 
 def main() -> None:

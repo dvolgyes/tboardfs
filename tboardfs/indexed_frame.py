@@ -1,7 +1,7 @@
 """Validate lazy reads against an indexed source frame and generation."""
 
-from errno import EIO
 import os
+from errno import EIO
 from pathlib import Path
 from typing import BinaryIO
 

@@ -1,8 +1,8 @@
 """Select, read, and copy exports from an event file or a directory tree."""
 
+import os
 from collections.abc import Iterator
 from errno import ENOENT
-import os
 from functools import partial
 from pathlib import Path
 from typing import Any, cast

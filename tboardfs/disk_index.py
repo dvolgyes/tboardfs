@@ -1,15 +1,15 @@
 """Reuse complete file indexes only after validating the current source bytes."""
 
+import os
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from io import BufferedReader
-import os
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
-from loguru import logger
 import xxhash
+from loguru import logger
 
 from tboardfs.event_source import EventSource
 from tboardfs.file_status import FileIdentity
@@ -18,7 +18,6 @@ from tboardfs.index_catalog import CacheCatalog
 from tboardfs.index_codec import IndexCodec
 from tboardfs.index_policy import IndexPolicy
 from tboardfs.model import EventFileCache
-
 
 type _Fingerprint = tuple[int | None, ...]
 

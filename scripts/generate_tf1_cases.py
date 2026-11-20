@@ -9,12 +9,11 @@
 """Generate a compact event file containing legacy TF1 summary values."""
 
 import argparse
+import tempfile
 from itertools import pairwise
 from pathlib import Path
-import tempfile
 
 import tensorflow as tf
-
 from tensorflow.compat.v1 import Summary
 
 

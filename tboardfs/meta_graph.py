@@ -5,7 +5,7 @@ from typing import Any, cast
 from google.protobuf.message import DecodeError
 
 from tboardfs.model import GraphEntry
-from tboardfs.proto import compat_pb2
+from tboardfs.proto import _messages
 from tboardfs.skip_failure import _warn_skipped
 
 
@@ -18,7 +18,7 @@ def meta_graph_graph_def(entry: GraphEntry, blob: bytes) -> bytes | None:
     without a graph gives an empty GraphDef. A MetaGraphDef that TensorBoard
     cannot parse gives None and a warning.
     """
-    meta_graph = cast(Any, getattr(compat_pb2, "MetaGraphDef")())
+    meta_graph = cast(Any, _messages.META_GRAPH_DEF())
     try:
         meta_graph.ParseFromString(blob)
     except DecodeError as error:

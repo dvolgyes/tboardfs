@@ -1,20 +1,18 @@
 """Check real audio subtypes and byte-exact exports without writer dependencies."""
 
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import magic
 import numpy as np
 import pytest
+from test_tf_producer_cases import _events
 
 from tboardfs import TensorBoardFS
 from tboardfs.classify import detect_extension
 from tboardfs.proto import compat_pb2
-
-from test_tf_producer_cases import _events
-
 
 RUN = Path(__file__).parent / "data/producer-cases/audio-variants"
 CASES = (

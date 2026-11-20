@@ -12,7 +12,6 @@ from tboardfs.model.binary_entry import BinaryEntry
 from tboardfs.paths import _DirectoryNode
 from tboardfs.run_listing import RunListing
 
-
 _IMPLICIT_PRODUCERS = frozenset(("binary", "scalar"))
 
 

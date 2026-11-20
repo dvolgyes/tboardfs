@@ -6,9 +6,9 @@
 """Generate compact embedded-format cases with TensorBoard's real event writer."""
 
 import argparse
+import zipfile
 from io import BytesIO
 from pathlib import Path
-import zipfile
 
 import numpy as np
 from PIL import Image

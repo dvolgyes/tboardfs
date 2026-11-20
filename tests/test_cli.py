@@ -1,11 +1,11 @@
 import logging
 import os
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
-from click.testing import CliRunner
 import pytest
+from click.testing import CliRunner
 
 from tboardfs import cli
 from tboardfs.mounted import MountedTensorBoardFS

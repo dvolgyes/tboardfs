@@ -1,16 +1,15 @@
 """The mount adapter maps raw FUSE file info onto TensorBoardFS handles."""
 
-from errno import ENOENT, ENOTDIR
 import json
+from errno import ENOENT, ENOTDIR
 from pathlib import Path
 from stat import S_IFDIR, S_IFREG
 from types import SimpleNamespace
 
 import pytest
+from test_open_handles import LOSS, _append
 
 from tboardfs.mounted import MountedTensorBoardFS
-
-from test_open_handles import LOSS, _append
 
 
 def _mounted(tmp_path: Path) -> tuple[MountedTensorBoardFS, Path]:

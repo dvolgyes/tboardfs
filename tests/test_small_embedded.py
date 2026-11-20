@@ -6,10 +6,10 @@ from pathlib import Path
 import magic
 import numpy as np
 import pytest
+from test_incremental_parse import _files, _frame
 
 from tboardfs import TensorBoardFS, parse_file
 from tboardfs.proto import compat_pb2
-from test_incremental_parse import _files, _frame
 
 
 def _npy(count: int) -> bytes:

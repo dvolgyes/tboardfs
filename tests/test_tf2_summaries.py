@@ -4,15 +4,14 @@ import base64
 import json
 from pathlib import Path
 
-from loguru import logger
 import numpy as np
 import pytest
+from loguru import logger
+from test_incremental_parse import _files, _frame
+from test_tf_producer_cases import _events
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _files, _frame
-from test_tf_producer_cases import _events
 
 ROOT = Path(__file__).resolve().parent.parent
 

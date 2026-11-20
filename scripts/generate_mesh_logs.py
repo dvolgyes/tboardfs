@@ -13,12 +13,12 @@ TensorBoard's mesh summary writes each mesh: with and without faces, with
 and without vertex colors, and a batch of two colored meshes.
 """
 
-from pathlib import Path
 import shutil
+from pathlib import Path
 
-from tensorboard.plugins.mesh import summary_v2 as mesh_summary
 import numpy as np
 import tensorflow as tf
+from tensorboard.plugins.mesh import summary_v2 as mesh_summary
 
 ROOT = Path("test-logs") / "meshes"
 TETRAHEDRON = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)

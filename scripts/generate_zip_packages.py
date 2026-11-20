@@ -6,13 +6,13 @@
 """Produce small field-survey documents and arrays, including real ZIP64 directories."""
 
 import argparse
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
-import zipfile
 
-from docx import Document as WordDocument
 import numpy as np
+from docx import Document as WordDocument
 from odfdo import Document, Frame, Paragraph
 
 _READING = "Upstream water temperature: 12.5 C."

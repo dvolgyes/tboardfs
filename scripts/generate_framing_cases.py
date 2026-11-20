@@ -6,11 +6,10 @@
 """Generate deterministic valid and damaged TFRecord framing cases."""
 
 import argparse
-from pathlib import Path
 import struct
+from pathlib import Path
 
 import google_crc32c
-
 
 _MASK_DELTA = 0xA282EAD8
 _MAX_RECORD_SIZE = 1 << 30

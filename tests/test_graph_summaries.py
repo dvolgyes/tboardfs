@@ -9,18 +9,17 @@ import errno
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 from google.protobuf import unknown_fields
 from google.protobuf.message import Message
 from loguru import logger
-import pytest
+from test_incremental_parse import _files, _frame
+from test_restart_purge import _start, _version
 
 from tboardfs import TensorBoardFS
 from tboardfs.file_cli import main
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _files, _frame
-from test_restart_purge import _start, _version
 
 ROOT = Path(__file__).resolve().parent.parent
 

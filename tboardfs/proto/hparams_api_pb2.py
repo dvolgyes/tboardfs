@@ -5,7 +5,6 @@ from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import struct_pb2 as _struct_pb2
 from google.protobuf.internal import builder as _builder
 
-
 _STRUCT_DESCRIPTOR = _struct_pb2.DESCRIPTOR
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(

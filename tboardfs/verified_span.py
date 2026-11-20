@@ -1,7 +1,7 @@
 """Read an indexed byte span through its original source descriptor."""
 
-from errno import EIO
 import os
+from errno import EIO
 from threading import Lock
 from typing import BinaryIO
 

@@ -4,15 +4,14 @@ import json
 from pathlib import Path
 
 import pytest
+from test_incremental_parse import _files, _frame
+from test_proto3_reference import _fields, _values
 
 from tboardfs import TensorBoardFS
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.proto import compat_pb2
-from tboardfs.tfrecord import iter_tfrecords
 from tboardfs.render_node import render_node
-
-from test_incremental_parse import _files, _frame
-from test_proto3_reference import _fields, _values
+from tboardfs.tfrecord import iter_tfrecords
 
 RUN = Path(__file__).parent / "data" / "producer-cases" / "open3d"
 ASSETS = "/plugins/Open3D/~assets"

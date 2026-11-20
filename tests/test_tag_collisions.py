@@ -3,8 +3,9 @@
 import json
 from pathlib import Path
 
-from loguru import logger
 import pytest
+from loguru import logger
+from test_incremental_parse import _files, _frame
 
 from tboardfs import TensorBoardFS
 from tboardfs.file_tree import SingleEventTree
@@ -14,8 +15,6 @@ from tboardfs.proto import compat_pb2
 from tboardfs.render_node import render_node
 from tboardfs.run_files import RunFiles
 from tboardfs.run_tree import RunTree
-
-from test_incremental_parse import _files, _frame
 
 DT_FLOAT = 1
 

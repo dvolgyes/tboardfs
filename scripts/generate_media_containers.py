@@ -10,13 +10,13 @@
 """Encode and reopen compact images, audio, and moving media streams."""
 
 import argparse
-from hashlib import sha256
-from importlib.resources import files
 import json
-from math import pi, sin
-from pathlib import Path
 import struct
 import tempfile
+from hashlib import sha256
+from importlib.resources import files
+from math import pi, sin
+from pathlib import Path
 from xml.dom import minidom
 from xml.etree import ElementTree
 
@@ -25,7 +25,6 @@ from ffmpeg import FFmpeg
 from PIL import Image
 from tensorboard.compat.proto import event_pb2, summary_pb2, types_pb2
 from tensorboard.summary.writer.event_file_writer import EventFileWriter
-
 
 _WIDTH = 48
 _HEIGHT = 32

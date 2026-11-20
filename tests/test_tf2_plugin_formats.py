@@ -9,7 +9,6 @@ import pytest
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
 
-
 CORPUS = Path(__file__).parent / "data" / "producer-cases" / "tf2-plugin-formats"
 
 

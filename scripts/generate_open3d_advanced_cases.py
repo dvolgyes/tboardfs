@@ -17,6 +17,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import numpy as np
+import tensorflow as tf
 from open3d.ml.vis import BoundingBox3D
 from open3d.t.geometry import LineSet, PointCloud, TriangleMesh
 from open3d.visualization.tensorboard_plugin import plugin_data_pb2, summary
@@ -24,7 +25,6 @@ from open3d.visualization.tensorboard_plugin.util import Open3DPluginDataReader
 from tensorboard.backend.event_processing.event_file_loader import LegacyEventFileLoader
 from tensorboard.compat.tensorflow_stub.pywrap_tensorflow import masked_crc32c
 from tensorboard.summary.writer.record_writer import RecordWriter
-import tensorflow as tf
 
 PLUGIN_DIR = Path("plugins", "Open3D")
 EVENT_NAME = "events.out.tfevents.open3d-advanced"

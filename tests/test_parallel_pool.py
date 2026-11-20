@@ -6,14 +6,13 @@ from errno import EAGAIN
 from pathlib import Path
 
 import pytest
+from test_incremental_parse import _loss
+from test_parallel_index import _frames
 
 from tboardfs import TensorBoardFS
 from tboardfs import parallel_index as cold
 from tboardfs.index_segment import Job
 from tboardfs.index_transport import _PackedResult
-
-from test_incremental_parse import _loss
-from test_parallel_index import _frames
 
 
 def test_mount_reads_late_entry_when_pool_submission_fails(

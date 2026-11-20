@@ -5,7 +5,6 @@ from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import wrappers_pb2 as _wrappers_pb2  # noqa: F401
 from google.protobuf.internal import builder as _builder
 
-
 _FILE_0 = _descriptor_pool.Default().AddSerializedFile(
     b'\n:tboardfs/vendored/tensorboard/allocation_description.proto\x12\x1dtboardfs.vendored.tensorboard"\xa3\x01\n\x15AllocationDescription\x12\x17\n\x0frequested_bytes\x18\x01 \x01(\x03\x12\x17\n\x0fallocated_bytes\x18\x02 \x01(\x03\x12\x16\n\x0eallocator_name\x18\x03 \x01(\t\x12\x15\n\rallocation_id\x18\x04 \x01(\x03\x12\x1c\n\x14has_single_reference\x18\x05 \x01(\x08\x12\x0b\n\x03ptr\x18\x06 \x01(\x04B\x9b\x01\n\x18org.tensorflow.frameworkB\x1bAllocationDescriptionProtosP\x01Z]github.com/tensorflow/tensorflow/tensorflow/go/core/framework/allocation_description_go_proto\xf8\x01\x01b\x06proto3'
 )

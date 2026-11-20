@@ -6,11 +6,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from test_incremental_parse import _frame
 
 from tboardfs import TensorBoardFS, parse_file
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _frame
 
 
 def _mount(tmp_path: Path, tensor: compat_pb2.TensorProto) -> TensorBoardFS:
@@ -40,8 +39,8 @@ def test_one_value_numeric_tensor_keeps_its_scalar_precision(
     tmp_path: Path,
     dtype: int,
     field: str,
-    item: float | int,
-    value: float | int,
+    item: float,
+    value: float,
     np_dtype: str,
 ) -> None:
     tensor = compat_pb2.TensorProto(dtype=dtype)

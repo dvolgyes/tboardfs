@@ -1,11 +1,9 @@
 """Render the profile text that TensorBoard shows for a RunMetadata."""
 
-from typing import Any, cast
-
 from google.protobuf.message import DecodeError
 
 from tboardfs.model import BinaryEntry
-from tboardfs.proto import compat_pb2
+from tboardfs.proto import _messages
 from tboardfs.skip_failure import _warn_skipped
 
 
@@ -17,7 +15,7 @@ def run_metadata_text(entry: BinaryEntry, blob: bytes) -> bytes | None:
     summary. A RunMetadata that TensorBoard cannot parse gives None and a
     warning.
     """
-    run_metadata = cast(Any, getattr(compat_pb2, "RunMetadata")())
+    run_metadata = _messages.RUN_METADATA()
     try:
         run_metadata.ParseFromString(blob)
     except DecodeError as error:

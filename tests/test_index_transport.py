@@ -5,6 +5,8 @@ from pathlib import Path
 from random import Random
 
 import pytest
+from test_incremental_parse import _frame
+from test_payload_spans import _record
 
 from tboardfs import index_transport
 from tboardfs.crc32c import masked_crc32c
@@ -12,9 +14,6 @@ from tboardfs.file_status import FileIdentity
 from tboardfs.index_segment import Job, Segment, _SegmentError
 from tboardfs.index_transport import packed_work
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _frame
-from test_payload_spans import _record
 
 
 def _job(path: Path) -> Job:

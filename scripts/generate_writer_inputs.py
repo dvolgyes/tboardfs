@@ -12,16 +12,16 @@ via add_image and is already exercised by generate_test_logs.py.
 """
 
 import argparse
+import sys
 from contextlib import redirect_stdout
 from io import BytesIO
 from pathlib import Path
-import sys
 from tempfile import TemporaryDirectory
 
 import numpy as np
 import onnx
-from onnx import TensorProto, helper
 import openvino as ov
+from onnx import TensorProto, helper
 from PIL import Image
 from tensorboardX import SummaryWriter
 from tensorboardX.proto.event_pb2 import Event

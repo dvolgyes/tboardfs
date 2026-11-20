@@ -1,8 +1,8 @@
 """Write preserved producer records into the mixed scale event log."""
 
+import struct
 from collections.abc import Iterator
 from pathlib import Path
-import struct
 
 from google.protobuf.message import Message
 
@@ -69,7 +69,7 @@ def captured_frames() -> Iterator[tuple[int, bytes]]:
             if ordinals is not None and index not in ordinals:
                 continue
             if source == "tb115" and index == 1:
-                del getattr(event, "summary").value[0]
+                del event.summary.value[0]
                 payload = event.SerializeToString()
                 length = struct.pack("<Q", len(payload))
                 frame = (
@@ -80,5 +80,5 @@ def captured_frames() -> Iterator[tuple[int, bytes]]:
                 )
             else:
                 frame = b"".join((record.header, record.payload, record.footer))
-            frames.append((getattr(event, "step"), frame))
+            frames.append((event.step, frame))
     yield from sorted(frames, key=lambda item: item[0])

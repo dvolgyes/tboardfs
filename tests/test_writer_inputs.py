@@ -1,9 +1,9 @@
 """TensorBoardX input conveniences become ordinary image, scalar and graph events."""
 
-from hashlib import sha256
 import json
-from pathlib import Path
 import struct
+from hashlib import sha256
+from pathlib import Path
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2

@@ -1,16 +1,15 @@
 """Read the compact TensorFlow writer corpus without importing TensorFlow."""
 
-from io import BytesIO
 import json
-from pathlib import Path
 import wave
+from io import BytesIO
+from pathlib import Path
 
 import numpy as np
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
 from tboardfs.tfrecord import iter_tfrecords
-
 
 CORPUS = Path(__file__).parent / "data" / "producer-cases"
 

@@ -13,17 +13,18 @@
 #   "torch>=2.12.0,<3.0",
 # ]
 # ///
-from io import BytesIO
 import json
-from pathlib import Path
 import shutil
+from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 
 import imageio.v2 as imageio
 import matplotlib.pyplot as plt
 import numpy as np
-from PIL import Image
 import soundfile as sf
+import torch
+from PIL import Image
 from tensorboard.compat.proto import (
     event_pb2,
     graph_pb2,
@@ -41,8 +42,6 @@ from tensorboard.plugins.mesh import metadata as mesh_metadata
 from tensorboard.plugins.mesh import plugin_data_pb2 as mesh_plugin_data_pb2
 from tensorboard.summary.writer.event_file_writer import EventFileWriter
 from tensorboardX import SummaryWriter
-import torch
-
 
 ROOT = Path("test-logs")
 WALL_TIME = 1_700_000_000.0

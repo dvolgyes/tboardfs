@@ -9,8 +9,8 @@ import argparse
 from pathlib import Path
 
 import numpy as np
-from tensorboard.plugins.mesh import summary_v2
 import tensorflow as tf
+from tensorboard.plugins.mesh import summary_v2
 
 
 def _terrain() -> None:

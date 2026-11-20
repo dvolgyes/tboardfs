@@ -16,16 +16,16 @@ exception when TensorBoard cannot build one. TensorBoard 2.21 fails on the flat
 the goldens read such a list as that one input, as tboardfs does.
 """
 
-from collections.abc import Callable, Iterator
 import json
-from pathlib import Path
 import shutil
+from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 
+import tensorflow as tf
 from tensorboard.backend.event_processing import event_file_loader
 from tensorboard.compat.proto import config_pb2, summary_pb2
 from tensorboard.plugins.graph import graph_util, keras_util
-import tensorflow as tf
 
 ROOT = Path("test-logs") / "graphs"
 GOLDEN = Path("tests") / "golden" / "graphs"

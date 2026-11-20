@@ -3,8 +3,10 @@
 from pathlib import Path
 from typing import Never
 
-from loguru import logger
 import pytest
+from loguru import logger
+from test_incremental_parse import _frame, _loss
+from test_tf2_summaries import _images
 
 from tboardfs import TensorBoardFS, filesystem
 from tboardfs import parallel_index as cold
@@ -12,9 +14,6 @@ from tboardfs.file_status import FileIdentity
 from tboardfs.index_segment import Metadata, Segment, _SegmentError
 from tboardfs.indexer import _EventIndexer
 from tboardfs.model import EventFileCache
-
-from test_incremental_parse import _frame, _loss
-from test_tf2_summaries import _images
 
 
 def test_summary_failure_replays_without_losing_sibling_scalar(

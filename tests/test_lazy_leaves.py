@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from test_incremental_parse import _frame
 
 from scripts.scale_corpus import _ScaleCorpus
 from tboardfs import TensorBoardFS
@@ -12,8 +13,6 @@ from tboardfs.leaf_spec import LeafSpec, LeafValue
 from tboardfs.model.binary_entry import BinaryEntry
 from tboardfs.proto import compat_pb2
 from tboardfs.render_node import render_node
-
-from test_incremental_parse import _frame
 
 
 def _image(tag: str, step: int, pixel: int, timestamp: float) -> bytes:

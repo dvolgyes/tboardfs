@@ -1,11 +1,11 @@
 """Discover sidecars at one visited directory without searching other runs."""
 
+import os
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
-import os
 from pathlib import Path
-import stat
 
 from tboardfs.constants import TENSORBOARD_EVENT_GLOB
 from tboardfs.model import SidecarEntry

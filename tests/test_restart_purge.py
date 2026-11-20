@@ -3,12 +3,13 @@
 Expected values follow TensorBoard's classic EventAccumulator.
 """
 
-from io import BytesIO
 import json
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
 import pytest
+from test_incremental_parse import PNG, _contents, _frame
 
 from tboardfs import TensorBoardFS
 from tboardfs.indexer import _EventIndexer
@@ -16,8 +17,6 @@ from tboardfs.model import EventFileCache, RunCache
 from tboardfs.proto import compat_pb2
 from tboardfs.restarts import _RestartPurge
 from tboardfs.run_tree import RunTree
-
-from test_incremental_parse import PNG, _contents, _frame
 
 VERSION_2 = "brain.Event:2"
 # Wire bytes as TensorFlow writes them, so a wrong field number in the vendored

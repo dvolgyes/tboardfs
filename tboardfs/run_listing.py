@@ -5,7 +5,6 @@ from typing import Any, ClassVar
 
 from tboardfs.leaf_spec import LeafSpec, LeafValue
 
-
 type _LogicalFile = tuple[tuple[str, ...], str | None, str, bool, str, str]
 
 

@@ -1,9 +1,8 @@
 """Identify media containers not reliably distinguished by MIME."""
 
-from math import isfinite
 import re
+from math import isfinite
 from struct import unpack_from
-
 
 _HDR_RESOLUTION = re.compile(rb"[+-]([XY]) [1-9][0-9]* [+-]([XY]) [1-9][0-9]*")
 _MPEG_PACK = b"\x00\x00\x01\xba"

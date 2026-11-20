@@ -3,10 +3,10 @@
 import json
 from pathlib import Path
 
+from test_incremental_parse import _frame
+
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _frame
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
 LONG = "a" * 300

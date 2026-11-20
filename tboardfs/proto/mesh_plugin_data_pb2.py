@@ -4,7 +4,6 @@
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf.internal import builder as _builder
 
-
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
     b'\n<tboardfs/vendored/tensorboard/plugins/mesh/plugin_data.proto\x12"tboardfs.vendored.tensorboard.mesh"\xfc\x01\n\x0eMeshPluginData\x12\x0f\n\x07version\x18\x01 \x01(\x05\x12\x0c\n\x04name\x18\x02 \x01(\t\x12T\n\x0ccontent_type\x18\x03 \x01(\x0e2>.tboardfs.vendored.tensorboard.mesh.MeshPluginData.ContentType\x12\x13\n\x0bjson_config\x18\x05 \x01(\t\x12\r\n\x05shape\x18\x06 \x03(\x05\x12\x12\n\ncomponents\x18\x07 \x01(\r"=\n\x0bContentType\x12\r\n\tUNDEFINED\x10\x00\x12\n\n\x06VERTEX\x10\x01\x12\x08\n\x04FACE\x10\x02\x12\t\n\x05COLOR\x10\x03b\x06proto3'
 )

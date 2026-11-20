@@ -1,9 +1,9 @@
 """Check filenames and exact bytes from native image and MPEG audio encoders."""
 
 import pytest
+from test_tf_producer_cases import CORPUS, _events
 
 from tboardfs import TensorBoardFS
-from test_tf_producer_cases import CORPUS, _events
 
 
 def _payloads(tag: str) -> tuple[str, bytes, bytes]:

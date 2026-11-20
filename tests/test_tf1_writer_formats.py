@@ -1,18 +1,17 @@
 """Read TF1 graph-mode writer outputs without TensorFlow or TensorBoard."""
 
-from hashlib import sha256
-from io import BytesIO
 import json
-from pathlib import Path
 import struct
 import wave
+from hashlib import sha256
+from io import BytesIO
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
-
 
 ROOT = Path(__file__).parent / "data" / "producer-cases" / "tf1-writer"
 

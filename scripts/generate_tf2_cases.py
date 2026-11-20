@@ -6,9 +6,9 @@
 """Generate a compact TF2 event file with batched media and exact integer steps."""
 
 import argparse
+import tempfile
 from math import tau
 from pathlib import Path
-import tempfile
 
 import tensorflow as tf
 

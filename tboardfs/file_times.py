@@ -8,7 +8,6 @@ from tboardfs.leaf_spec import LeafSpec, LeafValue
 from tboardfs.model.binary_entry import BinaryEntry
 from tboardfs.run_listing import RunListing
 
-
 type _Directory = dict[str, Any]
 type _Stamp = tuple[_Directory, _Directory | None, float | None, list[_Directory]]
 

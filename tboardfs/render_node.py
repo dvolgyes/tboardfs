@@ -1,8 +1,8 @@
 """Render the bytes of one virtual file node."""
 
+import json
 from collections.abc import Callable, Mapping
 from errno import EIO, EOPNOTSUPP
-import json
 from types import MappingProxyType
 from typing import Any, Final
 

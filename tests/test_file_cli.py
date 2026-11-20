@@ -1,21 +1,20 @@
-from errno import ENOENT
-from io import BytesIO
 import subprocess
 import sys
+import wave
+from errno import ENOENT
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
-import wave
 
-from click.testing import CliRunner
 import magic
 import pytest
+from click.testing import CliRunner
+from test_parse_file import _record
 
 from tboardfs import TensorBoardFS, find_tensorboard_files
 from tboardfs.file_cli import main
 from tboardfs.file_tree import SingleEventTree
 from tboardfs.proto import compat_pb2
-
-from test_parse_file import _record
 
 ROOT = Path(__file__).resolve().parent.parent
 

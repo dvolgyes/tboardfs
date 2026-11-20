@@ -1,12 +1,12 @@
+import os
+import stat
+import time
 from dataclasses import dataclass, field
 from errno import EIO, EISDIR, ENOENT, ENOTDIR, EROFS
 from io import FileIO
-import os
 from pathlib import Path
-import stat
 from threading import RLock
-import time
-from typing import Any, Unpack
+from typing import Any, TypedDict, Unpack
 
 from loguru import logger
 
@@ -25,14 +25,14 @@ from tboardfs.model import (
     RunCache,
     SidecarEntry,
 )
-from tboardfs.mount_index import _IndexOptions, _MountIndexKeywords, _RunData
+from tboardfs.mount_index import _IndexOptions, _RunData
 from tboardfs.open3d_asset import OPEN3D_PLUGIN, Open3DAsset
 from tboardfs.paths import _DirectoryNode, _Paths
+from tboardfs.render_cache import RenderCache, RenderKey
+from tboardfs.render_node import render_node
 from tboardfs.run_places import RunPlaces
 from tboardfs.run_tree import RunTree
 from tboardfs.sidecar_scan import SidecarScan
-from tboardfs.render_cache import RenderCache, RenderKey
-from tboardfs.render_node import render_node
 from tboardfs.verified_span import _FrameValidations, _VerifiedSpan
 
 _PARALLEL_MIN_BYTES = 8 << 20
@@ -86,6 +86,14 @@ class _FsState:
         default_factory=dict
     )
     next_handle: int = 1
+
+
+class _MountIndexKeywords(TypedDict, total=False):
+    """Optional indexing settings for the mount constructor."""
+
+    index_workers: int
+    disk_index: bool
+    disk_index_size_mb: int
 
 
 class TensorBoardFS:

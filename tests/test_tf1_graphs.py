@@ -7,18 +7,17 @@ of a graph_run_metadata summary, and the profile text that the graph plugin
 shows for a RunMetadata.
 """
 
+import errno
 from collections.abc import Iterator
 from contextlib import contextmanager
-import errno
 from pathlib import Path
 
-from loguru import logger
 import pytest
+from loguru import logger
+from test_incremental_parse import _files, _frame
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _files, _frame
 
 ROOT = Path(__file__).resolve().parent.parent
 

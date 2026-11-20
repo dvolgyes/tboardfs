@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from test_incremental_parse import _loss
 
 from tboardfs.disk_index import DiskIndex

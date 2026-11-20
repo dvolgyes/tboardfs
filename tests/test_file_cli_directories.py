@@ -3,13 +3,12 @@
 from pathlib import Path
 
 from click.testing import CliRunner
-
-from tboardfs import TensorBoardFS
-from tboardfs.file_cli import main
-
 from test_file_cli import FIXTURE_EVENT
 from test_incremental_parse import _files
 from test_open_handles import _append
+
+from tboardfs import TensorBoardFS
+from tboardfs.file_cli import main
 
 EVENTS = "events.out.tfevents.host"
 

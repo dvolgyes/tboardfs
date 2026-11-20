@@ -1,10 +1,10 @@
 """Exercise cache-v2 binary rows and their binding to the source index."""
 
-from dataclasses import replace
 import math
 import os
-from pathlib import Path
 import struct
+from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest

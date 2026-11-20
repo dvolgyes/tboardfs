@@ -5,6 +5,10 @@ from pathlib import Path
 from typing import BinaryIO, Never
 
 import pytest
+from test_incremental_parse import _frame, _loss
+from test_index_transport import _job, _tensor_frame
+from test_payload_spans import _record
+from test_tf2_summaries import _images
 
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.index_segment import Segment
@@ -12,12 +16,6 @@ from tboardfs.index_transport import packed_work
 from tboardfs.indexer import _EventIndexer, _ParseState
 from tboardfs.model import EventFileCache, Record
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _frame, _loss
-from test_index_transport import _job, _tensor_frame
-from test_payload_spans import _record
-from test_tf2_summaries import _images
-
 
 _SECOND_FRAME = _loss(2, 3.0)
 _BAD_FOOTER = _SECOND_FRAME[:-1] + bytes([_SECOND_FRAME[-1] ^ 1])

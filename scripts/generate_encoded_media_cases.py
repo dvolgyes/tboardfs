@@ -13,25 +13,24 @@ The extended matrix reuses original fixture payloads without storing extra media
 """
 
 import argparse
+import json
+import math
+import os
+import shutil
+import struct
+import subprocess
+import tempfile
+import wave
 from fnmatch import fnmatchcase
 from hashlib import sha256
 from importlib import import_module
 from importlib.metadata import version
 from io import BytesIO
 from itertools import pairwise
-import json
-import math
-import os
 from pathlib import Path
-import shutil
-import struct
-import subprocess
-import tempfile
 from time import time
-import wave
 
 from google.protobuf.message import Message
-
 
 CORPUS = Path(__file__).resolve().parents[1] / "tests/data/producer-cases"
 ANIMATIONS = ("animated-gif", "animated-apng", "animated-webp")

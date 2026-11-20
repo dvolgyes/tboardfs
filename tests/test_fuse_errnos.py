@@ -1,16 +1,15 @@
 """Each failure gives the errno that a file system user expects."""
 
-from collections.abc import Callable
 import errno
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from test_incremental_parse import _frame
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _frame
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
 

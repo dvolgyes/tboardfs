@@ -1,20 +1,19 @@
 """Rendered file bytes are cached by run data version within a byte budget."""
 
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
-import threading
 from typing import Any
 
 import numpy as np
 import pytest
-
-from tboardfs import TensorBoardFS
-from tboardfs.render_cache import ENTRY_OVERHEAD_BYTES, RenderCache
-import tboardfs.filesystem
-
 from test_concurrency import _run_threads
 from test_open_handles import _append
+
+import tboardfs.filesystem
+from tboardfs import TensorBoardFS
+from tboardfs.render_cache import ENTRY_OVERHEAD_BYTES, RenderCache
 
 EVENTS = "events.out.tfevents.host"
 

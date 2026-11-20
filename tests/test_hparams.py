@@ -4,10 +4,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from test_incremental_parse import _frame
+
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2, hparams_plugin_data_pb2
-
-from test_incremental_parse import _frame
 
 EXPERIMENT = "_hparams_/experiment"
 SESSION_START = "_hparams_/session_start_info"

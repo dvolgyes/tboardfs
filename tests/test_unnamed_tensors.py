@@ -4,11 +4,10 @@ import io
 from pathlib import Path
 
 import numpy as np
+from test_incremental_parse import _files, _frame
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _files, _frame
 
 DT_FLOAT = 1
 

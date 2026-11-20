@@ -4,7 +4,7 @@ from typing import Any, BinaryIO
 
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.index_frames import FrameSection
-from tboardfs.index_wire import _IndexReader, _IndexWriter
+from tboardfs.index_wire import _IndexReader, _IndexValueError, _IndexWriter
 from tboardfs.model.event_file_cache import EventFileCache
 from tboardfs.model.json_entry import JsonEntry
 
@@ -30,7 +30,7 @@ class PluginSection:
             return payload
         tensor = payload.get("tensor")
         if not isinstance(tensor, dict):
-            raise ValueError("indexed tensor extent has no tensor")
+            raise _IndexValueError("indexed tensor extent has no tensor")
         content = tensor.get("tensor_content")
         if not isinstance(content, bytes) or len(content) != extent[1]:
             raise ValueError("indexed tensor content disagrees with extent")
@@ -79,7 +79,7 @@ class PluginSection:
             raise ValueError("invalid index plugin row")
         tag, tab, step, time, payload, extent = row
         if not isinstance(tag, str) or not isinstance(tab, str):
-            raise ValueError("invalid index plugin labels")
+            raise _IndexValueError("invalid index plugin labels")
         if type(step) not in (int, float) or type(time) is not float:
             raise ValueError("invalid index plugin times")
         if not isinstance(payload, dict) or any(
@@ -128,7 +128,7 @@ class PluginSection:
     def _validate_values(key: object, values: object) -> None:
         """Check the repeated numeric fields without materializing an array."""
         if not isinstance(key, int) or not isinstance(values, list):
-            raise ValueError("invalid index tensor repeated field")
+            raise _IndexValueError("invalid index tensor repeated field")
         if any(type(value) not in (int, float, bool) for value in values):
             raise ValueError("invalid index tensor repeated value")
 

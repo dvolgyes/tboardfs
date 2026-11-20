@@ -1,8 +1,9 @@
 """Read the PyTorch add_graph fixture without importing PyTorch or TensorBoard."""
 
+from test_tf_producer_cases import CORPUS
+
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
-from test_tf_producer_cases import CORPUS
 
 
 def test_native_pytorch_trace_preserves_classifier_dataflow() -> None:

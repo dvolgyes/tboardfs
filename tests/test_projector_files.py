@@ -3,12 +3,11 @@
 from pathlib import Path
 
 import pytest
+from test_incremental_parse import _files
+from test_open_handles import _append
 
 from tboardfs import TensorBoardFS
 from tboardfs.projector import CONFIG_NAME, _ProjectorConfig
-
-from test_incremental_parse import _files
-from test_open_handles import _append
 
 EVENTS = "events.out.tfevents.host"
 

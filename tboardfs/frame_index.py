@@ -1,8 +1,8 @@
 """Compact boundaries and checksums of complete source frames."""
 
 from array import array
-from dataclasses import dataclass, field
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 
 
 @dataclass(slots=True)

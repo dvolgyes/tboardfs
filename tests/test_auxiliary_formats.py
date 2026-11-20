@@ -3,9 +3,9 @@
 import json
 from pathlib import Path
 
-from tboardfs import TensorBoardFS
-
 from test_incremental_parse import _files
+
+from tboardfs import TensorBoardFS
 
 RUN = Path(__file__).parent / "data/producer-cases/auxiliary"
 

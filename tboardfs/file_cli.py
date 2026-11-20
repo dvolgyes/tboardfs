@@ -1,7 +1,7 @@
 """Configure command diagnostics separately from exported stdout data."""
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import click
 from loguru import logger

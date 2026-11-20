@@ -1,7 +1,7 @@
 """Check scientific file inference without loading third-party producers."""
 
-from pathlib import Path
 import struct
+from pathlib import Path
 from zlib import compress, crc32
 
 import pytest

@@ -29,7 +29,6 @@ from tboardfs.model import BinaryEntry, EventFileCache
 from tboardfs.model.graph_summary_entry import GraphSummaryEntry
 from tboardfs.range_proof import BLOCK_SIZE
 
-
 _BINARY_KINDS = frozenset({"images", "audio", "videos", "tensors", "graphs"})
 
 
@@ -119,7 +118,7 @@ class BinarySection:
         return BinaryRows(data, row_count, labels, labels_end, cache).entries()
 
     @staticmethod
-    def _step_layout(step: int | float) -> tuple[int, struct.Struct, int | float]:
+    def _step_layout(step: float) -> tuple[int, struct.Struct, int | float]:
         if type(step) is int or isinstance(step, np.integer):
             number = index(step)
             if number >= 2**63:

@@ -22,19 +22,19 @@ run metadata to a summary, and <tag>.<step>.pb is the op graph that it draws
 for a graph_run_metadata summary.
 """
 
-from pathlib import Path
 import shutil
 import time
+from pathlib import Path
 
+import tensorflow as tf
+from tensorboard import dataclass_compat
 from tensorboard.backend.event_processing import (
     event_accumulator,
     event_file_loader,
 )
-from tensorboard import dataclass_compat
 from tensorboard.compat.proto import config_pb2
 from tensorboard.plugins.graph import graph_util
 from tensorboard.plugins.graph import metadata as graph_metadata
-import tensorflow as tf
 from tensorflow.python.ops import summary_ops_v2
 
 ROOT = Path("test-logs") / "tf1_graphs"

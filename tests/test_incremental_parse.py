@@ -1,10 +1,10 @@
 """A run read while it grows shows the same files as a fresh parse."""
 
-from collections.abc import Iterator
 import os
-from pathlib import Path
 import stat
 import struct
+from collections.abc import Iterator
+from pathlib import Path
 
 import numpy as np
 import pytest

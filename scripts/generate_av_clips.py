@@ -6,19 +6,18 @@
 """Write moving, synchronized audiovisual clips in custom video summaries."""
 
 import argparse
+import json
+import math
+import struct
+import tempfile
 from dataclasses import dataclass
 from hashlib import sha256
 from importlib.resources import files
-import json
-import math
 from pathlib import Path
-import struct
-import tempfile
 
 from ffmpeg import FFmpeg
 from tensorboard.compat.proto import event_pb2, summary_pb2, types_pb2
 from tensorboard.summary.writer.event_file_writer import EventFileWriter
-
 
 FORMATS = (
     ("mp4", "libx264", "aac"),

@@ -5,10 +5,9 @@ import os
 from pathlib import Path
 
 import pytest
+from test_open_handles import _append
 
 from tboardfs import TensorBoardFS
-
-from test_open_handles import _append
 
 EVENTS = "events.out.tfevents.host"
 

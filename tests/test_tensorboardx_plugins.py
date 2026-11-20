@@ -1,16 +1,16 @@
 """Read a TensorBoardX stereo recording and its associated model run offline."""
 
-from io import BytesIO
 import json
-from pathlib import Path
 import wave
+from io import BytesIO
+from pathlib import Path
 
 import numpy as np
 import pytest
+from test_proto3_reference import _fields, _values
 
 from tboardfs import TensorBoardFS
 from tboardfs.tfrecord import iter_tfrecords
-from test_proto3_reference import _fields, _values
 
 RUN = Path(__file__).parent / "data/producer-cases/tensorboardx-plugins"
 

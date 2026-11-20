@@ -9,14 +9,13 @@ import io
 import json
 from pathlib import Path
 
-from loguru import logger
 import numpy as np
 import pytest
+from loguru import logger
+from test_incremental_parse import _files, _frame
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2, mesh_plugin_data_pb2
-
-from test_incremental_parse import _files, _frame
 
 DT_FLOAT = 1
 DT_UINT8 = 4

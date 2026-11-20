@@ -4,11 +4,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from tboardfs import TensorBoardFS
-import tboardfs.filesystem
-from tboardfs.proto import compat_pb2
-
 from test_incremental_parse import _frame
+
+import tboardfs.filesystem
+from tboardfs import TensorBoardFS
+from tboardfs.proto import compat_pb2
 
 
 def _scalar(run_dir: Path, step: int) -> None:

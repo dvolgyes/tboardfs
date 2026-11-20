@@ -1,19 +1,17 @@
 """Check exact media exports against payloads written by TensorBoard's writer."""
 
-from io import BytesIO
-from pathlib import Path
 import struct
 import wave
+from io import BytesIO
+from pathlib import Path
 
 import numpy as np
 import pytest
+from test_tf_producer_cases import _events
 
 from tboardfs import TensorBoardFS
 from tboardfs.classify import detect_extension
 from tboardfs.proto import compat_pb2
-
-from test_tf_producer_cases import _events
-
 
 RUN = Path(__file__).parent / "data" / "producer-cases" / "media"
 

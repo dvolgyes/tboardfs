@@ -1,20 +1,19 @@
 """Read records from actual TensorBoard 1.15.0 and 2.0.0 without either writer."""
 
+import json
 from base64 import b64decode
 from io import BytesIO
-import json
 from pathlib import Path
 
 import numpy as np
-from plyfile import PlyData
 import pytest
+from plyfile import PlyData
+from test_incremental_parse import _files
+from test_proto3_reference import _fields
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
 from tboardfs.tfrecord import iter_tfrecords
-
-from test_incremental_parse import _files
-from test_proto3_reference import _fields
 
 
 @pytest.fixture(scope="module", params=("history-115", "history-200"))

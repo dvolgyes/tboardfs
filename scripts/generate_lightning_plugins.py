@@ -15,17 +15,17 @@
 """Use Lightning's TensorBoard logger experiment and its CPU PyTorchProfiler."""
 
 import argparse
-from io import BytesIO
 import json
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import numpy as np
+import torch
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.profilers import PyTorchProfiler
-import numpy as np
 from PIL import Image
 from tensorboard.backend.event_processing.event_file_loader import LegacyEventFileLoader
-import torch
 
 
 def _summaries(output: Path) -> None:

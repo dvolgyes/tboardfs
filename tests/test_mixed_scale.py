@@ -13,6 +13,7 @@ from io import BytesIO
 from pathlib import Path
 
 import numpy as np
+from test_scale_breadth import check_breadth
 
 from scripts import benchmark_scale
 from scripts.benchmark_scale import _read_file
@@ -30,7 +31,6 @@ from scripts.scale_corpus import (
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
 from tboardfs.tfrecord import iter_tfrecords
-from test_scale_breadth import check_breadth
 
 
 def _check_framing(source: Path, count: int) -> tuple[int, bytes]:
@@ -41,7 +41,7 @@ def _check_framing(source: Path, count: int) -> tuple[int, bytes]:
         for record in iter_tfrecords(stream):
             if frames == 0:
                 assert record.record_offset == 0
-                version = getattr(compat_pb2, "Event").FromString(record.payload)
+                version = compat_pb2.Event.FromString(record.payload)
                 assert version.file_version == "brain.Event:2"
             frames += 1
             assert record.record_offset + record.total_size == stream.tell()

@@ -6,7 +6,6 @@ import numpy as np
 from tboardfs.file_status import FileIdentity
 from tboardfs.frame_index import FrameIndex
 
-
 _UNINDEXED = FileIdentity(0, 0, None)
 
 

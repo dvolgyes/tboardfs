@@ -1,7 +1,7 @@
 import math
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import cast
 
 import click
@@ -14,8 +14,8 @@ from tboardfs.constants import (
     DEFAULT_DISCOVERY_SECONDS,
     LOG_FORMAT,
 )
-from tboardfs.mounted import MountedTensorBoardFS
 from tboardfs.mount_index import _DEFAULT_DISK_INDEX_SIZE_MB
+from tboardfs.mounted import MountedTensorBoardFS
 from tboardfs.stdlib_logging import StdlibToLoguru
 
 

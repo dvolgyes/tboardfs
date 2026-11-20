@@ -1,15 +1,15 @@
 """Read two posed surfaces and two sensor sweeps without TensorFlow or TensorBoard."""
 
+import math
 from collections import Counter
 from io import BytesIO
-import math
 
 import numpy as np
-from plyfile import PlyData
 import pytest
+from plyfile import PlyData
+from test_tf_producer_cases import CORPUS
 
 from tboardfs import TensorBoardFS
-from test_tf_producer_cases import CORPUS
 
 
 @pytest.fixture(scope="module")

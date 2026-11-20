@@ -1,12 +1,12 @@
 """Check Open3D TensorFlow assets and auxiliary inference ranges end to end."""
 
 import json
-from pathlib import Path
 import shutil
 import struct
+from pathlib import Path
 
-from click.testing import CliRunner
 import pytest
+from click.testing import CliRunner
 
 from tboardfs import TensorBoardFS
 from tboardfs.crc32c import masked_crc32c

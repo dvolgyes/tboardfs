@@ -4,7 +4,6 @@
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf.internal import builder as _builder
 
-
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
     b'\n@tboardfs/vendored/tensorboard/plugins/custom_scalar/layout.proto\x12\x1dtboardfs.vendored.tensorboard"\xb1\x01\n\x05Chart\x12\r\n\x05title\x18\x01 \x01(\t\x12I\n\tmultiline\x18\x02 \x01(\x0b24.tboardfs.vendored.tensorboard.MultilineChartContentH\x00\x12C\n\x06margin\x18\x03 \x01(\x0b21.tboardfs.vendored.tensorboard.MarginChartContentH\x00B\t\n\x07content"$\n\x15MultilineChartContent\x12\x0b\n\x03tag\x18\x01 \x03(\t"\x95\x01\n\x12MarginChartContent\x12H\n\x06series\x18\x01 \x03(\x0b28.tboardfs.vendored.tensorboard.MarginChartContent.Series\x1a5\n\x06Series\x12\r\n\x05value\x18\x01 \x01(\t\x12\r\n\x05lower\x18\x02 \x01(\t\x12\r\n\x05upper\x18\x03 \x01(\t"^\n\x08Category\x12\r\n\x05title\x18\x01 \x01(\t\x123\n\x05chart\x18\x02 \x03(\x0b2$.tboardfs.vendored.tensorboard.Chart\x12\x0e\n\x06closed\x18\x03 \x01(\x08"T\n\x06Layout\x12\x0f\n\x07version\x18\x01 \x01(\x05\x129\n\x08category\x18\x02 \x03(\x0b2\'.tboardfs.vendored.tensorboard.Categoryb\x06proto3'
 )

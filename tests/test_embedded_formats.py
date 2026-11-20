@@ -1,14 +1,14 @@
 """Read embedded files from the TensorBoard corpus without the producer stack."""
 
-from io import BytesIO
 import struct
+from io import BytesIO
 from zipfile import ZipFile
 
 import numpy as np
 import pytest
+from test_tf_producer_cases import CORPUS, _events
 
 from tboardfs import TensorBoardFS
-from test_tf_producer_cases import CORPUS, _events
 
 
 @pytest.fixture(scope="module")

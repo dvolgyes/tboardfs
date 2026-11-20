@@ -5,9 +5,9 @@ from google.protobuf.message import DecodeError
 
 from tboardfs.classify import _Classifier
 from tboardfs.errors import fuse_error
+from tboardfs.indexed_frame import IndexedFrame
 from tboardfs.model import BinaryEntry, GraphEntry, MetaGraphEntry
 from tboardfs.summary import parse_event
-from tboardfs.indexed_frame import IndexedFrame
 
 
 def extract_binary_blob(entry: BinaryEntry) -> bytes:

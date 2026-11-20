@@ -6,12 +6,11 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from test_incremental_parse import _files, _frame
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
 from tboardfs.tensor import tensor_to_array
-
-from test_incremental_parse import _files, _frame
 
 # TensorProto field numbers from tensorflow/core/framework/tensor.proto.
 SCOMPLEX_VAL = 9

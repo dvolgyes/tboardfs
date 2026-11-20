@@ -1,24 +1,23 @@
 """Reads through a real FUSE mount stay complete while event files grow."""
 
-from collections.abc import Iterator
 import ctypes
 import errno
 import io
 import json
 import mmap
 import os
-from pathlib import Path
 import shutil
 import struct
 import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterator
+from pathlib import Path
 from typing import TextIO
 
 import numpy as np
 import pytest
-
 from test_concurrency import _run_threads
 from test_open_handles import _append
 

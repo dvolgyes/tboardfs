@@ -1,19 +1,19 @@
 """Compare real, low-level event writers' filesystem exports to codec output."""
 
-from hashlib import sha256
-from io import BytesIO
 import json
 import math
-from pathlib import Path
 import struct
 import wave
+from hashlib import sha256
+from io import BytesIO
+from pathlib import Path
 
 import pytest
+from test_tf_producer_cases import CORPUS, _events
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
 from tboardfs.tfrecord import iter_tfrecords
-from test_tf_producer_cases import CORPUS, _events
 
 _WRITER_VERSIONS = {
     "tb115": {"tensorboard": "1.15.0"},
@@ -298,9 +298,9 @@ def extended_summary() -> compat_pb2.Summary:
                 if value.tag in routes
             }
         assert values.keys() == routes.keys()
-        for tag in values:
+        for tag, original in values.items():
             value = summary.value.add()
-            value.CopyFrom(values[tag])
+            value.CopyFrom(original)
             value.tag = f"{run}-{tag}"
     return summary
 

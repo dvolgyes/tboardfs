@@ -9,14 +9,14 @@
 """Write custom encoded media with TensorBoard's low-level event writer."""
 
 import argparse
-from importlib.resources import files
-from io import BytesIO
-from itertools import pairwise
 import math
-from pathlib import Path
 import struct
 import tempfile
 import wave
+from importlib.resources import files
+from io import BytesIO
+from itertools import pairwise
+from pathlib import Path
 
 from ffmpeg import FFmpeg
 from PIL import Image

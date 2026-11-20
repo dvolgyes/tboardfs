@@ -1,15 +1,14 @@
 """Check byte-exact exports and PCM samples in small RF64 and BW64 audio files."""
 
 import math
-from pathlib import Path
 import struct
 import unittest
+from pathlib import Path
 
 from tboardfs import TensorBoardFS
 from tboardfs.classify import detect_extension
 from tboardfs.proto import compat_pb2
 from tboardfs.tfrecord import iter_tfrecords
-
 
 RUN = Path(__file__).parent / "data/producer-cases/wave64"
 

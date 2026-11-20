@@ -12,7 +12,6 @@ from tboardfs.run_listing import RunListing, _LogicalFile
 from tboardfs.run_tree_edit import _IMPLICIT_PRODUCERS, _RunLeaf, _TreeEdits
 from tboardfs.tag_paths import TagPaths
 
-
 type _Path = tuple[str, ...]
 type _TagScope = tuple[_Path, str, bool]
 

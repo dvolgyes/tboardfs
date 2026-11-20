@@ -3,13 +3,12 @@
 from pathlib import Path
 from typing import Any
 
-from click.testing import CliRunner, Result
 import pytest
+from click.testing import CliRunner, Result
+from test_file_cli import FIXTURE_EVENT
 
 from tboardfs import TensorBoardFS, cli, file_cli
 from tboardfs.file_tree import SingleEventTree
-
-from test_file_cli import FIXTURE_EVENT
 
 
 def _mount(tmp_path: Path, monkeypatch: Any, *option: str) -> Result:

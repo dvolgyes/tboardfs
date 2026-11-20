@@ -3,12 +3,12 @@
 from io import BytesIO
 from pathlib import Path
 
-from google.protobuf import text_format
 import numpy as np
+import torch
+from google.protobuf import text_format
 from PIL import Image
 from tensorboard.backend.event_processing.event_file_loader import LegacyEventFileLoader
 from tensorboard.plugins.projector.projector_config_pb2 import ProjectorConfig
-import torch
 from torch.utils.tensorboard import SummaryWriter
 
 

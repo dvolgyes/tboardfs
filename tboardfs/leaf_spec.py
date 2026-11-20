@@ -8,7 +8,6 @@ from tboardfs.errors import fuse_error
 from tboardfs.model.binary_entry import BinaryEntry
 from tboardfs.model.json_entry import JsonEntry
 
-
 type LeafValue = BinaryEntry | LeafSpec | dict[str, Any]
 
 

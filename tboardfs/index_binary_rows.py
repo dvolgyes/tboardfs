@@ -29,7 +29,6 @@ from tboardfs.model.graph_summary_entry import GraphSummaryEntry
 from tboardfs.model.indexed_blob import IndexedBlob, _BlobRef
 from tboardfs.range_proof import BLOCK_SIZE
 
-
 _ROW = np.dtype(
     [
         ("flags", "u1"),

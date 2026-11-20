@@ -1,18 +1,17 @@
 """File times and sizes come from the data, so they change only with the data."""
 
 import os
-from pathlib import Path
 import stat
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from tboardfs import TensorBoardFS
-import tboardfs.filesystem
-from tboardfs.proto import compat_pb2
-
 from test_incremental_parse import _files, _frame
 from test_refresh_io import _spy_listings, _spy_opens
+
+import tboardfs.filesystem
+from tboardfs import TensorBoardFS
+from tboardfs.proto import compat_pb2
 
 
 def _scalar(run_dir: Path, wall_time: float, tag: str) -> None:

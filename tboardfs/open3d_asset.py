@@ -1,11 +1,11 @@
 """Open the direct sidecar files written by the Open3D TensorBoard plugin."""
 
-from collections.abc import Iterator
-from contextlib import contextmanager, ExitStack
 import errno
 import os
-from pathlib import Path
 import stat
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
 
 from tboardfs.model import SidecarEntry
 

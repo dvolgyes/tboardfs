@@ -15,12 +15,12 @@ hp_metric, hparams.yaml and the model graph. The model also writes an image,
 a histogram, audio and text through the logger's SummaryWriter.
 """
 
-from pathlib import Path
 import shutil
+from pathlib import Path
 
+import torch
 from lightning import LightningModule, Trainer, seed_everything
 from lightning.pytorch.loggers import TensorBoardLogger
-import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 ROOT = Path("test-logs")

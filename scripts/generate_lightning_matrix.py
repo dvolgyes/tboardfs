@@ -17,9 +17,9 @@
 import argparse
 from pathlib import Path
 
+import torch
 from library_writer_cases import write_cases
 from lightning.pytorch.loggers import TensorBoardLogger
-import torch
 
 
 def main() -> None:

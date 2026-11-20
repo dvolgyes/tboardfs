@@ -8,8 +8,8 @@
 """Generate a compact edge-case event file with TensorBoard's native writer."""
 
 import argparse
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 from tensorboard.compat.proto import event_pb2, summary_pb2
 from tensorboard.summary.writer.event_file_writer import EventFileWriter

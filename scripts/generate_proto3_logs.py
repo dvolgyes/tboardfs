@@ -30,8 +30,8 @@ step, and tensors as their dtype, shape and values per step.
 """
 
 import json
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 from tensorboard import context
 from tensorboard.backend.event_processing import (

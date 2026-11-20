@@ -8,8 +8,8 @@
 import argparse
 from pathlib import Path
 
-from tensorboard.plugins import projector
 import tensorflow as tf
+from tensorboard.plugins import projector
 from tensorflow.core.protobuf import debug_event_pb2 as debug
 from tensorflow.python.debug.lib.debug_events_writer import DebugEventsWriter
 

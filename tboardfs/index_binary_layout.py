@@ -2,7 +2,6 @@
 
 import struct
 
-
 type Label = tuple[str, str, str, str]
 
 _HEADER = struct.Struct("<III")

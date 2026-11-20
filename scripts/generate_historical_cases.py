@@ -33,12 +33,17 @@ from tensorboard.compat.proto import (
     summary_pb2,
 )
 from tensorboard.plugins import projector
-from tensorboard.plugins.custom_scalar import layout_pb2, metadata as layout_meta
+from tensorboard.plugins.custom_scalar import layout_pb2
+from tensorboard.plugins.custom_scalar import metadata as layout_meta
 from tensorboard.plugins.debugger.health_pill_calc import calc_health_pill
 from tensorboard.plugins.histogram.summary_v2 import histogram_pb
 from tensorboard.plugins.hparams import (
     api_pb2,
+)
+from tensorboard.plugins.hparams import (
     metadata as hp_meta,
+)
+from tensorboard.plugins.hparams import (
     plugin_data_pb2 as hp_data,
 )
 from tensorboard.plugins.hparams import summary_v2 as hp
@@ -47,8 +52,8 @@ from tensorboard.plugins.mesh.plugin_data_pb2 import MeshPluginData
 from tensorboard.plugins.pr_curve import metadata as pr_meta
 from tensorboard.plugins.profile import trace_events_pb2
 from tensorboard.plugins.scalar.summary_v2 import scalar_pb
-from tensorboard.summary.writer.event_file_writer import EventFileWriter
 from tensorboard.plugins.text.summary_v2 import text_pb
+from tensorboard.summary.writer.event_file_writer import EventFileWriter
 from tensorboard.summary.writer.record_writer import RecordWriter
 from tensorboard.util.tensor_util import make_tensor_proto
 

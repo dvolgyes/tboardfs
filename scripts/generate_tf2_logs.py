@@ -14,12 +14,12 @@ text, a tensor without a plugin name, hparams and a traced graph. The Keras
 run is what the TensorBoard callback writes for a tiny model.
 """
 
-from pathlib import Path
 import shutil
+from pathlib import Path
 
-from tensorboard.plugins.hparams import api as hp
 import numpy as np
 import tensorflow as tf
+from tensorboard.plugins.hparams import api as hp
 
 ROOT = Path("test-logs") / "tf2"
 

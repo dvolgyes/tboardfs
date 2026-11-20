@@ -1,15 +1,15 @@
 """Observe the libmagic rule generation used by the existing classifier."""
 
 import ctypes
-from dataclasses import dataclass, field
-from importlib import import_module
-from itertools import islice
 import locale
 import os
-from pathlib import Path
 import stat
 import sys
 import time
+from dataclasses import dataclass, field
+from importlib import import_module
+from itertools import islice
+from pathlib import Path
 from typing import ClassVar, cast
 
 _MAX_PATHS = 128

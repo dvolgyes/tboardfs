@@ -8,18 +8,17 @@
 """Generate compact, genuinely encoded audio format fixtures."""
 
 import argparse
-from importlib.resources import files
-from itertools import pairwise
 import math
-from pathlib import Path
 import struct
 import tempfile
 import wave
+from importlib.resources import files
+from itertools import pairwise
+from pathlib import Path
 
 from ffmpeg import FFmpeg
 from tensorboard.compat.proto import event_pb2, summary_pb2
 from tensorboard.summary.writer.event_file_writer import EventFileWriter
-
 
 FORMATS = (
     ("aac-adts", "aac", "audio/aac", "aac", None),

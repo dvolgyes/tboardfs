@@ -12,7 +12,7 @@ import numpy as np
 
 from scripts.scale_breadth import captured_frames
 from tboardfs.crc32c import masked_crc32c
-from tboardfs.proto import compat_pb2
+from tboardfs.proto import _messages
 
 EVENT_NAME = "events.out.tfevents.scale"
 IMAGES = "/images/series"
@@ -81,7 +81,7 @@ class _ScaleCorpus:
         cls, step: int, *, pixel: int | None = None, large: bytes | None = None
     ) -> bytes:
         """Write a scalar and image event as one checksummed frame."""
-        event = getattr(compat_pb2, "Event")(step=step, wall_time=100.0 + step)
+        event = _messages.EVENT(step=step, wall_time=100.0 + step)
         event.summary.value.add(tag="loss", simple_value=step / 4)
         image = event.summary.value.add(tag="series").image
         image.width = image.height = 1
@@ -171,7 +171,7 @@ class _BulkSamples:
     def frame(cls, step: int, sample: int, slot: int) -> bytes:
         """Frame one balanced triplet at a step without repeating its virtual paths."""
         suffix = f"/{slot}" if slot else ""
-        event = getattr(compat_pb2, "Event")(step=step, wall_time=100.0 + step)
+        event = _messages.EVENT(step=step, wall_time=100.0 + step)
         image = event.summary.value.add(tag=f"bulk_image{suffix}").image
         image.width = image.height = _IMAGE_SIDE
         image.colorspace = 3
@@ -183,7 +183,7 @@ class _BulkSamples:
         audio.encoded_audio_string = cls._audio(sample)
         audio.content_type = "audio/wav"
         tensor = event.summary.value.add(tag=f"bulk_numeric{suffix}").tensor
-        tensor.dtype = getattr(compat_pb2, "DT_FLOAT")
+        tensor.dtype = _messages.DT_FLOAT
         for size in _TENSOR_SHAPE:
             tensor.tensor_shape.dim.add(size=size)
         tensor.tensor_content = cls._numeric(sample)

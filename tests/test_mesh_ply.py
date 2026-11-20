@@ -6,12 +6,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 from plyfile import PlyData
+from test_incremental_parse import _files, _frame
+from test_mesh_obj import COLOR, COLORS, FACE, FACES, TRIANGLES, VERTEX
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2, mesh_plugin_data_pb2
-
-from test_incremental_parse import _files, _frame
-from test_mesh_obj import COLOR, COLORS, FACE, FACES, TRIANGLES, VERTEX
 
 DTYPES = {"float32": 1, "float64": 2, "int32": 3, "uint8": 4}
 PLY = "/meshes/shape/000005.ply"

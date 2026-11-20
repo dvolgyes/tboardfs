@@ -1,22 +1,22 @@
 """Identify parser and host classifier behavior for the durable index."""
 
+import json
+import os
+import stat
+import sys
+import zlib
 from collections import deque
 from dataclasses import dataclass
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
-import json
-import os
 from pathlib import Path
-import stat
-import sys
 from typing import cast
-import zlib
 
 import google.protobuf
-from google.protobuf.descriptor import FileDescriptor
-from google.protobuf.internal import api_implementation
 import numpy as np
 import xxhash
+from google.protobuf.descriptor import FileDescriptor
+from google.protobuf.internal import api_implementation
 
 from tboardfs.index_magic import OBSERVATION_ERRORS, MagicHost
 from tboardfs.open3d_schema import _FILE as _OPEN3D_SCHEMA

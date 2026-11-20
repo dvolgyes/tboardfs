@@ -11,9 +11,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from google.protobuf import empty_pb2, unknown_fields
 import numpy as np
 import pytest
+from google.protobuf import empty_pb2, unknown_fields
 
 from tboardfs import TensorBoardFS
 from tboardfs.tfrecord import iter_tfrecords

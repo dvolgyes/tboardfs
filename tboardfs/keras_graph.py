@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from google.protobuf.message import Message
 
-from tboardfs.proto import compat_pb2
+from tboardfs.proto import _messages
 
 _BASE_DTYPES = MappingProxyType(
     {
@@ -49,6 +49,10 @@ _DTYPE_ENUMS = frozenset(_BASE_DTYPES.values()) | {
 HISTORY_FIELDS = 3
 
 
+class _KerasConfigError(ValueError):
+    """A model JSON value cannot be converted to a TensorBoard graph."""
+
+
 def keras_model_to_graph_def(model: object) -> Message:
     """Return the GraphDef that TensorBoard makes from a Keras model.to_json().
 
@@ -62,7 +66,7 @@ def keras_model_to_graph_def(model: object) -> Message:
     Raises:
         ValueError: TensorBoard fails on the config.
     """
-    graph = cast(Any, getattr(compat_pb2, "GraphDef")())
+    graph = cast(Any, _messages.GRAPH_DEF())
     state = _Links()
     for scope, layer in _KerasConfig.walk(model):
         config = _KerasConfig.config(layer)
@@ -118,7 +122,7 @@ class _Links:
         config = _KerasConfig.config(model)
         layers = config.get("layers")
         if not layers:
-            raise ValueError("Keras model config has no layers")
+            raise _KerasConfigError("Keras model config has no layers")
         name = _scoped(scope, config.get("name"))
         inputs = config.get("input_layers")
         outputs = config.get("output_layers")
@@ -136,7 +140,9 @@ class _Links:
             # Keras 3 writes one input as a flat [name, node, index] list. Unlike
             # TensorBoard 2.21, which fails on it, read it as one input.
             if _KerasConfig.size(inputs) != 1 and not _KerasConfig.is_history(inputs):
-                raise ValueError("Keras model in a Sequential model has several inputs")
+                raise _KerasConfigError(
+                    "Keras model in a Sequential model has several inputs"
+                )
             key = _KerasConfig.key(_scoped(name, _KerasConfig.element(inputs, 0)))
             self.input_to_layer[key] = self.previous
         name = _KerasConfig.key(name)
@@ -165,7 +171,9 @@ class _Links:
             inbound = _scoped(scope, name)
             names = self.model_outputs.get(_KerasConfig.key(inbound), [inbound])
             if not isinstance(index, (int, float)):
-                raise ValueError(f"Keras inbound node index {index!r} is not a number")
+                raise _KerasConfigError(
+                    f"Keras inbound node index {index!r} is not a number"
+                )
             last = not index < len(names)
             yield _KerasConfig.text(
                 names[-1] if last else _KerasConfig.element(names, index)
@@ -209,7 +217,7 @@ class _KerasConfig:
                     history = config.get("keras_history", [])
                     if _KerasConfig.size(history) >= HISTORY_FIELDS:
                         if not isinstance(history, (list, str)):
-                            raise ValueError("Keras keras_history is an object")
+                            raise _KerasConfigError("Keras keras_history is an object")
                         histories.append(history[:HISTORY_FIELDS])
         return histories
 
@@ -239,7 +247,9 @@ class _KerasConfig:
     def dict_value(value: object) -> dict[str, Any]:
         """Return a JSON object, or raise ValueError for another value."""
         if not isinstance(value, dict):
-            raise ValueError(f"Keras config has {type(value).__name__} for an object")
+            raise _KerasConfigError(
+                f"Keras config has {type(value).__name__} for an object"
+            )
         return value
 
     @staticmethod
@@ -249,14 +259,18 @@ class _KerasConfig:
         A string gives its characters and an object its keys.
         """
         if not isinstance(value, (list, str, dict)):
-            raise ValueError(f"Keras config has {type(value).__name__} for a list")
+            raise _KerasConfigError(
+                f"Keras config has {type(value).__name__} for a list"
+            )
         return list(value)
 
     @staticmethod
     def size(value: object) -> int:
         """Return len() of a JSON array, string or object."""
         if not isinstance(value, (list, str, dict)):
-            raise ValueError(f"Keras config has {type(value).__name__} for a list")
+            raise _KerasConfigError(
+                f"Keras config has {type(value).__name__} for a list"
+            )
         return len(value)
 
     @staticmethod
@@ -272,21 +286,23 @@ class _KerasConfig:
     def element(value: object, index: object) -> object:
         """Return value[index] of a JSON array or string, as Python indexes it."""
         if not isinstance(value, (list, str)) or not isinstance(index, int):
-            raise ValueError("Keras config cannot be indexed")
+            raise _KerasConfigError("Keras config cannot be indexed")
         if not -len(value) <= index < len(value):
-            raise ValueError(f"Keras config index {index} is out of range")
+            raise _KerasConfigError(f"Keras config index {index} is out of range")
         return value[index]
 
     @staticmethod
     def text(value: object) -> str:
         """Return a node name or class name, or raise ValueError for no text."""
         if not isinstance(value, str):
-            raise ValueError(f"Keras config has {type(value).__name__} for a name")
+            raise _KerasConfigError(
+                f"Keras config has {type(value).__name__} for a name"
+            )
         return value
 
     @staticmethod
     def key(value: object) -> object:
         """Return a hashable dict key, or raise ValueError."""
         if isinstance(value, (list, dict)):
-            raise ValueError("Keras config has a list or object for a name")
+            raise _KerasConfigError("Keras config has a list or object for a name")
         return value

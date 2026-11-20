@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from test_malformed_records import _files, _log, _plugin_value
 
 from tboardfs import TensorBoardFS
 from tboardfs.histogram_files import _HistogramFiles
@@ -15,8 +16,6 @@ from tboardfs.plugin_files import _TypedPluginFiles
 from tboardfs.proto import compat_pb2
 from tboardfs.proto import hparams_plugin_data_pb2 as hparams_pb2
 from tboardfs.proto import mesh_plugin_data_pb2 as mesh_pb2
-
-from test_malformed_records import _files, _log, _plugin_value
 
 
 def _with_loss(event: compat_pb2.Event) -> compat_pb2.Event:

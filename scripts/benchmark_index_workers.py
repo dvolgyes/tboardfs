@@ -13,14 +13,14 @@ with source-backed tensors. Comparison phase totals can overlap.
 """
 
 import argparse
+import json
+import os
+import sys
 from collections.abc import Callable
 from concurrent.futures import Future
 from contextlib import ExitStack
-import json
 from multiprocessing import get_context
-import os
 from pathlib import Path
-import sys
 from time import monotonic_ns
 from typing import Literal
 from unittest.mock import patch
@@ -29,7 +29,6 @@ from tboardfs import index_transport
 from tboardfs import parallel_index as coordinator
 from tboardfs.index_segment import Job, Segment
 from tboardfs.indexer import _EventIndexer
-
 
 type Payload = Literal["stock", "packed", "source"]
 PAYLOADS: tuple[Payload, ...] = ("stock", "packed", "source")

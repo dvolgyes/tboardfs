@@ -1,12 +1,12 @@
 """Symlinked run directories are runs; link loops are walked once."""
 
-from pathlib import Path
 import threading
-
-from tboardfs import TensorBoardFS, find_tensorboard_files
+from pathlib import Path
 
 from test_incremental_parse import _files
 from test_open_handles import _append
+
+from tboardfs import TensorBoardFS, find_tensorboard_files
 
 EVENTS = "events.out.tfevents.host"
 

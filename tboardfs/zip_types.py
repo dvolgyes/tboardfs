@@ -1,11 +1,11 @@
 """Classify a bounded peek of ZIP-based embedded formats."""
 
 import ast
+import struct
+import zlib
 from dataclasses import dataclass
 from io import BytesIO
-import struct
-from zipfile import BadZipFile, ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
-import zlib
+from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile, ZipInfo
 
 from tboardfs.opc import office_extension
 

@@ -1,18 +1,17 @@
 """A record that tboardfs cannot convert has no file and does not hide others."""
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 import itertools
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
-from loguru import logger
 import pytest
+from loguru import logger
+from test_incremental_parse import _frame
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2, custom_scalar_layout_pb2
-
-from test_incremental_parse import _frame
 
 GARBAGE = b"\xff\xff\xff"
 # Plugin names, plugin contents and tensors of the sweep below.

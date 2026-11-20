@@ -6,7 +6,6 @@ from google.protobuf.internal import builder as _builder
 
 from tboardfs.proto import hparams_api_pb2 as _hparams_api_pb2
 
-
 _HPARAMS_API_DESCRIPTOR = _hparams_api_pb2.DESCRIPTOR
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(

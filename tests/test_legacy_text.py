@@ -4,13 +4,12 @@ import json
 from pathlib import Path
 
 import pytest
+from test_incremental_parse import _frame
 
 from tboardfs import TensorBoardFS
 from tboardfs.file_tree import SingleEventTree
 from tboardfs.proto import compat_pb2
 from tboardfs.tfrecord import iter_tfrecords
-
-from test_incremental_parse import _frame
 
 RUN = Path(__file__).parent / "data/producer-cases/legacy-text"
 EVENT = RUN / "events.out.tfevents.legacy-text"

@@ -12,12 +12,11 @@ import argparse
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image
 import pillow_heif
+from PIL import Image
 from tensorboard.compat.proto import event_pb2, summary_pb2, types_pb2
 from tensorboard.plugins.image import metadata as image_metadata
 from tensorboard.summary.writer.record_writer import RecordWriter
-
 
 SIZE = (32, 16)
 

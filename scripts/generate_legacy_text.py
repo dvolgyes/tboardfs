@@ -9,14 +9,13 @@
 """Write native TF 1.2 text and ordinary tensor summaries; verify with TB 1.15."""
 
 import argparse
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 
 import tensorflow as tf
 from tensorflow.python.ops.summary_ops import tensor_summary
 from tensorflow.python.summary.text_summary import text_summary
-
 
 READER = """
 import sys

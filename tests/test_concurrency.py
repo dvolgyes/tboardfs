@@ -1,22 +1,22 @@
 """Concurrent FUSE callbacks must not corrupt state or deadlock."""
 
-from collections.abc import Callable
 import faulthandler
 import json
-from pathlib import Path
 import struct
 import sys
 import threading
 import time
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+import tboardfs.filesystem
 from tboardfs import TensorBoardFS
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.model import EventFileCache
 from tboardfs.proto import compat_pb2
-import tboardfs.filesystem
 
 DEADLOCK_TIMEOUT_SECONDS = 30.0
 
@@ -138,13 +138,13 @@ def test_readers_survive_concurrent_training_writes(tmp_path: Path) -> None:
         while not stop.is_set():
             listing = fs.readdir("/")
             assert {"run_a", "run_b"} <= set(listing)
-            for name in last_seen:
+            for name, previous_count in last_seen.items():
                 path = f"/{name}/scalars/loss.json"
                 size = fs.getattr(path)["st_size"]
                 assert size > 0
                 steps = [row["step"] for row in json.loads(fs.read(path, 1 << 24, 0))]
                 assert steps == list(range(len(steps)))
-                assert len(steps) >= last_seen[name]
+                assert len(steps) >= previous_count
                 last_seen[name] = len(steps)
             for name in listing:
                 if name.startswith("run_new_"):

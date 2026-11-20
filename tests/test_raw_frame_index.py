@@ -1,17 +1,16 @@
 """The raw view creates frame nodes only when a file is requested."""
 
-from errno import EIO
 import json
+from errno import EIO
 from pathlib import Path
 from typing import NoReturn
 
 import pytest
+from test_open_handles import _append
 
 from tboardfs import TensorBoardFS
 from tboardfs.file_tree import SingleEventTree
 from tboardfs.raw_frames import RawFrames, _RawFrameChildren
-
-from test_open_handles import _append
 
 _EVENTS = "events.out.tfevents.host"
 

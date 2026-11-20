@@ -12,8 +12,8 @@
 """Trace a deterministic CPU classifier with PyTorch's native graph writer."""
 
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import torch
 from torch.utils.tensorboard import SummaryWriter

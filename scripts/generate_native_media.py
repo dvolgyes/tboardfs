@@ -18,7 +18,6 @@ import numpy as np
 from tensorboard.compat.proto import event_pb2, summary_pb2, types_pb2
 from tensorboard.summary.writer.record_writer import RecordWriter
 
-
 RUN_NAME = "native-media"
 
 

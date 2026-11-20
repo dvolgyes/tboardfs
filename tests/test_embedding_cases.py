@@ -1,15 +1,14 @@
 """Export native TensorBoardX projector sidecars and match their rows to portraits."""
 
-from hashlib import sha256
 import json
+from hashlib import sha256
 from pathlib import Path
 
-from click.testing import CliRunner
 import pytest
+from click.testing import CliRunner
 
 from tboardfs import TensorBoardFS
 from tboardfs.file_cli import main
-
 
 ROOT = Path(__file__).parent / "data" / "producer-cases" / "embedding-cases"
 BASE = (

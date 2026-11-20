@@ -21,9 +21,9 @@ from importlib.resources import files
 from io import BytesIO
 from pathlib import Path
 
+import numpy as np
 from ffmpeg import FFmpeg
 from numpngw import write_png
-import numpy as np
 from PIL import Image
 from tensorboard.compat.proto import event_pb2, summary_pb2
 from tensorboard.summary.writer.event_file_writer import EventFileWriter

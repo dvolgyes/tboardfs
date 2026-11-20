@@ -1,20 +1,19 @@
 """An open file handle reads one fixed version of a growing virtual file."""
 
-from errno import EISDIR, ENOENT
 import json
-from pathlib import Path
 import struct
 import threading
 import time
+from errno import EISDIR, ENOENT
+from pathlib import Path
 
 import numpy as np
 import pytest
+from test_concurrency import _run_threads
 
 from tboardfs import TensorBoardFS
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.proto import compat_pb2
-
-from test_concurrency import _run_threads
 
 LOSS = "/scalars/loss.json"
 

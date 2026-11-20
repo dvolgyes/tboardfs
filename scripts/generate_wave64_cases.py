@@ -6,15 +6,14 @@
 """Write valid RF64 and BW64 audio cases using TensorBoard's low-level writer."""
 
 import argparse
-from io import BytesIO
 import math
-from pathlib import Path
 import struct
+from io import BytesIO
+from pathlib import Path
 
 import av
 from tensorboard.compat.proto import event_pb2, summary_pb2, types_pb2
 from tensorboard.summary.writer.record_writer import RecordWriter
-
 
 RATE = 8000
 FRAMES = 800

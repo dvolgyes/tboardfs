@@ -1,8 +1,8 @@
 """Parity and bounds of the persistent index body."""
 
 import os
-from pathlib import Path
 import struct
+from pathlib import Path
 
 import numpy as np
 import pytest

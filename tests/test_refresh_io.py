@@ -4,19 +4,18 @@ On a network filesystem each listing and each open is a round trip, so a
 log directory with many runs is checked with as few of them as possible.
 """
 
-from collections.abc import Iterator
 import os
-from pathlib import Path
 import time
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
+from test_incremental_parse import _frame, _loss
+from test_open_handles import _append
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _frame, _loss
-from test_open_handles import _append
 
 EVENTS = "events.out.tfevents.host"
 

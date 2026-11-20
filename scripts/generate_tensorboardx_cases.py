@@ -6,8 +6,8 @@
 """Generate a single-file TensorBoardX training and restart sequence."""
 
 import argparse
-from pathlib import Path
 import shutil
+from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import numpy as np

@@ -5,19 +5,18 @@ data, so a raw copy in /tensors is a duplicate in the wrong tab. A tensor
 without a plugin name keeps its raw file.
 """
 
-from collections.abc import Callable
-from io import BytesIO
 import json
 import wave
+from collections.abc import Callable
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
 import pytest
+from test_incremental_parse import _files, _frame
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2, mesh_plugin_data_pb2
-
-from test_incremental_parse import _files, _frame
 
 DT_FLOAT, DT_DOUBLE, DT_UINT8, DT_STRING = 1, 2, 4, 7
 Fill = Callable[[compat_pb2.Summary.Value], None]

@@ -1,11 +1,10 @@
 """Exercise the native classifier boundary in a fresh CLI process."""
 
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 from test_parse_file import _record
 
 from tboardfs.proto import compat_pb2

@@ -1,11 +1,11 @@
 """Refresh the active run and reuse complete persisted event indexes."""
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
-import os
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
 
 from loguru import logger
 
@@ -15,16 +15,7 @@ from tboardfs.file_status import FileIdentity
 from tboardfs.indexer import _EventIndexer
 from tboardfs.model import EventFileCache, RunCache
 
-
 _DEFAULT_DISK_INDEX_SIZE_MB = 2048
-
-
-class _MountIndexKeywords(TypedDict, total=False):
-    """Optional indexing settings for the mount constructor."""
-
-    index_workers: int
-    disk_index: bool
-    disk_index_size_mb: int
 
 
 def _disk_index_directory(source: Path, mountpoint: Path | None) -> Path | None:
@@ -84,7 +75,7 @@ class _IndexOptions:
         if index_workers < 1:
             raise ValueError("index_workers must be positive")
         if not isinstance(disk_index, bool):
-            raise ValueError("disk_index must be a bool")
+            raise TypeError("disk_index must be a bool")
         if type(disk_index_size_mb) is not int or disk_index_size_mb < 1:
             raise ValueError("disk_index_size_mb must be a positive integer")
         mounted_at = Path(mountpoint).resolve() if mountpoint is not None else None

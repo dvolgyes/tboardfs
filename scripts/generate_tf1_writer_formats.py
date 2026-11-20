@@ -9,8 +9,8 @@
 """Generate high-level TF1 graph-mode writer examples in a new corpus directory."""
 
 import argparse
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 import numpy as np
 import tensorflow as tf

@@ -3,10 +3,10 @@
 import json
 from pathlib import Path
 
+from test_incremental_parse import _files, _frame
+
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
-
-from test_incremental_parse import _files, _frame
 
 
 def test_an_event_at_step_zero_is_step_zero(tmp_path: Path) -> None:

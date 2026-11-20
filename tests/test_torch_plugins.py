@@ -1,15 +1,15 @@
 """Read native PyTorch plugins offline, with no producer or multimedia imports."""
 
-from hashlib import sha256
-from io import BytesIO
 import json
 import wave
+from hashlib import sha256
+from io import BytesIO
 
 import numpy as np
 import pytest
+from test_tf_producer_cases import CORPUS
 
 from tboardfs import TensorBoardFS
-from test_tf_producer_cases import CORPUS
 
 
 @pytest.fixture(scope="module")

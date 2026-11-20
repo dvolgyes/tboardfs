@@ -1,16 +1,17 @@
 """Binary handles read bounded ranges without losing their indexed version."""
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from errno import EBADF, EIO, ENOENT
-import os
 from pathlib import Path
 from threading import Event
 from typing import BinaryIO
 
 import pytest
+from test_incremental_parse import _frame
 
-from scripts.scale_corpus import EVENT_NAME, SIBLING, _ScaleCorpus as ScaleCorpus
-
+from scripts.scale_corpus import EVENT_NAME, SIBLING
+from scripts.scale_corpus import _ScaleCorpus as ScaleCorpus
 from tboardfs import TensorBoardFS
 from tboardfs.file_status import FileIdentity
 from tboardfs.frame_ref import FrameRef
@@ -18,8 +19,6 @@ from tboardfs.indexed_frame import IndexedFrame
 from tboardfs.model import Record
 from tboardfs.proto import compat_pb2
 from tboardfs.verified_span import _VerifiedSpan
-
-from test_incremental_parse import _frame
 
 NAME = "/images/picture/000001.png"
 

@@ -1,12 +1,12 @@
 """Exercise standalone framing fixtures through strict and live readers."""
 
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
-from click.testing import CliRunner
 import pytest
+from click.testing import CliRunner
 
 from tboardfs import TensorBoardFS
 from tboardfs.file_cli import main
@@ -71,6 +71,7 @@ def test_generator_refuses_nonempty_output(tmp_path: Path) -> None:
         [sys.executable, "-I", GENERATOR, "--output", tmp_path],
         cwd=tmp_path,
         capture_output=True,
+        check=False,
     )
     assert result.returncode != 0 and b"not empty" in result.stderr
     assert list(tmp_path.iterdir()) == [marker] and marker.read_bytes() == b"original"

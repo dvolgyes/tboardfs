@@ -1,7 +1,7 @@
-from io import BytesIO
 import json
 import subprocess
 import sys
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np

@@ -1,10 +1,10 @@
 import math
 from typing import Any, cast
 
+import numpy as np
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import Message
 from google.protobuf.struct_pb2 import Value
-import numpy as np
 
 from tboardfs.model import JsonEntry
 from tboardfs.proto_schema import _ProtoParser

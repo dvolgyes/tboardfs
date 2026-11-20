@@ -1,14 +1,16 @@
 """Exercise the ZIP package sniffer independently of the TensorBoard reader."""
 
+import struct
 from io import BytesIO
 from pathlib import Path
 from random import Random
-import struct
 from unittest import TestCase
 from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 from tboardfs.zip_types import zip_extension
+
+_DEFAULT_NPY_VALUES = struct.pack("<hh", -17, 67)
 
 
 def _zip(members, method=ZIP_DEFLATED, comment=b""):
@@ -20,7 +22,7 @@ def _zip(members, method=ZIP_DEFLATED, comment=b""):
     return buffer.getvalue()
 
 
-def _npy(version, values=struct.pack("<hh", -17, 67)):
+def _npy(version, values=_DEFAULT_NPY_VALUES):
     width = 2 if version == 1 else 4
     header = f"{{'descr': '<i2', 'fortran_order': False, 'shape': ({len(values) // 2},), }}".encode()
     header = header.ljust(128 - 8 - width - 1) + b"\n"
