@@ -1,3 +1,5 @@
+"""Register virtual-tree commands for event files and log directories."""
+
 from pathlib import PurePosixPath
 import sys
 from typing import cast
@@ -28,7 +30,7 @@ def register_file_cli_commands(group: click.Group) -> None:
         source: str, prefix: str, step_digits: int, scalar_format: str, view: str | None
     ) -> None:
         """Print virtual file paths below PREFIX."""
-        tree = _FileCli.open_tree(source, step_digits, scalar_format)
+        tree, view = _FileCli.open_tree(source, step_digits, scalar_format, view)
         try:
             for path in tree.iter_file_paths(prefix=prefix, view=view):
                 sys.stdout.write(path + "\n")
@@ -53,7 +55,7 @@ def register_file_cli_commands(group: click.Group) -> None:
         view: str | None,
     ) -> None:
         """Write one virtual file to OUTPUT."""
-        tree = _FileCli.open_tree(source, step_digits, scalar_format)
+        tree, view = _FileCli.open_tree(source, step_digits, scalar_format, view)
         try:
             data = tree.read_file(vpath, view=view or "both")
         except FileNotFoundError as error:
@@ -99,16 +101,17 @@ def register_file_cli_commands(group: click.Group) -> None:
         if force and skip_existing:
             raise click.UsageError("Use either --force or --skip-existing, not both.")
         existing = "overwrite" if force else "skip" if skip_existing else "fail"
-        tree = _FileCli.open_tree(
+        tree, view = _FileCli.open_tree(
             cast(str, params["source"]),
             cast(int, params["step_digits"]),
             cast(str, params["scalar_format"]),
+            cast(str | None, params["view"]),
         )
         try:
             copied, skipped = tree.copy_all(
                 cast(str, params["outdir"]),
                 existing=existing,
-                view=cast(str, params["view"]) or "typed",
+                view=view or "typed",
             )
         except _CopyError as error:
             _status.info("Copied successfully: {} files", len(error.copied_paths))
@@ -126,12 +129,19 @@ class _FileCli:
     """Open sources and report results for the single-file commands."""
 
     @staticmethod
-    def open_tree(source: str, step_digits: int, scalar_format: str) -> SingleEventTree:
+    def open_tree(
+        source: str, step_digits: int, scalar_format: str, view: str | None
+    ) -> tuple[SingleEventTree, str | None]:
         """Return the tree of a source; a source without events is a CLI error."""
+        framing_only = click.get_current_context().meta.get("framing_only", False)
+        if framing_only and view not in (None, "raw"):
+            raise click.UsageError("--framing-only requires --view raw or no --view.")
         try:
+            if framing_only:
+                return SingleEventTree.from_framing(source), "raw"
             return SingleEventTree(
                 source, step_digits=step_digits, scalar_format=scalar_format
-            )
+            ), view
         except _NoEventError as error:
             raise click.ClickException(str(error)) from error
         except (OSError, TFRecordError) as error:

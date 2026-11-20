@@ -1,16 +1,19 @@
 """Expose each validated source frame without interpreting its payload."""
 
 from bisect import bisect_left
+import os
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any, ClassVar
 
+from tboardfs.event_source import EventSource
 from tboardfs.file_status import FileIdentity
 from tboardfs.frame_index import FrameIndex
 from tboardfs.frame_ref import FrameRef
 from tboardfs.indexed_frame import IndexedFrame
-from tboardfs.model import EventFileCache, RunCache
+from tboardfs.model import EventFileCache, RunCache, TFRecordError
 from tboardfs.paths import _DirectoryNode, _Paths
+from tboardfs.tfrecord import iter_tfrecords
 
 _OFFSET_DIGITS = 20
 _EXTENSION = ".tfrecord"
@@ -95,11 +98,39 @@ class RawFrames:
     """Build and render the exact raw view independently of typed restart purges."""
 
     @staticmethod
+    def index_source(path: Path) -> _DirectoryNode:
+        """Index complete frames on a checked descriptor, without decoding events."""
+        frames = FrameIndex()
+        with EventSource.open(path) as handle:
+            identity = FileIdentity.of(os.fstat(handle.fileno()))
+            try:
+                for record in iter_tfrecords(handle):
+                    frames.append(
+                        record.record_offset + record.total_size, record.payload_crc
+                    )
+            except TFRecordError as error:
+                raise TFRecordError(
+                    f"{path}: {error}", corrupt=error.corrupt
+                ) from error
+
+        directory = _DirectoryNode()
+        directory["view"] = "raw"
+        RawFrames._add_source(directory, path, identity, frames)
+        return directory
+
+    @staticmethod
     def add(directory: dict[str, Any], run: RunCache, name_map: dict[str, str]) -> None:
         """Attach one lazy raw directory per source with validated frames."""
         directory["view"] = "raw"
         for cache in run.files.values():
-            RawFrames._add_source(directory, cache, name_map)
+            progress = cache.progress
+            RawFrames._add_source(
+                directory,
+                cache.source_path,
+                progress.identity,
+                progress.frames,
+                name_map=name_map,
+            )
 
     @staticmethod
     def extend(
@@ -108,24 +139,35 @@ class RawFrames:
         """Publish the appended frame index without replacing other raw listings."""
         raw = _DirectoryNode()
         raw.update(view="raw", children=directory["children"].copy())
-        RawFrames._add_source(raw, cache, name_map)
+        progress = cache.progress
+        RawFrames._add_source(
+            raw,
+            cache.source_path,
+            progress.identity,
+            progress.frames,
+            name_map=name_map,
+        )
         return raw
 
     @staticmethod
     def _add_source(
-        directory: dict[str, Any], cache: EventFileCache, name_map: dict[str, str]
+        directory: dict[str, Any],
+        path: Path,
+        identity: FileIdentity,
+        frames: FrameIndex,
+        *,
+        name_map: dict[str, str] | None = None,
     ) -> None:
-        path = cache.source_path
         basename = _Paths.safe_component(path.name, name_map=name_map)
-        progress = cache.progress
-        if progress.frames.ends:
-            source = _DirectoryNode()
-            source.update(
-                children=_RawFrameChildren(path, progress.identity, progress.frames),
-                view="raw",
-                mtime=0.0,
-            )
-            directory["children"][basename] = source
+        if not frames.ends:
+            return
+        source = _DirectoryNode()
+        source.update(
+            children=_RawFrameChildren(path, identity, frames),
+            view="raw",
+            mtime=0.0,
+        )
+        directory["children"][basename] = source
 
     @staticmethod
     def read(node: dict[str, Any]) -> bytes:

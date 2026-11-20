@@ -4,14 +4,16 @@ import struct
 from base64 import b64decode
 from dataclasses import replace
 from errno import EIO
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
+import wave
 
 import magic
 import pytest
 
 from scripts.scale_corpus import _ScaleCorpus
-from tboardfs import parse_file
+from tboardfs import TensorBoardFS, parse_file
 from tboardfs.classify import detect_extension
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.extract import _extract_graph_blob, extract_binary_blob
@@ -195,6 +197,87 @@ def test_noncanonical_images_cache_exact_filetype_results(tmp_path: Path) -> Non
     assert all(e.blob.size == len(blob) and e.blob.span is None for e in entries)
     assert 1 <= detect.call_count <= 2
     assert all(call.args[0] == blob for call in detect.call_args_list)
+
+
+def test_large_audio_memo_respects_late_magic_rules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only complete, adjacent duplicates share a classification within one parse."""
+
+    def wav(tail: bytes) -> bytes:
+        tone = struct.pack("<8h", 0, 8485, 12000, 8485, 0, -8485, -12000, -8485)
+        buffer = BytesIO()
+        with wave.open(buffer, "wb") as audio:
+            audio.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+            audio.writeframes(tone * 512 + tail)
+        return buffer.getvalue()
+
+    ordinary = wav(bytes(4))
+    custom = wav(b"TEST")
+    late_offset = len(custom) - 4
+    assert (
+        len(ordinary) == len(custom) and ordinary[:late_offset] == custom[:late_offset]
+    )
+
+    def set_rules(extension: str) -> None:
+        rules = tmp_path / f"magic-{extension}"
+        rules.write_text(
+            f"{late_offset} string TEST custom WAVE test audio\n"
+            f"!:mime audio/{extension}\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("MAGIC", str(rules))
+        monkeypatch.setattr(magic, "_instances", {})
+
+    def write_events(path: Path, *clips: bytes) -> None:
+        frames = []
+        for step, clip in enumerate(clips, 1):
+            event = compat_pb2.Event(step=step)
+            if step == 3:
+                event.summary.value.add(tag="scalar", simple_value=1)
+                value = event.summary.value.add(tag="clip")
+                value.metadata.plugin_data.plugin_name = "audio"
+                value.tensor.dtype = 7
+                value.tensor.tensor_shape.dim.add(size=1)
+                value.tensor.string_val.append(clip)
+            else:
+                event.summary.value.add(tag="clip").audio.encoded_audio_string = clip
+            frames.append(_record(event.SerializeToString()))
+        path.write_bytes(b"".join(frames))
+
+    set_rules("flac")
+    path = tmp_path / "events.out.tfevents.audio"
+    write_events(path, ordinary, custom, custom)
+    with patch.object(magic, "from_buffer", wraps=magic.from_buffer) as detect:
+        entries = parse_file(path)["binary_entries"]
+    assert [call.args[0] for call in detect.call_args_list if call.kwargs["mime"]] == [
+        ordinary,
+        custom,
+    ]
+    assert [(e.kind, e.tag, e.step, e.extension, e.value_ordinal) for e in entries] == [
+        ("audio", "clip", 1, "wav", 0),
+        ("audio", "clip", 2, "flac", 0),
+        ("audio", "clip", 3, "flac", 1),
+    ]
+    assert len({entry.frame.payload_offset for entry in entries}) == 3
+    assert [extract_binary_blob(entry) for entry in entries] == [
+        ordinary,
+        custom,
+        custom,
+    ]
+    assert TensorBoardFS(tmp_path).readdir("/audio/clip")[2:] == [
+        "000001.wav",
+        "000002.flac",
+        "000003.flac",
+    ]
+
+    set_rules("aiff")
+    fresh = tmp_path / "events.out.tfevents.fresh"
+    write_events(fresh, custom)
+    with patch.object(magic, "from_buffer", wraps=magic.from_buffer) as detect:
+        (entry,) = parse_file(fresh)["binary_entries"]
+    detect.assert_called_once_with(custom, mime=True)
+    assert entry.extension == "aiff"
 
 
 def test_filetype_cache_distinguishes_a_changed_tail(tmp_path: Path) -> None:

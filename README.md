@@ -269,6 +269,16 @@ Legacy image and audio values without plugin metadata go directly to binary inde
 
 Metadata inherited from an earlier value with the same tag still applies.
 
+During each scan, tboardfs remembers the last audio clip larger than 4 KiB and no larger than 1 MiB.
+
+It reuses the detected extension only if the complete clip matches, so a custom libmagic rule can still distinguish
+clips with identical headers.
+
+The classifier loads libmagic only for payloads that need its rules, or before mounting with the disk index enabled to
+fingerprint those rules.
+
+A valid `M4A ` major brand does not need a MIME lookup; the existing HEIF-family image brand checks take precedence.
+
 For unambiguous fields in frames of at least 4 KiB, the index also records the exact payload range.
 
 Directory listings return names and file types together.
@@ -316,7 +326,7 @@ Shared memory maps (`mmap` with `MAP_SHARED`, `np.load(path, mmap_mode="r")`) fa
 ## Command Mode
 
 ```bash
-tboardfs-file [--logfile FILE] [--loglevel LEVEL] COMMAND [OPTIONS] SOURCE ...
+tboardfs-file [--logfile FILE] [--loglevel LEVEL] [--framing-only] COMMAND [OPTIONS] SOURCE ...
 ```
 
 SOURCE is one event file, a run directory, or a log directory.
@@ -334,6 +344,15 @@ SOURCE is one event file, a run directory, or a log directory.
 All three commands accept `--scalar-format` and `--step-digits`, with the same meaning as in filesystem mode. `list` and
 `copy-all` default to typed files. Use `--view raw` for complete frames or `--view both` for both views. `list` with an
 explicit raw prefix and `get` with an explicit raw path can select a frame directly.
+
+For a single event file, `tboardfs-file --framing-only list SOURCE` lists raw frames without decoding summaries or
+calling libmagic.
+
+`--framing-only` also works with `get` and `copy-all` and implies the raw view.
+
+It checks both CRCs of every frame before producing output, even when you request only the first frame.
+
+Use the default mode when you also want warnings about malformed protobufs or typed conversions.
 
 ```bash
 tboardfs-file list events.out.tfevents.123
@@ -679,13 +698,18 @@ lengths above 1 GiB before reading the payload. CRC32C detects accidental damage
 
 - **Single event file:** `list`, `get` and `copy-all` fail on a corrupt frame or an incomplete tail. No single-file
   salvage option is available.
+
 - **Mount or directory source:** a bad frame stops that file at the last verified frame. Other source files remain
   readable. An incomplete live tail is retried after the file changes.
+
 - A verified frame whose payload cannot be decoded still appears under `raw`. Concatenating the frames of a stable,
   fully verified source in filename order reproduces the entire event file.
-- A value that tboardfs cannot convert has no file, and tboardfs logs a warning once. Examples are an hparams or mesh
-  record whose plugin data does not decode, a custom scalar layout that does not decode, and a malformed graph,
-  `RunMetadata` or meta graph. The other values of the same event stay.
+
+- During typed indexing, tboardfs logs one warning for a value it cannot convert and keeps the other values of the
+  event.
+
+  Examples include invalid hparams, mesh, custom scalar layout, graph, `RunMetadata`, and meta graph records.
+
 - When only a conversion fails, the file with the stored bytes stays, for example `<step>.run_metadata.pb` without its
   `.pbtxt`.
 

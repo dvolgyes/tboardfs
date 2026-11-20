@@ -2,6 +2,7 @@
 
 from collections import deque
 from dataclasses import dataclass
+from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 import json
 import os
@@ -14,7 +15,6 @@ import zlib
 import google.protobuf
 from google.protobuf.descriptor import FileDescriptor
 from google.protobuf.internal import api_implementation
-import magic
 import numpy as np
 import xxhash
 
@@ -42,6 +42,7 @@ class IndexPolicy:
     @classmethod
     def capture(cls, *, mountpoint: Path | None = None) -> "IndexPolicy | None":
         """Fingerprint before mounting; restart the process after host rule upgrades."""
+        import_module("magic")
         try:
             host = MagicHost.observe()
             if not host.files_unchanged():
@@ -156,7 +157,7 @@ class IndexPolicy:
             google.protobuf.__version__,
             api_implementation.Type(),
             version("python-magic"),
-            magic.version(),
+            import_module("magic").version(),
             zlib.ZLIB_RUNTIME_VERSION,
         )
 

@@ -13,8 +13,8 @@ from tboardfs.host_publish import OutputPublisher, _OutputConflictError
 from tboardfs.indexer import _EventIndexer
 from tboardfs.leaf_spec import LeafSpec, LeafValue
 from tboardfs.model import RunCache, TFRecordError
-from tboardfs.paths import _Paths
-from tboardfs.raw_frames import _RawFrameChildren
+from tboardfs.paths import _DirectoryNode, _Paths
+from tboardfs.raw_frames import RawFrames, _RawFrameChildren
 from tboardfs.render_node import render_node
 from tboardfs.run_listing import RunListing
 from tboardfs.run_tree import RunTree
@@ -93,6 +93,20 @@ class SingleEventTree:
             raise _NoEventError(source_path)
         run.files[source_path] = cache
         self.tree = RunTree.build(run, scalar_formats, step_digits)
+
+    @classmethod
+    def from_framing(cls, source: str | Path) -> "SingleEventTree":
+        """Build a single source's raw tree without decoding event payloads."""
+        source_path = Path(source)
+        if source_path.is_dir():
+            raise IsADirectoryError("--framing-only requires a single event file")
+        raw = RawFrames.index_source(source_path)
+        if not raw["children"]:
+            raise _NoEventError(source_path)
+        tree = cls.__new__(cls)
+        tree.tree = _DirectoryNode()
+        tree.tree["children"]["raw"] = raw
+        return tree
 
     def iter_file_paths(
         self, *, prefix: str = "/", view: str | None = None

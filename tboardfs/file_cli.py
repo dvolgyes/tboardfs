@@ -14,8 +14,18 @@ from tboardfs.file_cli_commands import register_file_cli_commands
 @click.group()
 @click.option("--logfile", type=click.Path(dir_okay=False))
 @LOGLEVEL
-def main(logfile: str | None, loglevel: str) -> None:
+@click.option(
+    "-F",
+    "--framing-only",
+    is_flag=True,
+    help="Validate TFRecord framing without decoding events; single-file raw view only.",
+)
+@click.pass_context
+def main(
+    ctx: click.Context, logfile: str | None, loglevel: str, framing_only: bool
+) -> None:
     """Inspect a TensorBoard event file or log directory without FUSE."""
+    ctx.meta["framing_only"] = framing_only
     try:
         _configure_logging(Path(logfile) if logfile is not None else None, loglevel)
     except OSError as error:

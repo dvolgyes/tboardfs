@@ -2,6 +2,7 @@
 
 import ctypes
 from dataclasses import dataclass, field
+from importlib import import_module
 from itertools import islice
 import locale
 import os
@@ -10,8 +11,6 @@ import stat
 import sys
 import time
 from typing import ClassVar, cast
-
-import magic
 
 _MAX_PATHS = 128
 _FILE_LOAD = 0
@@ -43,6 +42,7 @@ class _Loader:
     @staticmethod
     def path() -> Path:
         """Return the path of the mapped libmagic object."""
+        magic = import_module("magic")
         symbol = ctypes.cast(magic.libmagic["magic_getpath"], ctypes.c_void_p)
         dladdr = ctypes.CDLL(None)["dladdr"]
         dladdr.argtypes = (ctypes.c_void_p, ctypes.POINTER(_DlInfo))
@@ -91,6 +91,7 @@ class _Loader:
         """Ask the loaded library for its ordered POSIX rule path list."""
         if os.name != "posix":
             raise ValueError("unsupported libmagic lookup platform")
+        magic = import_module("magic")
         call = magic.libmagic["magic_getpath"]
         call.argtypes = (ctypes.c_char_p, ctypes.c_int)
         call.restype = ctypes.c_char_p
@@ -225,10 +226,11 @@ class MagicHost:
     @classmethod
     def observe(cls) -> "MagicHost":
         """Observe native lookup only during opt-in, before the mount starts."""
+        magic = import_module("magic")
         environment = cls._environment()
         rules = _RuleFiles()
         rules.record(_Loader.path())
-        rules.record(Path(magic.__file__))
+        rules.record(Path(cast(str, magic.__file__)))
         rules.record_home()
         present = False
         for path in _Loader.rules():
@@ -239,6 +241,7 @@ class MagicHost:
 
     def unchanged(self) -> bool:
         """Check live process compatibility without touching rule files."""
+        magic = import_module("magic")
         try:
             return self.environment == self._environment() and all(
                 getattr(instance, "_tboardfs_magic_environment", None)
@@ -252,6 +255,7 @@ class MagicHost:
         """Check files during pre-mount capture, not on FUSE or worker paths."""
         if not self.unchanged():
             return False
+        magic = import_module("magic")
         cookie_times = [
             int(getattr(instance, "_tboardfs_magic_loaded_after", 0))
             for instance in tuple(magic._instances.values())
@@ -271,6 +275,7 @@ class MagicHost:
     @classmethod
     def classify(cls, blob: bytes, *, mime: bool = False) -> str:
         """Use python-magic normally, recording its first load without filesystem I/O."""
+        magic = import_module("magic")
         if not hasattr(magic, "_instances") or mime in magic._instances:
             return cast(str, magic.from_buffer(blob, mime=mime))
         environment = cls._environment()

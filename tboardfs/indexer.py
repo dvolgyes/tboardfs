@@ -52,6 +52,7 @@ from tboardfs.tfrecord import iter_tfrecords
 _MALFORMED_RECORD_ERRORS = (DecodeError, ValueError, struct.error)
 _FLOAT32 = np.dtype("float32")
 _FLOAT64 = np.dtype("float64")
+_LARGE_AUDIO_MEMO_LIMIT = 1 << 20
 
 
 def parse_file(filename: str | Path) -> dict[str, Any]:
@@ -121,6 +122,7 @@ class _ParseState:
     first_time: float | None = None
     epoch: object = None
     binary_extensions: dict[tuple[str, bytes], str | None] = field(default_factory=dict)
+    large_audio_extension: tuple[bytes, str | None] | None = None
     clock: _ClockDependencies | None = None
     deferred_tensor_content: list[tuple[int, int, int, int]] | None = None
     retain_tensor_extents: bool = False
@@ -517,7 +519,7 @@ class _EventIndexer:
             value,
             (tag, step, wall_time),
             spans,
-            state.binary_extensions,
+            state,
         )
         if plain_media:
             return epoch
@@ -596,7 +598,7 @@ class _EventIndexer:
         value: dict[str, Any],
         identity: tuple[str, Any, float],
         spans: PayloadSpans | None,
-        extensions: dict[tuple[str, bytes], str | None],
+        state: _ParseState,
     ) -> None:
         """Index a binary summary value lazily by source record position."""
         tag, step, wall_time = identity
@@ -613,9 +615,7 @@ class _EventIndexer:
             data = _Classifier.binary_blob(value) if part is None else strings[part]
             if data is None:
                 continue
-            extension = _EventIndexer.binary_extension(
-                value, part_kind, data, extensions
-            )
+            extension = _EventIndexer.binary_extension(value, part_kind, data, state)
             if extension is None:
                 continue
             if spans is not None and candidates is None:
@@ -679,19 +679,29 @@ class _EventIndexer:
         value: dict[str, Any],
         kind: str,
         data: bytes,
-        cached: dict[tuple[str, bytes], str | None],
+        state: _ParseState,
     ) -> str | None:
-        """Reuse file-type decisions for small, byte-identical media."""
+        """Reuse exact-byte media classifications within this parse."""
         if kind == "tensors" and value.get("packed_float32"):
             return "bin"
-        if len(data) > 4096 or kind == "graphs":
-            return _TensorSummary.part_extension(value, kind, data)
-        key = (kind, data)
-        if key not in cached:
+        size = len(data)
+        if size <= 4096 and kind != "graphs":
+            cached = state.binary_extensions
+            key = (kind, data)
+            if key in cached:
+                return cached[key]
             if len(cached) == 128:
                 cached.clear()
-            cached[key] = _TensorSummary.part_extension(value, kind, data)
-        return cached[key]
+            cached[key] = extension = _TensorSummary.part_extension(value, kind, data)
+            return extension
+        if kind == "audio" and size <= _LARGE_AUDIO_MEMO_LIMIT:
+            previous = state.large_audio_extension
+            if previous is not None and data == previous[0]:
+                return previous[1]
+            extension = _TensorSummary.part_extension(value, kind, data)
+            state.large_audio_extension = (data, extension)
+            return extension
+        return _TensorSummary.part_extension(value, kind, data)
 
     @staticmethod
     def binary_candidates(

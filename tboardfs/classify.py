@@ -242,7 +242,10 @@ class _Classifier:
         if blob.startswith(b"\x93NUMPY"):
             return _Classifier.numpy_extension(blob)
         if blob[4:8] == b"ftyp":
-            return _Classifier.image_brand(blob)
+            extension = _Classifier.image_brand(blob)
+            if extension is None and blob[8:12] == b"M4A ":
+                return "m4a"
+            return extension
         return native_extension(blob) or media_extension(blob) or data_extension(blob)
 
     @staticmethod
@@ -316,8 +319,6 @@ class _Classifier:
         mime = MagicHost.classify(blob, mime=True).lower()
         if mime == "audio/mpeg" and (layer := _Classifier.mpeg_layer(blob)):
             return layer
-        if blob[4:12] == b"ftypM4A ":
-            return "m4a"
         mime_extensions = {
             "application/json": "json",
             "audio/aac": "aac",

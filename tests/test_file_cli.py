@@ -1,14 +1,21 @@
 from errno import ENOENT
+from io import BytesIO
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
+import wave
 
 from click.testing import CliRunner
+import magic
 import pytest
 
 from tboardfs import TensorBoardFS, find_tensorboard_files
 from tboardfs.file_cli import main
 from tboardfs.file_tree import SingleEventTree
+from tboardfs.proto import compat_pb2
+
+from test_parse_file import _record
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -495,6 +502,127 @@ def test_raw_selection_and_publication_policies(tmp_path: Path) -> None:
     assert "Copied successfully: 1 files" in failed.stderr and paths[0] in failed.stderr
     assert "not a regular file" in failed.stderr
     assert not list(out.rglob(".tboardfs-*.tmp"))
+
+
+def test_framing_only_commands_skip_magic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep raw frames independent of custom classifications and typed diagnostics."""
+    audio = BytesIO()
+    with wave.open(audio, "wb") as wav:
+        wav.setparams((1, 1, 8000, 0, "NONE", "not compressed"))
+        wav.writeframes(b"TEST" * 32)
+    blob = audio.getvalue()
+    event = compat_pb2.Event(step=1)
+    clip = event.summary.value.add(tag="clip").audio
+    clip.content_type = "audio/wav"
+    clip.encoded_audio_string = blob
+    invalid = event.summary.value.add(tag="broken-layout")
+    invalid.metadata.plugin_data.plugin_name = "custom_scalars"
+    invalid.tensor.dtype = 7
+    invalid.tensor.string_val.append(b"\xff\xff\xff")
+    frames = (_record(event.SerializeToString()), _record(b"\xff\xff\xff"))
+    source = tmp_path / "events.out.tfevents.audio"
+    source.write_bytes(b"".join(frames))
+    raw = f"/raw/{source.name}"
+    paths = [f"{raw}/{offset:020d}.tfrecord" for offset in (0, len(frames[0]))]
+
+    rules = tmp_path / "magic"
+    rules.write_text(
+        "44 string TEST custom WAVE test audio\n!:mime audio/flac\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAGIC", str(rules))
+    monkeypatch.setattr(magic, "_instances", {})
+    runner = CliRunner()
+    with patch.object(magic, "from_buffer", wraps=magic.from_buffer) as detect:
+        for args in ([], ["--view", "raw"], ["/raw"], [raw]):
+            result = runner.invoke(main, ["--framing-only", "list", str(source), *args])
+            assert result.exit_code == 0, result.output
+            assert result.stdout.splitlines() == paths
+            assert "broken-layout" not in result.stderr
+            detect.assert_not_called()
+
+        for path, frame in zip(paths, frames, strict=True):
+            result = runner.invoke(
+                main, ["--framing-only", "get", str(source), path, "-o", "-"]
+            )
+            assert result.exit_code == 0, result.output
+            assert result.stdout_bytes == frame
+            detect.assert_not_called()
+
+        out = tmp_path / "raw-export"
+        result = runner.invoke(
+            main, ["--framing-only", "copy-all", str(source), str(out)]
+        )
+        assert result.exit_code == 0, result.output
+        assert sorted(p for p in out.rglob("*") if p.is_file()) == [
+            _target_for_virtual_path(out, path) for path in paths
+        ]
+        assert (
+            b"".join(_target_for_virtual_path(out, path).read_bytes() for path in paths)
+            == source.read_bytes()
+        )
+        detect.assert_not_called()
+
+        checked = runner.invoke(main, ["list", str(source), "--view", "raw"])
+        assert checked.exit_code == 0 and checked.stdout.splitlines() == paths
+        assert "skipping malformed record" in checked.stderr
+        assert "custom_scalars record broken-layout at step 1" in checked.stderr
+
+        typed = "/audio/clip/000001.flac"
+        result = runner.invoke(main, ["list", str(source), "--view", "both"])
+        assert result.exit_code == 0, result.output
+        assert result.stdout.splitlines() == [typed, *paths]
+        detect.assert_called_with(blob, mime=True)
+        result = runner.invoke(main, ["get", str(source), typed, "-o", "-"])
+        assert result.exit_code == 0, result.output
+        assert result.stdout_bytes == blob
+
+
+@pytest.mark.parametrize("command", ["list", "get-stdout", "get-file", "copy-all"])
+@pytest.mark.parametrize("damage", ["checksum", "truncated"])
+def test_single_file_raw_commands_validate_later_frame_before_output(
+    tmp_path: Path, command: str, damage: str
+) -> None:
+    """Even an explicit read of the first frame rejects damage farther on."""
+    source = tmp_path / "events.out.tfevents.broken"
+    first = _record(compat_pb2.Event(file_version="brain.Event:2").SerializeToString())
+    second = _record(b"\xff\xff\xff")
+    if damage == "checksum":
+        second = second[:-1] + bytes([second[-1] ^ 1])
+    else:
+        second = second[:-1]
+    source.write_bytes(first + second)
+    raw = f"/raw/{source.name}/{0:020d}.tfrecord"
+    out = tmp_path / "output"
+    args = {
+        "list": ["list", str(source), raw],
+        "get-stdout": ["get", str(source), raw, "-o", "-"],
+        "get-file": ["get", str(source), raw, "-o", str(out), "--view", "raw"],
+        "copy-all": ["copy-all", str(source), str(out), "--view", "raw"],
+    }
+    result = CliRunner().invoke(main, ["--framing-only", *args[command]])
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit)
+    assert not result.stdout_bytes and not out.exists()
+    assert str(source) in result.stderr and damage in result.stderr
+
+
+@pytest.mark.parametrize("view", ["typed", "both"])
+def test_framing_only_rejects_typed_views(view: str) -> None:
+    result = CliRunner().invoke(
+        main, ["--framing-only", "list", str(FIXTURE_EVENT), "--view", view]
+    )
+    assert result.exit_code != 0 and not result.stdout_bytes
+    assert "--view" in result.stderr and "--framing-only" in result.stderr
+
+
+def test_framing_only_rejects_directory_sources() -> None:
+    result = CliRunner().invoke(
+        main, ["--framing-only", "list", str(FIXTURE_EVENT.parent)]
+    )
+    assert result.exit_code != 0 and not result.stdout_bytes
+    assert "--framing-only" in result.stderr
 
 
 def test_failed_get_preserves_existing_file(tmp_path: Path) -> None:
