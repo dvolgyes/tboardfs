@@ -208,6 +208,8 @@ Unchanged sources need no reopen for indexing.
 
 For regular files in one directory, a live refresh resolves the directory once and checks each file relative to it.
 
+This avoids repeated directory lookups without adding a delay before tboardfs sees an append.
+
 If that directory is renamed during the check, tboardfs still checks its regular files through the open directory.
 
 The next refresh resolves the directory name again.
