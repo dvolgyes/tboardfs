@@ -1,8 +1,11 @@
 """A growing run publishes immutable trees equivalent to a fresh mount."""
 
+from errno import ENOENT
 import json
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
@@ -86,8 +89,19 @@ def test_growing_run_reuses_untouched_typed_subtree(tmp_path: Path) -> None:
     old_loss = _node(before, loss)
 
     _append(run_a, 1)
+    handle = fs.open(loss, 0)
+    try:
+        opened = fs.read(loss, 4096, 0, handle)
+        assert [row["value"] for row in json.loads(opened)] == [1.0, 0.5]
+    finally:
+        fs.release(loss, handle)
     middle = fs.virtual_tree()
     assert _node(middle, stable) is old_branch
+    assert _node(middle, "/run_b") is _node(before, "/run_b")
+    sibling_loss = "/run_b/scalars/loss.json"
+    handle = fs.open(sibling_loss, 0)
+    fs.release(sibling_loss, handle)
+    assert fs.virtual_tree() is middle
     _append_records(run_a, _scalars(2, 102, loss=0.25, new_tag=9.0))
     after = fs.virtual_tree()
 
@@ -265,3 +279,39 @@ def test_removed_nested_run_leaves_no_entries_in_its_parent_run(
     nested.unlink()
 
     assert _listing(fs) == _listing(TensorBoardFS(tmp_path))
+
+
+def test_flat_run_removals_refresh_listings_and_inherited_times(tmp_path: Path) -> None:
+    newest, next_newest = _two_runs(tmp_path)
+    _append(newest, 20)
+    _append(next_newest, 10)
+    oldest = tmp_path / "run_c" / EVENTS
+    oldest.parent.mkdir()
+    _append(oldest, 0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, scalar_formats="json")
+    before = fs.virtual_tree()
+    assert before["mtime"] == 120
+
+    newest.unlink()
+
+    assert fs.readdir("/run_a") == [".", ".."]
+    assert fs.getattr("/run_a")["st_mtime"] == fs.getattr("/")["st_mtime"] == 110
+    with pytest.raises(OSError) as missing_file:
+        fs.open("/run_a/scalars/loss.json", 0)
+    assert missing_file.value.errno == ENOENT
+    middle = fs.virtual_tree()
+
+    next_newest.unlink()
+    next_newest.parent.rmdir()
+
+    assert fs.readdir("/") == [".", "..", "run_a", "run_c"]
+    with pytest.raises(OSError) as missing_dir:
+        fs.readdir("/run_b")
+    assert missing_dir.value.errno == ENOENT
+    assert fs.getattr("/run_a")["st_mtime"] == fs.getattr("/")["st_mtime"] == 100
+    assert fs.readdir("/run_c/scalars") == [".", "..", "loss.json"]
+    assert before["mtime"] == 120
+    assert _node(before, "/run_a")["mtime"] == 120
+    assert "loss.json" in _node(before, "/run_a/scalars")["children"]
+    assert _node(middle, "/run_a")["mtime"] == 110
+    assert "loss.json" in _node(middle, "/run_b/scalars")["children"]

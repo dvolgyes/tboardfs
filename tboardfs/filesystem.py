@@ -52,13 +52,21 @@ class _Directory:
 
 
 @dataclass
+class _MountTree:
+    """Last published root and the runs changed since that publication."""
+
+    root: dict[str, Any] | None = None
+    dirty: set[tuple[str, ...]] = field(default_factory=set)
+    generation: int = 0
+
+
+@dataclass
 class _FsState:
     """Mutable TensorBoardFS cache state.
 
     :ivar runs: run caches by virtual run path
     :ivar directories: local discovery state by source directory
-    :ivar tree_cache: generation and virtual tree put together from run trees
-    :ivar tree_generation: current virtual tree generation
+    :ivar tree: mount-wide tree publication state
     :ivar run_trees: run version and virtual tree by run path
     :ivar next_version: next unused run data version
     :ivar open_files: content and mtime kept for each open file handle
@@ -68,8 +76,7 @@ class _FsState:
     index: _IndexOptions
     runs: dict[tuple[str, ...], RunCache] = field(default_factory=dict)
     directories: dict[tuple[str, ...], _Directory] = field(default_factory=dict)
-    tree_cache: tuple[int, dict[str, Any]] | None = None
-    tree_generation: int = 0
+    tree: _MountTree = field(default_factory=_MountTree)
     run_trees: dict[tuple[str, ...], tuple[int, dict[str, Any]]] = field(
         default_factory=dict
     )
@@ -400,21 +407,22 @@ class TensorBoardFS:
     def _build_tree(self) -> dict[str, Any]:
         tree = self._run_places.build(
             {
-                run_parts: (
-                    self._run_tree(self._state.runs[run_parts])
-                    if run_parts in self._state.runs
-                    and (
-                        self._state.runs[run_parts].files
-                        or (not run_parts and not self._state.directories[()].children)
-                    )
-                    else {"type": "dir", "children": {}}
-                )
-                for run_parts in self._state.directories
+                parts: self._visible_run(parts) or {"type": "dir", "children": {}}
+                for parts in self._state.directories
             }
         )
         # The run trees have their times, so only the run folders get them.
         FileTimes.stamp_dirs(tree)
         return tree
+
+    def _visible_run(self, parts: tuple[str, ...]) -> dict[str, Any] | None:
+        """Return the run's own tree, or leave its mount directory empty."""
+        run = self._state.runs.get(parts)
+        if run is not None and (
+            run.files or (not parts and not self._state.directories[()].children)
+        ):
+            return self._run_tree(run)
+        return None
 
     def _run_tree(self, run: RunCache) -> dict[str, Any]:
         cached = self._state.run_trees.get(run.run_parts)
@@ -636,7 +644,7 @@ class TensorBoardFS:
     def _change_run_version(self, run: RunCache) -> None:
         self._drop_run_cache(run)
         run.version = self._version()
-        self._invalidate_tree()
+        self._invalidate_tree(parts=run.run_parts)
 
     def _refresh_run(
         self,
@@ -758,17 +766,34 @@ class TensorBoardFS:
             logger.info(message, *args)
 
     def _cached_tree(self) -> dict[str, Any]:
-        generation = self._state.tree_generation
-        cached = self._state.tree_cache
-        if cached is not None and cached[0] == generation:
-            return cached[1]
-        # Keep the generation from before the build: a change during the
-        # build must make the next lookup rebuild.
-        tree = self._build_tree()
-        self._state.tree_cache = (generation, tree)
+        snapshot = self._state.tree
+        root = snapshot.root
+        if root is not None and not snapshot.dirty:
+            return root
+        generation = snapshot.generation
+        if root is None:
+            tree = self._build_tree()
+        else:
+            changes = {
+                parts: self._visible_run(parts) for parts in tuple(snapshot.dirty)
+            }
+            tree = self._run_places.update(root, changes)
+        snapshot.dirty.clear()
+        snapshot.root = tree if generation == snapshot.generation else None
         return tree
 
-    def _invalidate_tree(self) -> None:
+    def _invalidate_tree(self, *, parts: tuple[str, ...] | None = None) -> None:
+        """Retain the last snapshot only while its folder placement is valid."""
         self._renders.expire(None)
-        self._state.tree_generation += 1
-        self._state.tree_cache = None
+        snapshot = self._state.tree
+        snapshot.generation += 1
+        if (
+            parts
+            and snapshot.root is not None
+            and self._run_places.flat
+            and parts in self._run_places.disk_parts
+        ):
+            snapshot.dirty.add(parts)
+        else:
+            snapshot.root = None
+            snapshot.dirty.clear()

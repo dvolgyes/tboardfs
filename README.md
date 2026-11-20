@@ -191,6 +191,11 @@ Listing a run or looking up a path inside it indexes the event files directly in
 
 A recursive `find MOUNTPOINT` enters each listed run, so its first traversal still indexes them all.
 
+When the source contains only sibling runs and their folder names need no encoding or renaming, opening or refreshing
+one run replaces its branch without rebuilding populated siblings.
+
+Adding or removing a directory, nesting runs, or resolving a folder-name collision uses full placement instead.
+
 After a run is indexed, accessing its virtual paths checks known event files even within the discovery interval.
 
 The check uses device, inode, birth time where available, size, modification time and status-change time; it ignores
