@@ -146,7 +146,9 @@ class _EventIndexer:
 
         Persistent indexes consume every image frame along with the tensor extents.
         """
-        with EventSource.open(path, mountpoint=mountpoint) as handle:
+        with EventSource.open(
+            path, mountpoint=mountpoint, sequential=base_cache is None
+        ) as handle:
             status = os.fstat(handle.fileno())
             if base_cache is not None and (
                 base_cache.progress.identity != FileIdentity.of(status)

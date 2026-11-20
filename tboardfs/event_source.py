@@ -1,15 +1,17 @@
 """Access regular event files without traversing the local FUSE mount."""
 
+import os
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from errno import EINVAL, ELOOP, ENOENT, ENOTDIR, ESTALE
 from functools import partial
-import os
 from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import BinaryIO
 
 from tboardfs.file_status import FileIdentity
+
+_SCAN_BUFFER = 64 << 10
 
 
 class EventSource:
@@ -95,8 +97,10 @@ class EventSource:
         return fallback(path)
 
     @classmethod
-    def open(cls, path: Path, *, mountpoint: Path | None = None) -> BinaryIO:
-        """Open a nonblocking descriptor and check that same descriptor's type."""
+    def open(
+        cls, path: Path, *, mountpoint: Path | None = None, sequential: bool = False
+    ) -> BinaryIO:
+        """Open a checked regular file and buffer large sequential scans."""
         flags = os.O_RDONLY | os.O_NONBLOCK
         expected = None
         if mountpoint is None:
@@ -109,7 +113,10 @@ class EventSource:
             actual = cls._regular(path, os.fstat(fd))
             if expected is not None and expected != FileIdentity.of(actual):
                 raise OSError(ESTALE, "source changed while opening", path)
-            return os.fdopen(fd, "rb")
+            buffering = (
+                _SCAN_BUFFER if sequential and actual.st_size >= _SCAN_BUFFER else -1
+            )
+            return os.fdopen(fd, "rb", buffering=buffering)
         except BaseException:
             os.close(fd)
             raise

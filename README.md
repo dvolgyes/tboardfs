@@ -101,6 +101,10 @@ tboardfs runs in the background by default. With `--foreground`, it stays in the
 In the background, the log goes only to `--logfile`. Without `--logfile`, you do not see the warnings about damaged
 data; use `--logfile` or `--foreground` when you need them.
 
+The initial serial scan uses a 64 KiB read buffer for event files of at least 64 KiB.
+
+Smaller files and append refreshes use Python's default buffering.
+
 ### Parallel cold indexing
 
 For a large event file that takes tens of seconds to open, try `tboardfs -j 4 SOURCE MOUNTPOINT`.
