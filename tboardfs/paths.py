@@ -152,7 +152,7 @@ class _Paths:
         normalized = posixpath.normpath("/" + path.lstrip("/"))
         if normalized == "/":
             return ()
-        return tuple(part for part in normalized.split("/") if part)
+        return tuple(normalized[1:].split("/"))
 
     @staticmethod
     def norm_virtual_path(path: str, *, base: str = "/") -> str:
@@ -254,6 +254,8 @@ class _Paths:
     @staticmethod
     def step_name(step: object, digits: int) -> str:
         """Format a TensorBoard step for a virtual filename."""
+        if type(step) is int:
+            return f"{step:0{digits}d}"
         if isinstance(step, np.generic):
             step = step.item()
         if isinstance(step, int):

@@ -1,10 +1,15 @@
-"""mfusepy operations that give each open file its own uncached version."""
+"""mfusepy operations for direct file I/O and typed directory listings."""
 
+from collections.abc import Iterator
+from stat import S_IFDIR, S_IFREG
 from typing import Any, Protocol
 
 from mfusepy import Operations
 
 from tboardfs.filesystem import TensorBoardFS
+from tboardfs.leaf_spec import LeafSpec
+from tboardfs.raw_frames import _RawFrameChildren
+from tboardfs.run_listing import RunListing
 
 
 class _FileInfo(Protocol):
@@ -41,6 +46,25 @@ class MountedTensorBoardFS(TensorBoardFS, Operations):  # type: ignore[misc]
     ) -> dict[str, Any]:
         """Return stat data for a path or for the handle in the file info."""
         return super().getattr(path, *self._handles(file_handles))
+
+    def readdir(  # type: ignore[override]
+        self, path: str, *file_handles: object
+    ) -> Iterator[tuple[str, int, int]]:
+        """Return type hints with offset zero so libfuse paginates the listing."""
+        del file_handles
+        directory, names = self._listed_directory(path)
+        children = directory["children"]
+
+        yield ".", S_IFDIR, 0
+        yield "..", S_IFDIR, 0
+        if isinstance(children, _RawFrameChildren):
+            for name in names:
+                yield name, S_IFREG, 0
+            return
+        entries = children.entries if isinstance(children, RunListing) else children
+        for name in names:
+            mode = S_IFDIR if LeafSpec.kind_of(entries[name]) == "dir" else S_IFREG
+            yield name, mode, 0
 
     def read(  # type: ignore[override]
         self, path: str, size: int, offset: int, *file_handles: _FileInfo | None

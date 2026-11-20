@@ -1,8 +1,12 @@
 """The mount adapter maps raw FUSE file info onto TensorBoardFS handles."""
 
+from errno import ENOENT, ENOTDIR
 import json
 from pathlib import Path
+from stat import S_IFDIR, S_IFREG
 from types import SimpleNamespace
+
+import pytest
 
 from tboardfs.mounted import MountedTensorBoardFS
 
@@ -40,3 +44,21 @@ def test_release_frees_the_version_of_the_file_info(tmp_path: Path) -> None:
     fs.release(LOSS, info)
 
     assert len(json.loads(fs.read(LOSS, 1 << 20, 0, info))) == 3
+
+
+def test_directory_hints_report_virtual_types_and_keep_listing_errors(
+    tmp_path: Path,
+) -> None:
+    fs, _ = _mounted(tmp_path)
+    assert ("scalars", S_IFDIR, 0) in fs.readdir("/", 0)
+    assert list(fs.readdir("/scalars", 0)) == [
+        (".", S_IFDIR, 0),
+        ("..", S_IFDIR, 0),
+        ("loss.json", S_IFREG, 0),
+        ("loss.npz", S_IFREG, 0),
+        ("loss.tsv", S_IFREG, 0),
+    ]
+    for path, code in ((LOSS, ENOTDIR), ("/missing", ENOENT)):
+        with pytest.raises(OSError) as raised:
+            list(fs.readdir(path, 0))
+        assert raised.value.errno == code

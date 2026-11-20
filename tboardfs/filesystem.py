@@ -195,12 +195,16 @@ class TensorBoardFS:
     def readdir(self, path: str, *file_handles: object) -> list[str]:
         """Return virtual directory entries."""
         del file_handles
+        _, names = self._listed_directory(path)
+        return [".", "..", *names]
+
+    def _listed_directory(self, path: str) -> tuple[_DirectoryNode, tuple[str, ...]]:
+        """Return the refreshed directory snapshot and its sorted names."""
         with self._lock:
             node = self._lookup(path)
             if not isinstance(node, _DirectoryNode):
                 raise fuse_error(ENOTDIR)
-            names = node.sorted_names()
-        return [".", "..", *names]
+            return node, node.sorted_names()
 
     def open(self, path: str, flags: int) -> int:
         """Open a virtual file and pin its current version for the handle."""

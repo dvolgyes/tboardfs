@@ -144,6 +144,11 @@ The tree stores the resolved names, including collision suffixes, before a direc
 
 Listing a directory does not construct its typed file nodes; looking up a file constructs only that node.
 
+The FUSE mount returns each name with its file type, so a name-only walk such as `find MOUNTPOINT` does not need a
+separate `stat` for every file on Linux.
+
+Commands that request sizes or timestamps, such as `find MOUNTPOINT -ls`, still need file attributes.
+
 Only complete, stable parses without skipped records or conversion warnings are saved.
 
 Within a mount, appends still extend the in-memory index; a later mount reparses a changed file rather than trusting a

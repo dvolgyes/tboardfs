@@ -1,6 +1,7 @@
 """Reads through a real FUSE mount stay complete while event files grow."""
 
 from collections.abc import Iterator
+import ctypes
 import errno
 import io
 import json
@@ -8,6 +9,7 @@ import mmap
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import threading
@@ -28,6 +30,9 @@ pytestmark = pytest.mark.skipif(
     reason="needs Linux FUSE and fusermount",
 )
 MOUNT_TIMEOUT_SECONDS = 20.0
+_LINUX_DIRENT_HEADER = struct.Struct("=QqHB")
+_DT_DIR = 4
+_DT_REG = 8
 
 
 @pytest.fixture
@@ -156,3 +161,53 @@ def test_concurrent_readers_see_whole_versions_while_a_run_grows(
 
     assert errors == []
     assert _steps(run, "json") == list(range(900))
+
+
+def _getdents(directory: Path) -> list[tuple[str, int]]:
+    """Read Linux d_type directly, without a subprocess or stat fallback."""
+    libc = ctypes.CDLL(None)
+    if not hasattr(libc, "getdents64"):
+        pytest.skip("libc does not expose getdents64")
+    getdents = libc.getdents64
+    getdents.argtypes = (ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t)
+    getdents.restype = ctypes.c_ssize_t
+    buffer = ctypes.create_string_buffer(128)
+    entries = []
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        while size := getdents(fd, buffer, len(buffer)):
+            assert size > 0
+            offset = 0
+            while offset < size:
+                _, _, length, kind = _LINUX_DIRENT_HEADER.unpack_from(buffer, offset)
+                assert _LINUX_DIRENT_HEADER.size < length <= size - offset
+                name = buffer[offset + _LINUX_DIRENT_HEADER.size : offset + length]
+                entries.append((os.fsdecode(name.split(b"\0", 1)[0]), kind))
+                offset += length
+    finally:
+        os.close(fd)
+    return entries
+
+
+def test_getdents_returns_types_across_pages_and_refreshes_on_reopen(
+    mounted: tuple[Path, Path],
+) -> None:
+    """A metadata-free walk gets the complete, typed directory entries."""
+    event, run = mounted
+    assert ("scalars", _DT_DIR) in _getdents(run)
+    assert _getdents(run / "scalars") == [
+        (".", _DT_DIR),
+        ("..", _DT_DIR),
+        ("loss.json", _DT_REG),
+        ("loss.npz", _DT_REG),
+        ("loss.tsv", _DT_REG),
+    ]
+    raw = run / "raw" / event.name
+    before = _getdents(raw)
+    assert before[:2] == [(".", _DT_DIR), ("..", _DT_DIR)]
+    assert len(before) == len(set(before)) == 402
+    assert before[2:] == sorted(before[2:])
+    assert all(kind == _DT_REG for _, kind in before[2:])
+    offset = event.stat().st_size
+    _append(event, 400)
+    assert _getdents(raw) == [*before, (f"{offset:020d}.tfrecord", _DT_REG)]

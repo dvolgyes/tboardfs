@@ -94,7 +94,9 @@ def test_foreground_reports_only_the_accessed_run(
         """Trigger the first FUSE lookup without mounting."""
         del kwargs
         filesystem = args[0]
-        filesystem.readdir("/tensorboard/scalars")
+        assert any(
+            name == "train" for name, _, _ in filesystem.readdir("/tensorboard/scalars")
+        )
 
     monkeypatch.setattr(cli, "FUSE", capture_fuse)
 
