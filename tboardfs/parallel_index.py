@@ -4,7 +4,7 @@ import os
 from collections import deque
 from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
-from contextlib import suppress
+from contextlib import closing, suppress
 from errno import EAGAIN, EMFILE, ENFILE, ENOMEM
 from multiprocessing import current_process, get_context
 from pathlib import Path
@@ -161,27 +161,25 @@ class _Reduction:
     """Consume worker ranges strictly in order and repair incompatible seeds."""
 
     @staticmethod
-    def run(cache: EventFileCache, state: _ParseState, jobs: list[Job]) -> None:
-        """Reduce all jobs, releasing each result and closing the executor."""
+    def run(
+        cache: EventFileCache,
+        state: _ParseState,
+        pending: deque[tuple[Job, Future[_PackedResult]]],
+    ) -> None:
+        """Reduce submitted ranges in order, releasing each result after use."""
         metadata = cache.progress.effective_metadata
-        executor = _Reduction._new_pool(len(jobs))
-        pending: deque[Future[_PackedResult]] = deque()
-        try:
-            pending.extend(_Reduction._submit(executor, job) for job in jobs)
-            for job in jobs:
-                _Reduction.merge(
-                    cache,
+        while pending:
+            job = pending[0][0]
+            _Reduction.merge(
+                cache,
+                state,
+                _Reduction._corrected(
+                    _Reduction.worker_segment(pending.popleft()[1], job),
+                    job,
                     state,
-                    _Reduction._corrected(
-                        _Reduction.worker_segment(pending.popleft(), job),
-                        job,
-                        state,
-                        metadata,
-                    ),
-                )
-        finally:
-            pending.clear()
-            executor.shutdown(wait=True, cancel_futures=True)
+                    metadata,
+                ),
+            )
         cache.progress.first_time = state.first_time
         cache.progress.epoch = state.epoch
         _Tables.finish(cache, state)
@@ -308,37 +306,50 @@ def _index_snapshot(
 ) -> EventFileCache | None:
     status = EventSource.stat(path, mountpoint=mountpoint)
     fingerprint = FileIdentity.fingerprint(status)
-    ranges = Segment.plan(path, status, workers, mountpoint=mountpoint)
-    if len(ranges) < 2 or ranges[0][0] != 0 or ranges[-1][1] != status.st_size:
-        return None
+    executor = None
+    pending: deque[tuple[Job, Future[_PackedResult]]] = deque()
     try:
-        guess = _Seed.guess(path, ranges[0][1], metadata, fingerprint, mountpoint)
-    except TFRecordError:
-        return None
+        with closing(
+            Segment.plan(path, status, workers, mountpoint=mountpoint)
+        ) as ranges:
+            first = next(ranges, None)
+            if first is None:
+                return None
+            start, end = first
+            if start != 0 or end == status.st_size:
+                return None
+            executor = _Reduction._new_pool(workers)
+            job: Job = (path, start, end, fingerprint, None, None, metadata, mountpoint)
+            pending.append((job, _Reduction._submit(executor, job)))
+            try:
+                guess = _Seed.guess(path, end, metadata, fingerprint, mountpoint)
+            except TFRecordError:
+                return None
+            for start, end in ranges:
+                job = (path, start, end, fingerprint, *guess, mountpoint)
+                pending.append((job, _Reduction._submit(executor, job)))
+            if end != status.st_size:
+                return None
 
-    cache = EventFileCache(path)
-    state = _ParseState()
-    progress = cache.progress
-    progress.identity = FileIdentity.of(status)
-    progress.checked_status = fingerprint
-    progress.initial_metadata = metadata
-    progress.effective_metadata = dict(metadata)
-    progress.last_checked_size = status.st_size
-    jobs: list[Job] = [
-        (
-            path,
-            start,
-            end,
-            fingerprint,
-            *(guess if start else (None, None, metadata)),
-            mountpoint,
+        cache = EventFileCache(path)
+        state = _ParseState()
+        progress = cache.progress
+        progress.identity = FileIdentity.of(status)
+        progress.checked_status = fingerprint
+        progress.initial_metadata = metadata
+        progress.effective_metadata = dict(metadata)
+        progress.last_checked_size = status.st_size
+        range_count = len(pending)
+        _Reduction.run(cache, state, pending)
+        _check_snapshot(
+            path, EventSource.stat(path, mountpoint=mountpoint), fingerprint
         )
-        for start, end in ranges
-    ]
-    _Reduction.run(cache, state, jobs)
-    _check_snapshot(path, EventSource.stat(path, mountpoint=mountpoint), fingerprint)
-    logger.debug("parallel cold index of {} used {} ranges", path, len(ranges))
-    return cache
+        logger.debug("parallel cold index of {} used {} ranges", path, range_count)
+        return cache
+    finally:
+        pending.clear()
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
 
 
 def parallel_index(

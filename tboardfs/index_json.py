@@ -19,6 +19,13 @@ class PluginSection:
         """Replace a backed tensor buffer with a wire placeholder."""
         payload = entry.payload
         extent = entry.tensor_extent
+        source = entry.tensor_source
+        if source is not None:
+            if extent is None or source.extent != PluginSection._extent(
+                extent, payload
+            ):
+                raise ValueError("indexed tensor source disagrees with extent")
+            return payload
         if extent is None:
             return payload
         tensor = payload.get("tensor")

@@ -6,6 +6,7 @@ import json
 from types import MappingProxyType
 from typing import Any, Final
 
+from tboardfs.array_json import array_to_json
 from tboardfs.errors import fuse_error
 from tboardfs.extract import _extract_graph_blob, extract_binary_blob
 from tboardfs.meta_graph import meta_graph_graph_def
@@ -15,6 +16,7 @@ from tboardfs.raw_frames import RawFrames
 from tboardfs.run_metadata_text import run_metadata_text
 from tboardfs.summary_graph import summary_graph_def
 from tboardfs.tables import _TableExport, export_table
+from tboardfs.tensor import _read_tensor_array
 
 
 def render_node(node: dict[str, Any]) -> bytes:
@@ -43,8 +45,14 @@ _RENDERERS: Final[Mapping[str, Callable[[dict[str, Any]], bytes]]] = MappingProx
     {
         "bytes": lambda node: bytes(node["data"]),
         "obj": lambda node: str(node["data"]).encode(),
-        "npy": lambda node: array_to_npy(node["data"]),
-        "json": lambda node: _TableExport.json_document(node["data"]),
+        "npy": lambda node: array_to_npy(
+            node["data"] if "data" in node else _read_tensor_array(node["tensor_entry"])
+        ),
+        "json": lambda node: _TableExport.json_document(
+            node["data"]
+            if "data" in node
+            else array_to_json(_read_tensor_array(node["tensor_entry"]))
+        ),
         "name_map": lambda node: json.dumps(
             node["data"], ensure_ascii=True, sort_keys=True, indent=2
         ).encode("ascii"),

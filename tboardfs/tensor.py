@@ -1,10 +1,14 @@
 import math
+from collections.abc import Sequence
+from errno import EIO
 from typing import Any, ClassVar
 
 import numpy as np
 
 from tboardfs.constants import DT_STRING, MAX_REPEATED_TENSOR_BYTES
 from tboardfs.decode import _Decode
+from tboardfs.errors import fuse_error
+from tboardfs.model.json_entry import JsonEntry
 
 BFLOAT16 = 14
 _MAX_NUMPY_DIMS = 64
@@ -45,6 +49,21 @@ def tensor_to_array(
     if dtype == BFLOAT16:
         values = _TensorDType.widen_bfloat16(values)
     return _TensorDType.shaped(values, tensor, fill=not content)
+
+
+def _read_tensor_array(entry: JsonEntry) -> np.ndarray:
+    """Decode a source-backed tensor without modifying the indexed payload."""
+    source = entry.tensor_source
+    if source is None:
+        raise fuse_error(EIO)
+    content = source.read()
+    if not content:
+        raise fuse_error(EIO)
+    tensor = {**entry.payload["tensor"], "tensor_content": content}
+    data = tensor_to_array(tensor, copy_content=False)
+    if data is None:
+        raise fuse_error(EIO)
+    return data
 
 
 class _TensorDType:
@@ -118,11 +137,9 @@ class _TensorDType:
         """
         shape = tuple(int(dim) for dim in tensor.get("shape") or [])
         width = values.itemsize if itemsize is None else itemsize
-        if min(shape, default=0) < 0 or not _TensorDType.fits_numpy(
-            shape, max(values.itemsize, width)
-        ):
+        size = _TensorDType._shape_size(shape, max(values.itemsize, width))
+        if size is None:
             return None
-        size = math.prod(shape)
         if fill and values.size == 1 and size != 1:
             if size * width > MAX_REPEATED_TENSOR_BYTES:
                 return None
@@ -132,7 +149,25 @@ class _TensorDType:
         return values.reshape(shape)
 
     @staticmethod
-    def fits_numpy(shape: tuple[int, ...], itemsize: int) -> bool:
+    def accepts_extent(tensor: dict[str, Any], size: int) -> bool:
+        """Return whether this parsed numeric tensor can decode the given byte extent."""
+        dtype = tensor.get("dtype")
+        spec = _TensorDType.spec(dtype)
+        if spec is None or size <= 0:
+            return False
+        storage_width = np.dtype(spec[0]).itemsize
+        array_width = np.dtype("<f4").itemsize if dtype == BFLOAT16 else storage_width
+        count = _TensorDType._shape_size(tensor.get("shape") or (), array_width)
+        return count is not None and size == count * storage_width
+
+    @staticmethod
+    def _shape_size(shape: Sequence[int], itemsize: int) -> int | None:
+        if min(shape, default=0) < 0 or not _TensorDType.fits_numpy(shape, itemsize):
+            return None
+        return math.prod(shape)
+
+    @staticmethod
+    def fits_numpy(shape: Sequence[int], itemsize: int) -> bool:
         """Return whether NumPy can make an array of this shape and item size.
 
         NumPy limits an array to 64 dimensions, and the bytes of its nonzero

@@ -1,4 +1,5 @@
 from functools import partial
+from typing import Literal
 
 import numpy as np
 
@@ -138,8 +139,14 @@ class _TypedPluginFiles:
     @staticmethod
     def add_tensor(files: RunFiles, entry: JsonEntry, step_digits: int) -> set[int]:
         """Add JSON and NPY views for one tensor record."""
+        key: Literal["data", "tensor_entry"] = "data"
+        data: np.ndarray | JsonEntry
+        json_data: object
         tensor = entry.payload.get("tensor") or {}
-        if tensor.get("dtype") == DT_STRING:
+        if entry.tensor_source is not None:
+            key = "tensor_entry"
+            data = json_data = entry
+        elif tensor.get("dtype") == DT_STRING:
             preview = _TensorDType.string_preview(tensor)
             if preview is None:
                 return set()
@@ -147,22 +154,23 @@ class _TypedPluginFiles:
             json_data = array_to_json(cells, dtype=dtype)
             data = cells.astype(dtype)
         else:
-            data = tensor_to_array(tensor, copy_content=False)
-            if data is None:
+            array = tensor_to_array(tensor, copy_content=False)
+            if array is None:
                 return set()
-            json_data = array_to_json(data)
+            data = array
+            json_data = array_to_json(array)
         step = _Paths.step_name(entry.step, step_digits)
         files.add(
             ("tensors",),
             entry.tag,
             f"{step}.json",
-            LeafSpec("json", entry.wall_time, "data", json_data),
+            LeafSpec("json", entry.wall_time, key, json_data),
         )
         files.add(
             ("tensors",),
             entry.tag,
             f"{step}.npy",
-            LeafSpec("npy", entry.wall_time, "data", data),
+            LeafSpec("npy", entry.wall_time, key, data),
         )
         return {id(entry)}
 

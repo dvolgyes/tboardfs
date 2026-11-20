@@ -64,12 +64,14 @@ class FrameSection:
             previous = end
 
     @staticmethod
-    def bounds(frames: FrameIndex, position: int) -> tuple[int, int, int]:
+    def bounds(
+        frames: FrameIndex, position: int, *, range_start: int = 0
+    ) -> tuple[int, int, int]:
         """Find the frame covering a position without expanding the table."""
         index = bisect_left(frames.ends, position + 1)
-        if index >= len(frames.ends) or position < 0:
+        if index >= len(frames.ends) or position < range_start:
             raise ValueError("index offset is outside source frames")
-        start = frames.ends[index - 1] if index else 0
+        start = frames.ends[index - 1] if index else range_start
         return start, frames.ends[index], frames.checksums[index]
 
     @staticmethod

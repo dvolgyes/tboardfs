@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from typing import Any, BinaryIO, Protocol, cast
 
 import numpy as np
 from google.protobuf.message import DecodeError
@@ -50,6 +50,10 @@ from tboardfs.tfrecord import _iter_tfrecords
 _MALFORMED_RECORD_ERRORS = (DecodeError, ValueError, struct.error)
 _FLOAT32 = np.dtype("float32")
 _FLOAT64 = np.dtype("float64")
+
+
+class _Image(Protocol):
+    encoded_image_string: bytes
 
 
 def parse_file(filename: str | Path) -> dict[str, Any]:
@@ -365,10 +369,15 @@ class _EventIndexer:
         kind = message.WhichOneof("what")
         wall_time = message.wall_time
         spans = PayloadSpans.for_payload(record.payload)
-        if kind == "summary" and _EventIndexer._plain_values(
-            values := message.summary.value, cache.progress.effective_metadata
-        ):
-            index_values = _EventIndexer._index_plain_values
+        plain = (
+            _EventIndexer._plain_values(
+                message.summary.value, cache.progress.effective_metadata
+            )
+            if kind == "summary"
+            else None
+        )
+        if plain is not None:
+            values: Any = plain
         else:
             event = _SummaryParser.convert_event(message, kind, indexing=True)
             _EventIndexer.add_restart(cache, event, state)
@@ -376,7 +385,11 @@ class _EventIndexer:
                 cache, cache.source_path, event, record, wall_time, spans
             )
             values = event.get("values", ())
-            index_values = _EventIndexer._index_converted_values
+        index_values = (
+            _EventIndexer._index_plain_values
+            if plain is not None
+            else _EventIndexer._index_converted_values
+        )
         first_time = _EventIndexer._first_time(state, wall_time, bool(values))
         relative_time = np.nan if first_time is None else wall_time - first_time
         timing = (message.step, wall_time, relative_time)
@@ -389,35 +402,37 @@ class _EventIndexer:
     @staticmethod
     def _plain_values(
         values: Iterable[Any], metadata: dict[str, dict[str, Any]]
-    ) -> bool:
-        """Choose one path for the whole record before mutating its index."""
+    ) -> list[tuple[str, float | _Image]] | None:
+        """Prepare ordinary values before mutating the index for the record."""
+        plain: list[tuple[str, float | _Image]] = []
         for value in values:
-            if (
-                value.WhichOneof("value") not in ("simple_value", "image")
-                or value.HasField("metadata")
-                or value.tag in metadata
-            ):
-                return False
-        return True
+            kind = value.WhichOneof("value")
+            if kind not in ("simple_value", "image") or value.HasField("metadata"):
+                return None
+            tag = value.tag
+            if tag in metadata:
+                return None
+            data = value.simple_value if kind == "simple_value" else value.image
+            plain.append((tag, data))
+        return plain
 
     @staticmethod
     def _index_plain_values(
         cache: EventFileCache,
         record: Record,
         state: _ParseState,
-        values: Iterable[Any],
+        values: Iterable[tuple[str, float | _Image]],
         timing: tuple[int, float, float],
         spans: PayloadSpans | None,
         strict: bool,
     ) -> object:
-        """Write ordinary protobuf fields directly to scalar columns or binary entries."""
+        """Write prepared values to scalar columns or binary entries."""
         epoch = state.epoch
         step, wall_time, _ = timing
-        for ordinal, value in enumerate(values):
-            tag = value.tag
-            if value.HasField("simple_value"):
+        for ordinal, (tag, data) in enumerate(values):
+            if isinstance(data, float):
                 epoch = _EventIndexer.add_scalar(
-                    state, tag, value.simple_value, _FLOAT32, epoch, timing
+                    state, tag, data, _FLOAT32, epoch, timing
                 )
                 continue
             try:
@@ -425,7 +440,7 @@ class _EventIndexer:
                     cache,
                     ordinal,
                     record,
-                    value.image.encoded_image_string,
+                    data.encoded_image_string,
                     (tag, step, wall_time),
                     spans,
                 )

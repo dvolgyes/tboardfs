@@ -117,7 +117,17 @@ The planner uses a 4 KiB buffer to read frame headers and seeks past the payload
 
 Each worker uses a 64 KiB buffer to read its range sequentially and validates the TFRecord checksums.
 
-The mount merges ranges in file order without copying the event file into shared memory.
+Workers start as soon as the planner confirms a range boundary.
+
+After the planner validates the last frame boundary and rechecks the source snapshot, the mount merges worker results in
+file order without copying the event file into shared memory.
+
+The parent keeps compact frame coordinates for binary entries and resolves range proofs when a reader needs them.
+
+For ordinary numeric tensors with a verified `tensor_content` extent of at least 64 KiB, a live parallel mount can list
+the `.npy` and `.json` files without rereading the tensor.
+
+The first operation that needs the file's contents or exact size reads and verifies the source bytes.
 
 If the file changes during the scan or a worker exits unexpectedly, the mount discards the partial index and uses the
 serial reader.

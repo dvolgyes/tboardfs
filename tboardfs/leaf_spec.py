@@ -1,9 +1,12 @@
 """Describe typed files without building their renderer nodes."""
 
 from dataclasses import dataclass, field
+from errno import EIO
 from typing import Any, Literal, cast
 
+from tboardfs.errors import fuse_error
 from tboardfs.model.binary_entry import BinaryEntry
+from tboardfs.model.json_entry import JsonEntry
 
 
 type LeafValue = BinaryEntry | LeafSpec | dict[str, Any]
@@ -15,7 +18,7 @@ class LeafSpec:
 
     kind: str
     mtime: float
-    key: Literal["data", "entry", "series"]
+    key: Literal["data", "entry", "series", "tensor_entry"]
     payload: object
     format: str | None = field(default=None, kw_only=True)
 
@@ -38,6 +41,11 @@ class LeafSpec:
             "type": value.kind,
             "mtime": value.mtime,
         }
+        if value.key == "tensor_entry":
+            source = cast(JsonEntry, value.payload).tensor_source
+            if source is None:
+                raise fuse_error(EIO)
+            node["source"] = source.source_path
         if value.format is not None:
             node["format"] = value.format
         return node

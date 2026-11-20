@@ -1,9 +1,9 @@
 """Plan and index bounded TFRecord ranges from a checked source snapshot."""
 
 import os
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from errno import EINVAL, EISDIR, ELOOP, ENOENT, ENOTDIR, ENXIO
-from itertools import pairwise
 from pathlib import Path
 from stat import S_ISREG
 from typing import Any
@@ -70,15 +70,15 @@ class Segment:
         n: int,
         *,
         mountpoint: Path | None = None,
-    ) -> list[tuple[int, int]]:
-        """Check frame headers and cut at the boundaries nearest byte targets."""
+    ) -> Generator[tuple[int, int], None, None]:
+        """Yield ranges at finalized cuts, validating the snapshot before EOF."""
         if n < 1:
             raise ValueError("range count must be positive")
         path = Path(path)
         size = status.st_size
         expected = FileIdentity.fingerprint(status)
         _check_snapshot(path, status, expected)
-        boundaries = [0]
+        start = 0
         offset = 0
         target_index = 1
         try:
@@ -99,16 +99,15 @@ class Segment:
                     if target_index < n and target_index * size <= following * n:
                         last_target = min(n - 1, following * n // size)
                         midpoint = (offset + following) * n
-                        if (
-                            2 * target_index * size <= midpoint
-                            and boundaries[-1] < offset
-                        ):
-                            boundaries.append(offset)
+                        if 2 * target_index * size <= midpoint and start < offset:
+                            yield start, offset
+                            start = offset
                         if (
                             2 * last_target * size > midpoint
-                            and boundaries[-1] < following < size
+                            and start < following < size
                         ):
-                            boundaries.append(following)
+                            yield start, following
+                            start = following
                         target_index = last_target + 1
                     offset = handle.seek(following)
                 _check_snapshot(path, os.fstat(fd), expected)
@@ -122,8 +121,7 @@ class Segment:
                 raise
             raise _SegmentError(f"{path}: could not plan snapshot: {error}") from error
         if size:
-            boundaries.append(size)
-        return list(pairwise(boundaries))
+            yield start, size
 
     @staticmethod
     def work(job: Job, *, defer_tensor_content: bool = False) -> "Segment":

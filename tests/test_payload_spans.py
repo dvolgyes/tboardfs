@@ -52,6 +52,8 @@ def test_mixed_summaries_keep_ordinals_and_clock(
     first.summary.value.add(tag="epoch", simple_value=4.0)
 
     mixed = compat_pb2.Event(step=2, wall_time=101.0)
+    mixed.summary.value.add(tag="img").image.encoded_image_string = green
+    mixed.summary.value.add(tag="loss", simple_value=1.5)
     scalar = mixed.summary.value.add(tag="loss").tensor
     scalar.dtype = compat_pb2.DT_DOUBLE
     scalar.double_val.append(2.5)
@@ -83,11 +85,17 @@ def test_mixed_summaries_keep_ordinals_and_clock(
     rows = json.loads(fs.read("/scalars/loss.json", 4096, 0))
     assert [
         (row["step"], row["value"], row["epoch"], row["relative_time"]) for row in rows
-    ] == [(1, 0.0, 4.0, 0.0), (2, 2.5, 4.0, 1.0), (4, 3.0, 4.0, 3.0)]
+    ] == [
+        (1, 0.0, 4.0, 0.0),
+        (2, 1.5, 4.0, 1.0),
+        (2, 2.5, 4.0, 1.0),
+        (4, 3.0, 4.0, 3.0),
+    ]
     for name, expected in (
         ("000001.png", red),
         ("000001_v2.png", green),
-        ("000002.png", blue),
+        ("000002.png", green),
+        ("000002_v3.png", blue),
         ("000004.png", blue),
     ):
         assert fs.read(f"/images/img/{name}", 4096, 0) == expected
