@@ -128,12 +128,14 @@ Without `--disk-index`, tboardfs neither reads nor writes persistent indexes.
 
 - **Miss:** A new path or size goes straight to the configured parser; add `-j N` to use parallel indexing on large
   files.
-- **Candidate:** tboardfs opens the current event file for reading and verifies a BLAKE2b digest of **all** its bytes
-  before loading the saved index.
+- **Candidate:** tboardfs checks a 16-byte XXH3-128 fingerprint of **all** current event-file bytes before loading the
+  saved index.
 - **Hit:** The bytes, parser configuration and plugin metadata inherited from earlier files must all match.
 - **Multiple files:** `-j N` allows up to four concurrent candidate hashes in the active run.
 - **Diagnostics:** `--loglevel DEBUG` reports `persistent index stored` or `persistent index hit` with the event-file
   path.
+
+XXH3-128 detects accidental source changes, not deliberate collisions; the saved index uses a separate SHA-256 checksum.
 
 The first mount pays for parsing, hashing and writing; subsequent hits avoid protobuf parsing and file-type detection
 but still verify the source and build the virtual tree.
@@ -153,6 +155,10 @@ Restart the mount process after upgrading libmagic or changing its rule files.
 
 **Storage:** The default is `$XDG_CACHE_HOME/tboardfs/indexes-v1`, or `~/.cache/tboardfs/indexes-v1` when no absolute
 XDG cache directory is configured.
+
+Older BLAKE2b entries are cache misses; tboardfs rebuilds them on demand.
+
+They remain in the same catalog and count toward the same cache budget until expiry or eviction.
 
 The cache can contain training values and metadata: choose a private location outside the source and mount with no
 symlink components.

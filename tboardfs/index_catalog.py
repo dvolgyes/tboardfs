@@ -14,7 +14,7 @@ from threading import Lock
 
 from loguru import logger
 
-from .constants import MAX_INDEX_BYTES
+from .constants import MAX_INDEX_BYTES, SOURCE_DIGEST_BYTES
 from .index_cache_files import IndexCacheFiles
 from .index_cache_record import CacheRecord
 
@@ -287,7 +287,7 @@ class CacheCatalog:
         """Publish one record, evicting expired and over-budget payloads."""
         if (
             not path.is_absolute()
-            or len(digest) != 64
+            or len(digest) != SOURCE_DIGEST_BYTES
             or len(body) > self._payload_limit
         ):
             return

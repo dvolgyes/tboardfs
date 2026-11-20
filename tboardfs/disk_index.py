@@ -3,13 +3,13 @@
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-import hashlib
 from io import BufferedReader
 import os
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
 from loguru import logger
+import xxhash
 
 from tboardfs.event_source import EventSource
 from tboardfs.file_status import FileIdentity
@@ -56,7 +56,7 @@ class _Source:
                 return None
             remaining = status.st_size
             scratch = memoryview(bytearray(min(1 << 20, remaining)))
-            digest = hashlib.blake2b()
+            digest = xxhash.xxh3_128()
             stream = cast(BufferedReader, handle)
             while remaining:
                 size = stream.readinto(scratch[:remaining])
@@ -64,7 +64,10 @@ class _Source:
                     return None
                 digest.update(scratch[:size])
                 remaining -= size
-            return digest.digest() if self.matches(path, handle, expected) else None
+            if not self.matches(path, handle, expected):
+                return None
+            result: bytes = digest.digest()
+            return result
 
 
 class DiskIndex:

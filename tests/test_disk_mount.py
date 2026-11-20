@@ -1,12 +1,17 @@
 """Persistent mount indexes preserve the result of a fresh serial parse."""
 
+from contextlib import closing
+import hashlib
 import os
 from pathlib import Path
+import sqlite3
 
 from click.testing import CliRunner
 import pytest
+import xxhash
 
-from tboardfs import TensorBoardFS, cli, filesystem, parallel_index
+from tboardfs import TensorBoardFS, cli, filesystem, index_policy, parallel_index
+from tboardfs.index_catalog import CacheCatalog
 from tboardfs.indexer import _EventIndexer
 
 from test_incremental_parse import _contents, _frame, _loss
@@ -60,16 +65,74 @@ def test_disk_mount_reopens_without_parsing(
 
 
 def test_disk_mount_rejects_same_size_rewrite(roots: tuple[Path, Path]) -> None:
-    source, _ = roots
+    source, storage = roots
     event = source / "events.out.tfevents.1"
-    event.write_bytes(_loss(1, 1.0))
+    catalog = CacheCatalog(storage / "tboardfs" / "indexes-v1", 1 << 20)
+    policy = index_policy.IndexPolicy.capture()
+    assert policy is not None
+    raw = _loss(1, 1.0)
+    event.write_bytes(raw)
     before = _contents(TensorBoardFS(source, disk_index=True))
     status = event.stat()
-    assert event.write_bytes(_loss(1, 9.0)) == status.st_size
+    initial = catalog.find(event, status.st_size, policy.id)
+    assert initial is not None
+    assert initial.digest == xxhash.xxh3_128_digest(raw)
+    changed = _loss(1, 9.0)
+    assert event.write_bytes(changed) == status.st_size
     os.utime(event, ns=(status.st_atime_ns, status.st_mtime_ns))
     after = _contents(TensorBoardFS(source, disk_index=True))
     assert after != before
     assert after == _contents(TensorBoardFS(source))
+    updated = catalog.find(event, status.st_size, policy.id)
+    assert updated is not None
+    assert updated.digest == xxhash.xxh3_128_digest(changed)
+    assert updated.digest != initial.digest
+
+
+def test_disk_mount_rebuilds_blake2b_entry_without_removing_it(
+    roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep a schema-1 catalog row and reuse its schema-2 replacement."""
+    source, storage = roots
+    event = source / "events.out.tfevents.1"
+    raw = _loss(1, 1.0)
+    event.write_bytes(raw)
+    expected = _contents(TensorBoardFS(source))
+    directory = storage / "tboardfs" / "indexes-v1"
+    catalog = directory / "catalog.sqlite3"
+    with monkeypatch.context() as legacy:
+        legacy.setattr(index_policy, "_SCHEMA", 1)
+        assert _contents(TensorBoardFS(source, disk_index=True)) == expected
+    old_digest = hashlib.blake2b(raw).digest()
+    with closing(sqlite3.connect(catalog)) as connection, connection:
+        connection.execute("UPDATE entries SET digest = ?", (old_digest,))
+        (old_row,) = connection.execute(
+            "SELECT policy, digest, name, checksum FROM entries"
+        ).fetchall()
+    old_policy, _, old_name, old_checksum = old_row
+    old_payload = (directory / old_name).read_bytes()
+    assert old_checksum == hashlib.sha256(old_payload).digest()
+
+    assert _contents(TensorBoardFS(source, disk_index=True)) == expected
+    with closing(sqlite3.connect(catalog)) as connection:
+        rows = connection.execute(
+            "SELECT policy, digest, name, checksum FROM entries"
+        ).fetchall()
+    assert old_row in rows
+    assert (directory / old_name).read_bytes() == old_payload
+    ((new_policy, new_digest, new_name, new_checksum),) = (
+        row for row in rows if row != old_row
+    )
+    assert new_policy != old_policy
+    assert len(new_digest) == 16
+    assert new_digest == xxhash.xxh3_128_digest(raw)
+    assert new_checksum == hashlib.sha256((directory / new_name).read_bytes()).digest()
+
+    def refuse_parse(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("the rebuilt index must be reused on the next mount")
+
+    monkeypatch.setattr(_EventIndexer, "parse_event_file", refuse_parse)
+    assert _contents(TensorBoardFS(source, disk_index=True)) == expected
 
 
 def test_disk_mount_uses_current_sorted_inherited_metadata(

@@ -15,7 +15,7 @@ from tboardfs import index_catalog
 from tboardfs.index_cache_files import IndexCacheFiles
 from tboardfs.index_catalog import CacheCatalog
 
-_DIGEST = b"x" * 64
+_DIGEST = b"x" * 16
 
 
 def _payload(directory: Path) -> Path:
