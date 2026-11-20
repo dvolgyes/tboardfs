@@ -271,6 +271,38 @@ def test_sibling_status_falls_back_when_parent_cannot_be_opened(
             stat(run / "missing")
 
 
+@pytest.mark.parametrize("relative", [False, True])
+def test_sibling_status_pins_parent_until_next_refresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: bool
+) -> None:
+    if relative:
+        monkeypatch.chdir(tmp_path)
+    root = Path(".") if relative else tmp_path
+    run = root / "run"
+    previous = root / "previous"
+    mountpoint = tmp_path / "mount"
+    source = run / "source"
+    run.mkdir()
+    mountpoint.mkdir()
+    source.write_bytes(b"old")
+    (mountpoint / source.name).write_bytes(b"protected")
+
+    with EventSource._sibling_stat(run, mountpoint=mountpoint) as stat:
+        run.rename(previous)
+        run.symlink_to(mountpoint, target_is_directory=True)
+        assert stat(source).st_size == 3
+
+    with EventSource._sibling_stat(run, mountpoint=mountpoint) as stat:
+        with pytest.raises(FileNotFoundError):
+            stat(source)
+
+    run.unlink()
+    run.mkdir()
+    source.write_bytes(b"replacement")
+    with EventSource._sibling_stat(run, mountpoint=mountpoint) as stat:
+        assert stat(source).st_size == len(b"replacement")
+
+
 @pytest.mark.parametrize("mounted", [False, True])
 def test_directory_status_rejects_a_retarget_into_private_storage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mounted: bool
