@@ -7,6 +7,19 @@ from tboardfs.tensor_summary import TAGGED_RUN_METADATA
 # SessionLog.SessionStatus.START in the vendored event proto.
 START = 1
 
+_TENSOR_VALUE_FIELDS = (
+    (5, "float_val"),
+    (6, "double_val"),
+    (7, "int_val"),
+    (9, "scomplex_val"),
+    (10, "int64_val"),
+    (11, "bool_val"),
+    (12, "dcomplex_val"),
+    (13, "half_val"),
+    (16, "uint32_val"),
+    (17, "uint64_val"),
+)
+
 
 def parse_event(data: bytes) -> dict[str, Any]:
     """Parse a TensorBoard Event protobuf with vendored protobuf classes."""
@@ -125,37 +138,19 @@ class _SummaryParser:
         message = cast(Any, tensor_message)
         tensor: dict[str, Any] = {"dtype": message.dtype}
         if message.HasField("tensor_shape"):
-            tensor["shape"] = [dim.size for dim in message.tensor_shape.dim]
-            if message.tensor_shape.unknown_rank:
+            shape = message.tensor_shape
+            tensor["shape"] = [dim.size for dim in shape.dim]
+            if shape.unknown_rank:
                 tensor["unknown_rank"] = True
         if content := message.tensor_content:
             tensor["tensor_content"] = content
-        values = _SummaryParser.parse_tensor_values(message)
+        values = {
+            number: list(repeated)
+            for number, name in _TENSOR_VALUE_FIELDS
+            if (repeated := getattr(message, name))
+        }
         if values:
             tensor["values"] = values
-        if message.string_val:
-            tensor["string_val"] = list(message.string_val)
+        if strings := message.string_val:
+            tensor["string_val"] = list(strings)
         return tensor
-
-    @staticmethod
-    def parse_tensor_values(tensor_message: object) -> dict[int, list[Any]]:
-        """Convert TensorProto repeated scalar fields to legacy field-number keys."""
-        message = cast(Any, tensor_message)
-        values: dict[int, list[Any]] = {}
-        field_map = (
-            (5, "float_val"),
-            (6, "double_val"),
-            (7, "int_val"),
-            (9, "scomplex_val"),
-            (10, "int64_val"),
-            (11, "bool_val"),
-            (12, "dcomplex_val"),
-            (13, "half_val"),
-            (16, "uint32_val"),
-            (17, "uint64_val"),
-        )
-        for number, name in field_map:
-            repeated = list(getattr(message, name))
-            if repeated:
-                values[number] = repeated
-        return values

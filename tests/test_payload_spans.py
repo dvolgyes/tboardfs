@@ -78,6 +78,31 @@ def test_duplicate_values_and_multipart_extents(tmp_path: Path) -> None:
     decode.assert_not_called()
 
 
+def test_legacy_image_keeps_inherited_graph_plugin(tmp_path: Path) -> None:
+    path = tmp_path / "events.out.tfevents"
+    event = compat_pb2.Event(step=1)
+    config = b'{"config":{"name":"m","layers":[{"config":{"name":"d"}}]}}'
+    seed = event.summary.value.add(tag="shared")
+    seed.metadata.plugin_data.plugin_name = "graph_keras_model"
+    seed.metadata.plugin_data.content = b"1"
+    seed.tensor.dtype = 7
+    seed.tensor.string_val.append(config)
+    event.summary.value.add(tag="shared").image.encoded_image_string = _PNG
+    inherited = event.summary.value.add(tag="shared")
+    inherited.tensor.dtype = 7
+    inherited.tensor.string_val.append(config)
+    path.write_bytes(_record(event.SerializeToString()))
+
+    parsed = parse_file(path)
+    assert [
+        (entry.kind, entry.value_ordinal, entry.suffix)
+        for entry in parsed["binary_entries"]
+    ] == [("graphs", 0, ""), ("images", 1, ""), ("graphs", 2, "_v2")]
+    assert [entry.payload for entry in parsed["json_entries"]] == [
+        {"tag": "shared", "plugin_name": "graph_keras_model", "plugin_content": b"1"}
+    ]
+
+
 def test_fallback_preserves_protobuf_oneof_and_merge(tmp_path: Path) -> None:
     path = tmp_path / "events.out.tfevents"
     event = compat_pb2.Event(step=1)

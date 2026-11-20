@@ -18,14 +18,9 @@ class _ReplayRecordError(Exception):
 
 
 def _warn_skipped(message: str, *args: object) -> None:
-    """Defer skip diagnostics during speculative record conversion."""
+    """Request serial replay or mark the index non-cacheable and emit the warning."""
     if _speculative_record.get():
         raise _ReplayRecordError(message.format(*args))
-    _log_skipped(message, *args)
-
-
-def _log_skipped(message: str, *args: object) -> None:
-    """Record that a serial index cannot be reused without losing a warning."""
     provenance = _diagnostic_provenance.get()
     if provenance is not None:
         provenance.cacheable = False
@@ -50,17 +45,24 @@ def skip_failure[Result](
     """
     try:
         return convert()
-    except MemoryError:
-        raise
     except Exception as error:
-        if _speculative_record.get():
-            if isinstance(error, _ReplayRecordError):
-                raise
-            raise _ReplayRecordError(
-                f"{what} is skipped: {type(error).__name__}: {error}"
-            ) from error
-        if strict:
+        if not _skip_error(error, what, strict=strict):
             raise
-        _log_skipped("{} is skipped: {}: {}", what, type(error).__name__, error)
-        logger.opt(exception=error).debug("traceback of the skipped {}", what)
         return None
+
+
+def _skip_error(error: Exception, what: str, *, strict: bool) -> bool:
+    """Log a skipped item, request serial replay, or let the caller propagate the error."""
+    if isinstance(error, MemoryError):
+        return False
+    if _speculative_record.get():
+        if isinstance(error, _ReplayRecordError):
+            return False
+        raise _ReplayRecordError(
+            f"{what} is skipped: {type(error).__name__}: {error}"
+        ) from error
+    if strict:
+        return False
+    _warn_skipped("{} is skipped: {}: {}", what, type(error).__name__, error)
+    logger.opt(exception=error).debug("traceback of the skipped {}", what)
+    return True

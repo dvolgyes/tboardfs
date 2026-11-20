@@ -1,7 +1,6 @@
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from functools import partial
 import os
 from pathlib import Path
 import struct
@@ -38,7 +37,7 @@ from tboardfs.proto_schema import _ProtoParser
 from tboardfs.range_proof import range_proof
 from tboardfs.restarts import _RestartPurge, _offset_restarts
 from tboardfs.run_metadata_text import run_metadata_text
-from tboardfs.skip_failure import _diagnostic_provenance, _warn_skipped, skip_failure
+from tboardfs.skip_failure import _diagnostic_provenance, _skip_error, _warn_skipped
 from tboardfs.summary import parse_event
 from tboardfs.summary_graph import summary_graph_def
 from tboardfs.tensor_summary import GRAPH_PLUGINS, _TensorSummary
@@ -383,21 +382,17 @@ class _EventIndexer:
                     state, tag, value["simple_value"], _FLOAT32, epoch, timing
                 )
                 continue
-            indexed = skip_failure(
-                f"value {value['tag']!r} at step {event['step']} in {path}",
-                partial(
-                    _EventIndexer.add_summary,
-                    cache,
-                    ordinal,
-                    record,
-                    value,
-                    state,
-                    (epoch, *timing),
-                    spans,
-                ),
-                strict=strict,
-            )
-            epoch = epoch if indexed is None else indexed
+            try:
+                indexed = _EventIndexer.add_summary(
+                    cache, ordinal, record, value, state, (epoch, *timing), spans
+                )
+            except Exception as error:
+                if not _skip_error(
+                    error, f"value {tag!r} at step {timing[0]} in {path}", strict=strict
+                ):
+                    raise
+            else:
+                epoch = epoch if indexed is None else indexed
         if len(values) > 1 and len(cache.binaries) - binary_start > 1:
             seen: set[tuple[str, str, str, str]] = set()
             for entry in cache.binaries[binary_start:]:
@@ -498,7 +493,8 @@ class _EventIndexer:
         """
         tag = value["tag"]
         epoch, step, wall_time, relative_time = timing
-        scalar = _Classifier.scalar_value(value)
+        plain_media = len(value) == 2 and ("image" in value or "audio" in value)
+        scalar = None if plain_media else _Classifier.scalar_value(value)
         if scalar is not None:
             epoch = _EventIndexer.add_scalar(
                 state,
@@ -508,9 +504,12 @@ class _EventIndexer:
                 epoch,
                 (step, wall_time, relative_time),
             )
-        _EventIndexer.add_histogram(
-            cache, value, state, (epoch, step, wall_time, relative_time)
-        )
+            if _Classifier.plugin_name(value) == "scalars":
+                return epoch
+        if not plain_media:
+            _EventIndexer.add_histogram(
+                cache, value, state, (epoch, step, wall_time, relative_time)
+            )
         _EventIndexer.add_binary(
             cache,
             ordinal,
@@ -520,6 +519,8 @@ class _EventIndexer:
             spans,
             state.binary_extensions,
         )
+        if plain_media:
+            return epoch
         entry = _EventIndexer.add_plugin(cache, value, (tag, step, wall_time))
         if entry is not None and spans is not None and state.retain_tensor_extents:
             _EventIndexer._retain_extent(cache, state, entry, record, spans, ordinal)

@@ -264,6 +264,13 @@ mixing versions.
 
 The first indexing pass collects scalar columns by tag and records each stored binary's format and byte count.
 
+A decoded `scalars` plugin value goes directly into its scalar table; a value that cannot be decoded as a scalar still
+uses the normal plugin handling.
+
+Legacy image and audio values without plugin metadata go directly to binary indexing.
+
+Metadata inherited from an earlier value with the same tag still applies.
+
 For unambiguous fields in frames of at least 4 KiB, the index also records the exact payload range.
 
 Directory listings return names and file types together.
