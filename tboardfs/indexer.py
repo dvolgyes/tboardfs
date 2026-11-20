@@ -13,7 +13,7 @@ from loguru import logger
 from tboardfs.classify import _Classifier
 from tboardfs.constants import PLUGIN_TAB
 from tboardfs.crc32c import masked_crc32c
-from tboardfs.event_source import EventSource
+from tboardfs.event_source import SCAN_BUFFER, EventSource
 from tboardfs.file_status import FileIdentity
 from tboardfs.frame_ref import FrameRef
 from tboardfs.indexed_frame import IndexedFrame
@@ -146,8 +146,9 @@ class _EventIndexer:
 
         Persistent indexes consume every image frame along with the tensor extents.
         """
+        buffering = SCAN_BUFFER if base_cache is None else -1
         with EventSource.open(
-            path, mountpoint=mountpoint, sequential=base_cache is None
+            path, mountpoint=mountpoint, buffering=buffering
         ) as handle:
             status = os.fstat(handle.fileno())
             if base_cache is not None and (

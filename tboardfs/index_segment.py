@@ -8,7 +8,7 @@ from pathlib import Path
 from stat import S_ISREG
 from typing import Any
 
-from tboardfs.event_source import EventSource
+from tboardfs.event_source import SCAN_BUFFER, EventSource
 from tboardfs.file_status import FileIdentity
 from tboardfs.indexer import (
     _MALFORMED_RECORD_ERRORS,
@@ -82,7 +82,9 @@ class Segment:
         offset = 0
         target_index = 1
         try:
-            with EventSource.open(path, mountpoint=mountpoint) as handle:
+            with EventSource.open(
+                path, mountpoint=mountpoint, buffering=4 << 10
+            ) as handle:
                 fd = handle.fileno()
                 _check_snapshot(path, os.fstat(fd), expected)
                 _check_snapshot(
@@ -153,7 +155,9 @@ class Segment:
         )
         position = start
         try:
-            with EventSource.open(path, mountpoint=mountpoint) as handle:
+            with EventSource.open(
+                path, mountpoint=mountpoint, buffering=SCAN_BUFFER
+            ) as handle:
                 fd = handle.fileno()
                 status = os.fstat(fd)
                 _check_snapshot(path, status, expected)

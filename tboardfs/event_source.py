@@ -11,7 +11,7 @@ from typing import BinaryIO
 
 from tboardfs.file_status import FileIdentity
 
-_SCAN_BUFFER = 64 << 10
+SCAN_BUFFER = 64 << 10
 
 
 class EventSource:
@@ -98,9 +98,9 @@ class EventSource:
 
     @classmethod
     def open(
-        cls, path: Path, *, mountpoint: Path | None = None, sequential: bool = False
+        cls, path: Path, *, mountpoint: Path | None = None, buffering: int = -1
     ) -> BinaryIO:
-        """Open a checked regular file and buffer large sequential scans."""
+        """Open a checked regular file without allocating the scan buffer for small files."""
         flags = os.O_RDONLY | os.O_NONBLOCK
         expected = None
         if mountpoint is None:
@@ -113,9 +113,8 @@ class EventSource:
             actual = cls._regular(path, os.fstat(fd))
             if expected is not None and expected != FileIdentity.of(actual):
                 raise OSError(ESTALE, "source changed while opening", path)
-            buffering = (
-                _SCAN_BUFFER if sequential and actual.st_size >= _SCAN_BUFFER else -1
-            )
+            if buffering == SCAN_BUFFER and actual.st_size < SCAN_BUFFER:
+                buffering = -1
             return os.fdopen(fd, "rb", buffering=buffering)
         except BaseException:
             os.close(fd)

@@ -113,7 +113,9 @@ The mount starts workers only for uncached regular event files of at least 8 MiB
 
 It limits workers to the available CPUs and the number of nonempty file ranges.
 
-Each worker opens the same source file, reads its own range and validates the TFRecord checksums.
+The planner uses a 4 KiB buffer to read frame headers and seeks past the payloads.
+
+Each worker uses a 64 KiB buffer to read its range sequentially and validates the TFRecord checksums.
 
 The mount merges ranges in file order without copying the event file into shared memory.
 
