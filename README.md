@@ -265,6 +265,13 @@ The first indexing pass collects scalar columns by tag and records each stored b
 If a record contains only `simple_value` scalars and legacy images, with no explicit or inherited metadata, the indexer
 reads the decoded protobuf fields directly into scalar columns and binary entries.
 
+When a serial mount is not saving a disk index, it defers frame construction for direct-path images without a byte
+range.
+
+Listing these images and checking their sizes needs no frame object.
+
+Reading one still verifies the original source identity and whole-frame checksum.
+
 Other records use the general conversion path, including records that mix these values with plugin tensors.
 
 A decoded `scalars` plugin value goes directly into its scalar table; a value that cannot be decoded as a scalar still

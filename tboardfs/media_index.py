@@ -7,7 +7,7 @@ from typing import Any
 from tboardfs.classify import _Classifier
 from tboardfs.frame_ref import FrameRef
 from tboardfs.model import BinaryEntry, EventFileCache, GraphSummaryEntry, Record
-from tboardfs.model.indexed_blob import IndexedBlob
+from tboardfs.model.indexed_blob import IndexedBlob, _FrameItem
 from tboardfs.payload_spans import PayloadSpans, Span
 from tboardfs.range_proof import range_proof
 from tboardfs.run_metadata_text import run_metadata_text
@@ -29,6 +29,7 @@ def _indexed_blob(frame: FrameRef, data: bytes, span: Span | None) -> IndexedBlo
 class _MediaIndex:
     """Insert lazy binary entries with extension caches scoped to one parse."""
 
+    defer_frames: bool = False
     binary_extensions: dict[tuple[str, bytes], str | None] = field(default_factory=dict)
     large_audio_extension: tuple[bytes, str | None] | None = None
 
@@ -53,20 +54,25 @@ class _MediaIndex:
             candidates = self._binary_candidates(spans, ordinal, _IMAGE_FIELD, None, 0)
             if candidates:
                 span = spans.match(candidates[0], data)
-        frame = record.reference(
-            cache.progress.identity, fingerprint=cache.progress.checked_status
-        )
+        progress = cache.progress
+        if span is None and self.defer_frames:
+            blob: IndexedBlob | _FrameItem = _FrameItem(
+                progress.identity,
+                progress.checked_status,
+                record.record_offset,
+                record.total_size,
+                record.payload_crc,
+                len(data),
+            )
+        else:
+            frame = record.reference(
+                progress.identity, fingerprint=progress.checked_status
+            )
+            blob = _indexed_blob(frame, data, span)
         tag, step, wall_time = identity
         cache.binaries.append(
             BinaryEntry(
-                source_path=cache.source_path,
-                tag=tag,
-                kind=kind,
-                step=step,
-                wall_time=wall_time,
-                value_ordinal=ordinal,
-                blob=_indexed_blob(frame, data, span),
-                extension=extension,
+                blob, cache.source_path, tag, kind, step, wall_time, extension, ordinal
             )
         )
 

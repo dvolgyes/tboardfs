@@ -19,6 +19,7 @@ from tboardfs import TensorBoardFS, parse_file
 from tboardfs.classify import detect_extension
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.extract import _extract_graph_blob, extract_binary_blob
+from tboardfs.indexer import _EventIndexer
 from tboardfs.payload_spans import PayloadSpans
 from tboardfs.proto import compat_pb2
 
@@ -90,6 +91,33 @@ def test_mixed_summaries_keep_ordinals_and_clock(
         ("000004.png", blue),
     ):
         assert fs.read(f"/images/img/{name}", 4096, 0) == expected
+
+
+def test_first_image_read_keeps_its_indexed_generation(tmp_path: Path) -> None:
+    path = tmp_path / "events.out.tfevents"
+    red, blue = (_ScaleCorpus.small_png(rgb) for rgb in (0xFF0000, 0x0000FF))
+    frames = []
+    for step, png in enumerate((red, blue)):
+        event = compat_pb2.Event(step=step)
+        event.summary.value.add(tag="img").image.encoded_image_string = png
+        frames.append(_record(event.SerializeToString()))
+    path.write_bytes(frames[0])
+    original = _EventIndexer.parse_event_file(path)
+    with path.open("ab") as handle:
+        handle.write(frames[1])
+    grown = _EventIndexer.parse_event_file(path, base_cache=original)
+    first, second = grown.binaries
+    assert first.size == len(red) and second.size == len(blue)
+    assert second.frame.fingerprint == grown.progress.checked_status
+    assert extract_binary_blob(second) == blue
+
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(path.read_bytes())
+    replacement.replace(path)
+    with pytest.raises(OSError) as exc:
+        extract_binary_blob(first)
+    assert exc.value.errno == EIO
+    assert first.frame.fingerprint == original.progress.checked_status
 
 
 def test_duplicate_values_and_multipart_extents(tmp_path: Path) -> None:

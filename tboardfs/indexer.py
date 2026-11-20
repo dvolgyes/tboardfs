@@ -20,6 +20,7 @@ from tboardfs.indexed_frame import IndexedFrame
 from tboardfs.media_index import _MediaIndex
 from tboardfs.meta_graph import meta_graph_graph_def
 from tboardfs.model import (
+    BinaryEntry,
     EventFileCache,
     GraphEntry,
     JsonEntry,
@@ -54,7 +55,7 @@ _FLOAT64 = np.dtype("float64")
 def parse_file(filename: str | Path) -> dict[str, Any]:
     """Return parser data for one TensorBoard event file."""
     cache = _EventIndexer.parse_event_file(Path(filename))
-    binaries: dict[str, dict[str, tuple[int, int]]] = {
+    last: dict[str, dict[str, BinaryEntry]] = {
         "images": {},
         "audio": {},
         "videos": {},
@@ -62,11 +63,15 @@ def parse_file(filename: str | Path) -> dict[str, Any]:
         "tensors": {},
     }
     for entry in cache.binaries:
-        if entry.kind in binaries:
-            binaries[entry.kind][entry.tag] = (
-                entry.frame.payload_offset,
-                entry.frame.payload_size,
-            )
+        if (tags := last.get(entry.kind)) is not None:
+            tags[entry.tag] = entry
+    binaries = {
+        kind: {
+            tag: (entry.frame.payload_offset, entry.frame.payload_size)
+            for tag, entry in tags.items()
+        }
+        for kind, tags in last.items()
+    }
 
     for series in cache.histograms.values():
         del series["_start"]
@@ -137,7 +142,10 @@ class _EventIndexer:
         mountpoint: Path | None = None,
         retain_tensor_extents: bool = False,
     ) -> EventFileCache:
-        """Index a validated prefix and appended frames on one descriptor."""
+        """Index a validated prefix and appended frames on one descriptor.
+
+        Persistent indexes consume every image frame along with the tensor extents.
+        """
         with EventSource.open(path, mountpoint=mountpoint) as handle:
             status = os.fstat(handle.fileno())
             if base_cache is not None and (
@@ -159,9 +167,10 @@ class _EventIndexer:
                 initial_metadata,
                 ignore_truncated=ignore_truncated,
                 strict_framing=strict_framing,
-                state=_ParseState(retain_tensor_extents=True)
-                if retain_tensor_extents
-                else None,
+                state=_ParseState(
+                    retain_tensor_extents=retain_tensor_extents,
+                    media=_MediaIndex(defer_frames=not retain_tensor_extents),
+                ),
             )
 
     @staticmethod
@@ -240,7 +249,8 @@ class _EventIndexer:
                     strict_framing=strict_framing,
                     retry=False,
                     state=_ParseState(
-                        retain_tensor_extents=state.retain_tensor_extents
+                        retain_tensor_extents=state.retain_tensor_extents,
+                        media=_MediaIndex(defer_frames=state.media.defer_frames),
                     ),
                 )
             if error.corrupt:
