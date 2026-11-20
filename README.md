@@ -135,7 +135,9 @@ Without `--disk-index`, tboardfs neither reads nor writes persistent indexes.
 - **Diagnostics:** `--loglevel DEBUG` reports `persistent index stored` or `persistent index hit` with the event-file
   path.
 
-XXH3-128 detects accidental source changes, not deliberate collisions; the saved index uses a separate SHA-256 checksum.
+The persistent index uses XXH3-128 to fingerprint the parser configuration and to checksum the saved index bytes.
+
+These hashes detect accidental changes; they do not authenticate the source or the cache.
 
 The first mount pays for parsing, hashing and writing; subsequent hits avoid protobuf parsing and file-type detection
 but still verify the source and build the virtual tree.
@@ -166,10 +168,6 @@ Restart the mount process after upgrading libmagic or changing its rule files.
 
 **Storage:** The default is `$XDG_CACHE_HOME/tboardfs/indexes-v1`, or `~/.cache/tboardfs/indexes-v1` when no absolute
 XDG cache directory is configured.
-
-Older BLAKE2b entries are cache misses; tboardfs rebuilds them on demand.
-
-They remain in the same catalog and count toward the same cache budget until expiry or eviction.
 
 The cache can contain training values and metadata: choose a private location outside the source and mount with no
 symlink components.

@@ -1,7 +1,6 @@
 """Store optional whole-file indexes in a private, metadata-only SQLite catalog."""
 
 import fcntl
-import hashlib
 import os
 import sqlite3
 import time
@@ -12,9 +11,10 @@ from contextlib import closing
 from pathlib import Path
 from threading import Lock
 
+import xxhash
 from loguru import logger
 
-from .constants import MAX_INDEX_BYTES, SOURCE_DIGEST_BYTES
+from .constants import INDEX_DIGEST_BYTES, MAX_INDEX_BYTES
 from .index_cache_files import IndexCacheFiles
 from .index_cache_record import CacheRecord
 
@@ -203,12 +203,12 @@ class CacheCatalog:
                 body = IndexCacheFiles.read(fd, record.length + 1)
         except _ERRORS:
             return None
-        return (
-            body
-            if len(body) == record.length
-            and hashlib.sha256(body).digest() == record.checksum
-            else None
-        )
+        if (
+            len(body) != record.length
+            or xxhash.xxh3_128_digest(body) != record.checksum
+        ):
+            return None
+        return body
 
     def _save_entry(
         self,
@@ -230,7 +230,7 @@ class CacheCatalog:
                 policy,
                 digest,
                 name,
-                hashlib.sha256(body).digest(),
+                xxhash.xxh3_128_digest(body),
                 len(body),
                 now,
             ),
@@ -287,7 +287,7 @@ class CacheCatalog:
         """Publish one record, evicting expired and over-budget payloads."""
         if (
             not path.is_absolute()
-            or len(digest) != SOURCE_DIGEST_BYTES
+            or len(digest) != INDEX_DIGEST_BYTES
             or len(body) > self._payload_limit
         ):
             return

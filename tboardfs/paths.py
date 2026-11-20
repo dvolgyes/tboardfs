@@ -1,5 +1,4 @@
 from fnmatch import fnmatchcase
-import hashlib
 import os
 from pathlib import Path
 import posixpath
@@ -7,6 +6,7 @@ from typing import Any
 from urllib.parse import unquote
 
 import numpy as np
+import xxhash
 
 from tboardfs.constants import SCALAR_FORMATS, TENSORBOARD_EVENT_GLOB
 from tboardfs.event_source import EventSource
@@ -225,7 +225,7 @@ class _Paths:
         stem, dot, extension = encoded.rpartition(".")
         if not dot or len(extension) > 8:
             stem, dot, extension = encoded, "", ""
-        tail = f"~{hashlib.sha256(data).hexdigest()[:32]}{dot}{extension}"
+        tail = f"~{xxhash.xxh3_128_hexdigest(data)}{dot}{extension}"
         budget = 255 - len(tail.encode())
         shortened = stem.encode()[:budget].decode("utf-8", "ignore") + tail
         if (

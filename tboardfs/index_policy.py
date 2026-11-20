@@ -2,7 +2,6 @@
 
 from collections import deque
 from dataclasses import dataclass
-from hashlib import blake2b
 from importlib.metadata import PackageNotFoundError, version
 import json
 import os
@@ -17,6 +16,7 @@ from google.protobuf.descriptor import FileDescriptor
 from google.protobuf.internal import api_implementation
 import magic
 import numpy as np
+import xxhash
 
 from tboardfs.index_magic import OBSERVATION_ERRORS, MagicHost
 from tboardfs.open3d_schema import _FILE as _OPEN3D_SCHEMA
@@ -28,7 +28,7 @@ from tboardfs.proto import (
     mesh_plugin_data_pb2,
 )
 
-_SCHEMA = 3
+_SCHEMA = 4
 _MAX_RULE_BYTES = 128 << 20
 
 
@@ -116,7 +116,8 @@ class IndexPolicy:
             rules,
         )
         encoded = json.dumps(payload, separators=(",", ":")).encode("ascii")
-        return blake2b(encoded).hexdigest()
+        fingerprint: str = xxhash.xxh3_128_hexdigest(encoded)
+        return fingerprint
 
     @staticmethod
     def _file_digest(
@@ -130,7 +131,7 @@ class IndexPolicy:
         with os.fdopen(os.open(path, flags), "rb") as stream:
             if MagicHost.signature(os.fstat(stream.fileno())) != signature:
                 raise ValueError("libmagic input changed before hashing")
-            digest = blake2b()
+            digest = xxhash.xxh3_128()
             length = 0
             while chunk := stream.read(min(1 << 20, size + 1 - length)):
                 digest.update(chunk)
@@ -177,4 +178,6 @@ class IndexPolicy:
             if name.startswith("_FILE_")
         )
         descriptors.append(_OPEN3D_SCHEMA)
-        return tuple(blake2b(desc.serialized_pb).hexdigest() for desc in descriptors)
+        return tuple(
+            xxhash.xxh3_128_hexdigest(desc.serialized_pb) for desc in descriptors
+        )

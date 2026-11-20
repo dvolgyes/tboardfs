@@ -14,7 +14,7 @@ from tboardfs.index_policy import IndexPolicy
 def test_default_policy_is_stable_after_first_classifier_use() -> None:
     policy = IndexPolicy.capture()
     assert policy is not None
-    assert len(bytes.fromhex(policy.id)) == 64
+    assert len(bytes.fromhex(policy.id)) == 16
     for mime in (True, False):
         assert MagicHost.classify(b"plain text\n", mime=mime)
     assert policy.unchanged()

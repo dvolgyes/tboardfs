@@ -10,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import xxhash
 
 from tboardfs import index_catalog
 from tboardfs.index_cache_files import IndexCacheFiles
@@ -31,6 +32,7 @@ def test_lookup_is_keyed_and_does_not_read_payload(tmp_path: Path) -> None:
     record = catalog.find(source, 123, "policy")
     assert record is not None
     assert record.digest == _DIGEST
+    assert record.checksum == xxhash.xxh3_128_digest(b"index")
     assert catalog.read(record) == b"index"
     assert catalog.find(source, 124, "policy") is None
     assert catalog.find(source, 123, "other") is None
@@ -39,6 +41,21 @@ def test_lookup_is_keyed_and_does_not_read_payload(tmp_path: Path) -> None:
     _payload(directory).unlink()
     assert catalog.find(source, 123, "policy") == record
     assert catalog.read(record) is None
+
+
+def test_truncated_checksum_is_a_miss(tmp_path: Path) -> None:
+    directory = tmp_path / "cache"
+    source = tmp_path / "source"
+    catalog = CacheCatalog(directory, 100)
+    catalog.put(source, 123, "policy", _DIGEST, b"index")
+    record = catalog.find(source, 123, "policy")
+    assert record is not None
+    with closing(sqlite3.connect(directory / "catalog.sqlite3")) as connection:
+        connection.execute("UPDATE entries SET checksum = ?", (record.checksum[:-1],))
+        connection.commit()
+
+    catalog = CacheCatalog(directory, 100)
+    assert catalog.find(source, 123, "policy") is None
 
 
 def test_checksum_and_include_only_regular_private_payloads(

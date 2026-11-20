@@ -4,7 +4,7 @@ import re
 import time
 from dataclasses import dataclass
 
-from .constants import SOURCE_DIGEST_BYTES
+from .constants import INDEX_DIGEST_BYTES
 
 _EXPIRY = 30 * 24 * 60 * 60
 _PAYLOAD = re.compile(r"index-[0-9a-f]{32}\.idx")
@@ -31,7 +31,8 @@ class CacheRecord:
         return (
             isinstance(self.digest, bytes)
             and isinstance(self.checksum, bytes)
-            and (len(self.digest), len(self.checksum)) == (SOURCE_DIGEST_BYTES, 32)
+            and len(self.digest) == INDEX_DIGEST_BYTES
+            and len(self.checksum) == INDEX_DIGEST_BYTES
             and isinstance(self.name, str)
             and bool(_PAYLOAD.fullmatch(self.name))
             and isinstance(self.length, int)
