@@ -8,26 +8,29 @@ from operator import index
 import numpy as np
 
 from tboardfs.frame_ref import FrameRef
+from tboardfs.index_binary_layout import (
+    _CONVERTS,
+    _FLOAT,
+    _GRAPH,
+    _HEADER,
+    _LABEL,
+    _PART,
+    _PROFILES,
+    _REAL,
+    _SIGNED,
+    _SPAN,
+    _UINT,
+    _UNSIGNED,
+    Label,
+)
+from tboardfs.index_binary_rows import BinaryRows
 from tboardfs.index_utf8 import encode_utf8
 from tboardfs.model import BinaryEntry, EventFileCache
 from tboardfs.model.graph_summary_entry import GraphSummaryEntry
-from tboardfs.model.indexed_blob import IndexedBlob
 from tboardfs.range_proof import BLOCK_SIZE
 
 
-type _Label = tuple[str, str, str, str]
-
-# Header, fixed-size rows, length-prefixed labels, then unprefixed proof bytes.
-_HEADER = struct.Struct("<III")  # row count, label count, label section size
-_LABEL = struct.Struct("<IIII")  # tag, kind, extension, suffix lengths
-_FIELDS = "dIIIIIIII"  # time, label, frame ID/size/CRC, blob size/start, ordinal, part
-_SIGNED = struct.Struct("<Bq" + _FIELDS)
-_UNSIGNED = struct.Struct("<BQ" + _FIELDS)
-_FLOAT = struct.Struct("<Bd" + _FIELDS)
-_SPAN, _PART, _GRAPH, _CONVERTS, _PROFILES, _UINT, _REAL = (1, 2, 4, 8, 16, 32, 64)
-_STEP_MASK = _UINT | _REAL
 _BINARY_KINDS = frozenset({"images", "audio", "videos", "tensors", "graphs"})
-_TFRECORD_OVERHEAD = 16
 
 
 def _proof_length(size: int, has_span: bool) -> int:
@@ -60,7 +63,7 @@ class BinarySection:
         if remaining < 0:
             raise ValueError("binary section exceeds index budget")
         rows = bytearray(len(cache.binaries) * _SIGNED.size)
-        labels: dict[_Label, int] = {}
+        labels: dict[Label, int] = {}
         label_data = bytearray()
         proofs = bytearray()
         try:
@@ -85,7 +88,7 @@ class BinarySection:
         return b"".join((header, rows, label_data, proofs))
 
     @staticmethod
-    def _write_label(data: bytearray, label: _Label, remaining: int) -> int:
+    def _write_label(data: bytearray, label: Label, remaining: int) -> int:
         # Check the whole label's lower bound before encoding its fields.
         if sum(map(len, label)) > remaining:
             raise ValueError("binary section exceeds index budget")
@@ -101,7 +104,8 @@ class BinarySection:
 
     @staticmethod
     def decode(data: bytes | memoryview, cache: EventFileCache) -> list[BinaryEntry]:
-        """Validate rows against the restored frame index and bind to live status."""
+        """Validate every row before publishing entries with deferred read evidence."""
+        data = bytes(data)
         if len(data) < _HEADER.size:
             raise ValueError("truncated binary index header")
         row_count, label_count, label_size = _HEADER.unpack_from(data)
@@ -112,16 +116,7 @@ class BinarySection:
         ):
             raise ValueError("invalid binary section bounds")
         labels = BinarySection._read_labels(data, label_count, rows_end, labels_end)
-        proof_offset = labels_end
-        rows: list[BinaryEntry] = []
-        for offset in range(_HEADER.size, rows_end, _SIGNED.size):
-            entry, proof_offset = BinarySection._decode_row(
-                data, offset, proof_offset, labels, cache
-            )
-            rows.append(entry)
-        if proof_offset != len(data):
-            raise ValueError("trailing binary range proof data")
-        return rows
+        return BinaryRows(data, row_count, labels, labels_end, cache).entries()
 
     @staticmethod
     def _step_layout(step: int | float) -> tuple[int, struct.Struct, int | float]:
@@ -149,7 +144,7 @@ class BinarySection:
         return flags
 
     @staticmethod
-    def _check_label(label: _Label) -> None:
+    def _check_label(label: Label) -> None:
         _, kind, extension, suffix = label
         if kind not in _BINARY_KINDS or not extension:
             raise ValueError("invalid binary label")
@@ -220,8 +215,8 @@ class BinarySection:
     @staticmethod
     def _read_labels(
         data: bytes | memoryview, count: int, offset: int, end: int
-    ) -> list[_Label]:
-        labels: list[_Label] = []
+    ) -> list[Label]:
+        labels: list[Label] = []
         for _ in range(count):
             if offset + _LABEL.size > end:
                 raise ValueError("truncated binary label header")
@@ -244,95 +239,3 @@ class BinarySection:
         if offset != end:
             raise ValueError("trailing binary label data")
         return labels
-
-    @staticmethod
-    def _live_frame(
-        cache: EventFileCache, position: int, size: int, checksum: int
-    ) -> FrameRef:
-        progress = cache.progress
-        frames = progress.frames
-        if position >= len(frames.ends) or position >= len(frames.checksums):
-            raise ValueError("binary row frame index is out of bounds")
-        start = frames.ends[position - 1] if position else 0
-        end = frames.ends[position]
-        if (
-            size < _TFRECORD_OVERHEAD
-            or end > progress.processed_pos
-            or size != end - start
-            or checksum != frames.checksums[position]
-        ):
-            raise ValueError("binary row disagrees with its indexed frame")
-        return FrameRef(
-            progress.identity, start, size, checksum, progress.checked_status
-        )
-
-    @staticmethod
-    def _row_layout(flags: int) -> struct.Struct:
-        if flags & 128 or flags & _STEP_MASK == _STEP_MASK:
-            raise ValueError("invalid binary row flags")
-        if flags & (_CONVERTS | _PROFILES) and not flags & _GRAPH:
-            raise ValueError("graph flags on a non-graph binary row")
-        if flags & _REAL:
-            return _FLOAT
-        return _UNSIGNED if flags & _UINT else _SIGNED
-
-    @staticmethod
-    def _decode_row(
-        data: bytes | memoryview,
-        offset: int,
-        proof_offset: int,
-        labels: list[_Label],
-        cache: EventFileCache,
-    ) -> tuple[BinaryEntry, int]:
-        flags = data[offset]
-        layout = BinarySection._row_layout(flags)
-        (
-            _,
-            step,
-            wall_time,
-            label,
-            frame_id,
-            frame_size,
-            checksum,
-            size,
-            start,
-            ordinal,
-            part,
-        ) = layout.unpack_from(data, offset)
-        if label >= len(labels):
-            raise ValueError("binary row label index is out of bounds")
-        tag, kind, extension, suffix = labels[label]
-        if bool(flags & _GRAPH) != (kind == "graphs"):
-            raise ValueError("invalid graph binary kind")
-        frame = BinarySection._live_frame(cache, frame_id, frame_size, checksum)
-        _check_extent(flags, frame.payload_size, size, start, ordinal, part)
-        has_span = bool(flags & _SPAN)
-        proof_end = proof_offset + _proof_length(size, has_span)
-        if proof_end > len(data):
-            raise ValueError("truncated binary range proof")
-        blob = IndexedBlob(
-            frame,
-            size,
-            (start, size) if has_span else None,
-            bytes(data[proof_offset:proof_end]) if proof_end != proof_offset else b"",
-        )
-        fields = (
-            blob,
-            cache.source_path,
-            tag,
-            kind,
-            step,
-            wall_time,
-            extension,
-            ordinal,
-            part if flags & _PART else None,
-            suffix,
-        )
-        if flags & _GRAPH:
-            return (
-                GraphSummaryEntry(
-                    *fields, bool(flags & _CONVERTS), bool(flags & _PROFILES)
-                ),
-                proof_end,
-            )
-        return BinaryEntry(*fields), proof_end

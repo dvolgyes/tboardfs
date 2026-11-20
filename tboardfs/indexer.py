@@ -626,7 +626,8 @@ class _EventIndexer:
                 if spans is not None and candidates
                 else None
             )
-            entry = BinaryEntry(
+            entry_type = GraphSummaryEntry if part_kind == "graphs" else BinaryEntry
+            entry = entry_type(
                 source_path=cache.source_path,
                 tag=tag,
                 kind=part_kind,
@@ -643,13 +644,10 @@ class _EventIndexer:
                 part=part,
                 suffix=suffix,
             )
-            if part_kind == "graphs":
+            if isinstance(entry, GraphSummaryEntry):
                 graph, profile = _TensorSummary.graph_views(value)
-                entry = GraphSummaryEntry(
-                    **vars(entry),
-                    converts=graph and summary_graph_def(entry, data) is not None,
-                    profiles=profile and run_metadata_text(entry, data) is not None,
-                )
+                entry.converts = graph and summary_graph_def(entry, data) is not None
+                entry.profiles = profile and run_metadata_text(entry, data) is not None
             cache.binaries.append(entry)
 
     @staticmethod

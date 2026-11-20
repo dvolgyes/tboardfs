@@ -1,20 +1,33 @@
-"""Exercise disk binary rows independently of the enclosing index codec."""
+"""Exercise cache-v2 binary rows and their binding to the source index."""
 
 from dataclasses import replace
 import math
+import os
 from pathlib import Path
 import struct
 
 import numpy as np
 import pytest
 
+from tboardfs.crc32c import masked_crc32c
 from tboardfs.file_status import FileIdentity
 from tboardfs.frame_ref import FrameRef
 from tboardfs.index_binary import BinarySection
+from tboardfs.index_codec import IndexCodec
 from tboardfs.model import BinaryEntry, EventFileCache
 from tboardfs.model.graph_summary_entry import GraphSummaryEntry
 from tboardfs.model.indexed_blob import IndexedBlob
 from tboardfs.range_proof import range_proof
+
+
+def _record(payload: bytes, checksum: int) -> bytes:
+    length = struct.pack("<Q", len(payload))
+    return (
+        length
+        + struct.pack("<I", masked_crc32c(length))
+        + payload
+        + struct.pack("<I", checksum)
+    )
 
 
 @pytest.fixture
@@ -22,14 +35,23 @@ def binary_cache(tmp_path: Path) -> EventFileCache:
     """Build rows spanning two source frames and more than one proof block."""
     cache = EventFileCache(tmp_path / "old")
     progress = cache.progress
-    progress.processed_pos = 9000
-    progress.identity = FileIdentity(1, 2, None)
-    progress.checked_status = (1, 2, None, 9000, 3, 4)
-    progress.frames.append(120, 11)
-    progress.frames.append(9000, 33)
-    first = FrameRef(progress.identity, 0, 120, 11, progress.checked_status)
-    second = FrameRef(progress.identity, 120, 8880, 33, progress.checked_status)
     payload = b"a" * 4200
+    first_payload = bytes(104)
+    second_payload = bytes(60) + payload + bytes(4604)
+    first_crc = masked_crc32c(first_payload)
+    second_crc = masked_crc32c(second_payload)
+    source = _record(first_payload, first_crc) + _record(second_payload, second_crc)
+    cache.source_path.write_bytes(source)
+    status = cache.source_path.stat()
+    progress.processed_pos = progress.last_checked_size = len(source)
+    progress.identity = FileIdentity.of(status)
+    progress.checked_status = FileIdentity.fingerprint(status)
+    progress.frames.append(120, first_crc)
+    progress.frames.append(len(source), second_crc)
+    first = FrameRef(progress.identity, 0, 120, first_crc, progress.checked_status)
+    second = FrameRef(
+        progress.identity, 120, len(source) - 120, second_crc, progress.checked_status
+    )
     proven = IndexedBlob(second, len(payload), (60, len(payload)), range_proof(payload))
     fallback = IndexedBlob(first, 53)
     cache.binaries = [
@@ -156,6 +178,89 @@ def test_binary_rows_reject_wrong_section_length(
         section += b"\x00"
     with pytest.raises(ValueError):
         BinarySection.decode(section, binary_cache)
+
+
+@pytest.mark.parametrize("damage", ["late_frame_checksum", "short_proof", "long_proof"])
+def test_index_decode_rejects_damaged_binary_rows_before_return(
+    binary_cache: EventFileCache, damage: str
+) -> None:
+    section = BinarySection.encode(binary_cache)
+    body = IndexCodec.encode(binary_cache)
+    binary_block = struct.pack("<Q", len(section)) + section
+    assert body.endswith(binary_block)
+    if damage == "late_frame_checksum":
+        damaged = bytearray(section)
+        row_count, _, _ = struct.unpack_from("<III", section)
+        last_row = struct.calcsize("<III") + (row_count - 1) * struct.calcsize(
+            "<BqdIIIIIIII"
+        )
+        checksum = last_row + struct.calcsize("<BqdIII")
+        damaged[checksum] ^= 1
+        section = bytes(damaged)
+    elif damage == "short_proof":
+        section = section[:-1]
+    else:
+        section += b"\x00"
+    block = struct.pack("<Q", len(section)) + section
+    damaged_body = body[: -len(binary_block)] + block
+    with binary_cache.source_path.open("rb") as source:
+        status = os.fstat(source.fileno())
+        assert IndexCodec.decode(body, binary_cache.source_path, status, source, {})
+        with pytest.raises(ValueError):
+            IndexCodec.decode(
+                damaged_body, binary_cache.source_path, status, source, {}
+            )
+
+
+def _mixed_proof_rows(
+    binary_cache: EventFileCache,
+) -> tuple[BinaryEntry, BinaryEntry, BinaryEntry, BinaryEntry]:
+    fallback, multi, *_ = binary_cache.binaries
+    empty = replace(fallback, blob=IndexedBlob(fallback.frame, 0, (0, 0)))
+    single = replace(
+        fallback,
+        blob=IndexedBlob(fallback.frame, 1, (0, 1), range_proof(b"\x00")),
+    )
+    return multi, empty, fallback, single
+
+
+@pytest.mark.parametrize("writable", [False, True])
+def test_binary_rows_keep_distinct_proof_slices_and_frames(
+    binary_cache: EventFileCache, writable: bool
+) -> None:
+    binary_cache.binaries = list(_mixed_proof_rows(binary_cache))
+    section = BinarySection.encode(binary_cache)
+    if writable:
+        buffer = bytearray(section)
+        with memoryview(buffer) as view:
+            rows = BinarySection.decode(view, binary_cache)
+        buffer[:] = bytes(len(buffer))
+    else:
+        rows = BinarySection.decode(section, binary_cache)
+    assert rows == binary_cache.binaries
+
+
+def test_binary_rows_preserve_proofs_and_snapshot_across_batches(
+    binary_cache: EventFileCache,
+) -> None:
+    multi, empty, _, single = _mixed_proof_rows(binary_cache)
+    cycle = [multi, single, empty]
+    count = 65_540
+    binary_cache.binaries = cycle * (count // 3) + cycle[: count % 3]
+    rows = BinarySection.decode(BinarySection.encode(binary_cache), binary_cache)
+
+    frames = binary_cache.progress.frames
+    for i in range(len(frames.ends)):
+        frames.ends[i] += 1
+        frames.checksums[i] ^= 1
+
+    assert len(rows) == count
+    for position in (0, 1, 32_768, 65_535, 65_536, 65_537, count - 1):
+        expected = cycle[position % len(cycle)]
+        restored = rows[position]
+        assert restored == expected
+        assert restored.frame.identity is expected.frame.identity
+        assert restored.frame.fingerprint is expected.frame.fingerprint
 
 
 def test_binary_rows_reject_foreign_source(binary_cache: EventFileCache) -> None:

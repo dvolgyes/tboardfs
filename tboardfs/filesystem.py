@@ -388,7 +388,7 @@ class TensorBoardFS:
             stored: BinaryEntry | GraphEntry = node["entry"]
             if not self._allowed(stored.source_path):
                 raise fuse_error(ENOENT)
-            return stored.blob.size
+            return stored.size
         # A sidecar can be large, so its size comes from the disk.
         if node["type"] == "sidecar":
             entry: SidecarEntry = node["entry"]

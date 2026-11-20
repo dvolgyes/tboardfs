@@ -144,6 +144,12 @@ The tree stores the resolved names, including collision suffixes, before a direc
 
 Listing a directory does not construct its typed file nodes; looking up a file constructs only that node.
 
+On a persistent-index hit, tboardfs validates every binary row against the frame index before exposing any files.
+
+Listing names or checking a binary file's size does not unpack its frame and byte-range evidence.
+
+Reading the file unpacks that evidence once and reuses it for subsequent reads.
+
 The FUSE mount returns each name with its file type, so a name-only walk such as `find MOUNTPOINT` does not need a
 separate `stat` for every file on Linux.
 

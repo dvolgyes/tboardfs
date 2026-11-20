@@ -190,6 +190,30 @@ def test_disk_mount_keeps_live_appends_and_refreshes_on_reopen(
     assert live == _contents(TensorBoardFS(source))
 
 
+def test_first_binary_read_after_restored_index_grows(
+    roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, _ = roots
+    event = source / "events.out.tfevents.1"
+    event.write_bytes(_frame(_images(1, *([PNG] * 80))))
+    directory = "/images/img"
+    original = TensorBoardFS(source, disk_index=True).readdir(directory)
+
+    def refuse_parse(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("the complete source must reopen from its saved index")
+
+    with monkeypatch.context() as hit:
+        hit.setattr(_EventIndexer, "parse_event_file", refuse_parse)
+        fs = TensorBoardFS(source, disk_index=True)
+        assert fs.readdir(directory) == original
+    with event.open("ab") as handle:
+        handle.write(_frame(_images(2, PNG)))
+    assert fs.read(f"{directory}/000002.png", len(PNG), 0) == PNG
+    old_image = f"{directory}/000001_79.png"
+    assert fs.getattr(old_image)["st_size"] == len(PNG)
+    assert fs.read(old_image, 19, 7) == PNG[7:26]
+
+
 @pytest.mark.parametrize("enabled", [False, True])
 def test_cli_disk_index_is_opt_in(
     roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch, enabled: bool
