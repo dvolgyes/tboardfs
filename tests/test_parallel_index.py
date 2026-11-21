@@ -1,5 +1,6 @@
 """Cold range indexing matches serial frame, table, and mounted output."""
 
+import json
 import os
 import struct
 from collections.abc import Iterator
@@ -14,13 +15,14 @@ from test_payload_spans import _PNG as PNG
 from test_restart_purge import _start, _version
 from test_tf2_summaries import _images
 
-from tboardfs import TensorBoardFS
+from tboardfs import TensorBoardFS, filesystem
 from tboardfs import parallel_index as cold
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.index_segment import Job, Metadata, Segment
 from tboardfs.index_transport import _PackedResult
 from tboardfs.indexer import _EventIndexer
 from tboardfs.model import EventFileCache
+from tboardfs.proto import compat_pb2
 
 _STEP = 2**53 + 1
 _SOURCE = "events.out.tfevents.host"
@@ -113,6 +115,84 @@ def test_parallel_index_matches_serial_ranges(tmp_path: Path) -> None:
         _STEP + 2,
     ]
     assert indexed.scalars["narrow"]["value"].dtype == np.dtype("uint16")
+
+
+@pytest.mark.parametrize("workers", [1, 4])
+def test_legacy_scalar_image_pairs_keep_order_and_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workers: int
+) -> None:
+    monkeypatch.setattr(cold, "_available_cpus", lambda: 4)
+    monkeypatch.setattr(filesystem, "_PARALLEL_MIN_BYTES", 0)
+    first = -(2**63) + 1
+    seed = compat_pb2.Event(step=first, wall_time=100.0)
+    seed.summary.value.add(tag="epoch", simple_value=3)
+    frames = [_frame(seed)]
+    filler = _loss(0, 1.0)
+    reset = compat_pb2.Event(step=first + 3, wall_time=104.0)
+    reset.summary.value.add(tag="epoch", simple_value=3)
+
+    cases = (
+        (False, "plain", False),
+        (True, "plain", False),
+        (False, "annotated", True),
+        (True, "annotated", False),
+        (False, "annotated", False),
+        (True, "annotated", True),
+        (False, "fresh", True),
+    )
+    for offset, (image_first, tag, sets_metadata) in enumerate(cases):
+        event = compat_pb2.Event(step=first + offset, wall_time=101.0 + offset)
+        scalar = compat_pb2.Summary.Value(tag="metric", simple_value=offset + 1)
+        image = compat_pb2.Summary.Value(tag=tag)
+        image.image.encoded_image_string = PNG
+        if sets_metadata:
+            image.metadata.plugin_data.plugin_name = "annotations"
+        if offset == 2:
+            frames.extend([filler] * cold._PREFIX_RECORDS)
+            epoch = compat_pb2.Summary.Value(tag="epoch", simple_value=7)
+            event.summary.value.extend([scalar, epoch, image])
+            frames.append(_frame(event))
+            frames.append(_frame(reset))
+            frames.extend([filler] * (4 * cold._PREFIX_RECORDS))
+        else:
+            event.summary.value.extend(
+                [image, scalar] if image_first else [scalar, image]
+            )
+            frames.append(_frame(event))
+
+    (tmp_path / _SOURCE).write_bytes(b"".join(frames))
+    fs = TensorBoardFS(tmp_path, index_workers=workers)
+    rows = json.loads(fs.read("/scalars/metric.json", 4096, 0))
+    assert [
+        (r["step"], r["value"], r["epoch"], r["wall_time"], r["relative_time"])
+        for r in rows
+    ] == [
+        (first, 1, 3, 101, 1),
+        (first + 1, 2, 3, 102, 2),
+        (first + 2, 3, 7, 103, 3),
+        (first + 3, 4, 3, 104, 4),
+        (first + 4, 5, 3, 105, 5),
+        (first + 5, 6, 3, 106, 6),
+        (first + 6, 7, 3, 107, 7),
+    ]
+    epochs = json.loads(fs.read("/scalars/epoch.json", 4096, 0))
+    assert [(r["step"], r["value"]) for r in epochs] == [
+        (first, 3),
+        (first + 2, 7),
+        (first + 3, 3),
+    ]
+    assert fs.getattr("/scalars/metric.json")["st_mtime"] == 107.0
+    for offset, (_, tag, _) in enumerate(cases):
+        step = first + offset
+        media = f"/images/{tag}/{step}.png"
+        assert fs.read(media, 4096, 0) == PNG
+        assert fs.getattr(media)["st_mtime"] == 101.0 + offset
+        if offset >= 2:
+            plugin = f"/plugins/annotations/{tag}/{step}.json"
+            assert json.loads(fs.read(plugin, 4096, 0)) == {
+                "plugin_name": "annotations",
+                "tag": tag,
+            }
 
 
 @pytest.mark.parametrize(

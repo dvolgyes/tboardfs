@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO, Protocol, cast
+from typing import Any, BinaryIO, cast
 
 import numpy as np
 from google.protobuf.message import DecodeError
@@ -17,7 +17,7 @@ from tboardfs.event_source import SCAN_BUFFER, EventSource
 from tboardfs.file_status import FileIdentity
 from tboardfs.frame_ref import FrameRef
 from tboardfs.indexed_frame import IndexedFrame
-from tboardfs.media_index import _MediaIndex
+from tboardfs.media_index import _BinaryWriter, _MediaIndex
 from tboardfs.meta_graph import meta_graph_graph_def
 from tboardfs.model import (
     BinaryEntry,
@@ -37,7 +37,7 @@ from tboardfs.proto_schema import _ProtoParser
 from tboardfs.range_proof import range_proof
 from tboardfs.restarts import _offset_restarts, _RestartPurge
 from tboardfs.skip_failure import _diagnostic_provenance, _skip_error, _warn_skipped
-from tboardfs.summary import _SummaryParser
+from tboardfs.summary import _Image, _SummaryParser
 from tboardfs.tables import (
     _ScalarRows,
     _TableMerge,
@@ -50,10 +50,6 @@ from tboardfs.tfrecord import _iter_tfrecords
 _MALFORMED_RECORD_ERRORS = (DecodeError, ValueError, struct.error)
 _FLOAT32 = np.dtype("float32")
 _FLOAT64 = np.dtype("float64")
-
-
-class _Image(Protocol):
-    encoded_image_string: bytes
 
 
 def parse_file(filename: str | Path) -> dict[str, Any]:
@@ -370,51 +366,54 @@ class _EventIndexer:
         wall_time = message.wall_time
         spans = PayloadSpans.for_payload(record.payload)
         plain = (
-            _EventIndexer._plain_values(
+            _SummaryParser.plain_values(
                 message.summary.value, cache.progress.effective_metadata
             )
             if kind == "summary"
             else None
         )
-        if plain is not None:
-            values: Any = plain
-        else:
+        values: Any = plain
+        if plain is None:
             event = _SummaryParser.convert_event(message, kind, indexing=True)
             _EventIndexer.add_restart(cache, event, state)
             _EventIndexer.add_graph(
                 cache, cache.source_path, event, record, wall_time, spans
             )
             values = event.get("values", ())
-        index_values = (
-            _EventIndexer._index_plain_values
-            if plain is not None
-            else _EventIndexer._index_converted_values
-        )
         first_time = _EventIndexer._first_time(state, wall_time, bool(values))
         relative_time = np.nan if first_time is None else wall_time - first_time
-        timing = (message.step, wall_time, relative_time)
-        binary_start = len(cache.binaries)
-        epoch = index_values(cache, record, state, values, timing, spans, strict)
-        if len(cache.binaries) - binary_start > 1 and len(values) > 1:
-            _EventIndexer._deduplicate_binaries(cache, binary_start)
+        step = message.step
+        timing = (step, wall_time, relative_time)
+        if isinstance(plain, tuple):
+            scalar_tag, scalar, image_tag, image = plain
+            epoch = state.epoch
+            if scalar is not None:
+                epoch = _EventIndexer.add_scalar(
+                    state, scalar_tag, scalar, _FLOAT32, epoch, timing
+                )
+            if image is not None:
+                _EventIndexer._index_plain_image(
+                    cache,
+                    record,
+                    state.media,
+                    0 if scalar is None else 1,
+                    image,
+                    (image_tag, step, wall_time),
+                    spans,
+                    state.media.writer if spans is None else None,
+                    strict,
+                )
+        else:
+            index_values = (
+                _EventIndexer._index_plain_values
+                if plain is not None
+                else _EventIndexer._index_converted_values
+            )
+            binary_start = len(cache.binaries)
+            epoch = index_values(cache, record, state, values, timing, spans, strict)
+            if len(cache.binaries) - binary_start > 1 and len(values) > 1:
+                _EventIndexer._deduplicate_binaries(cache, binary_start)
         state.first_time, state.epoch = first_time, epoch
-
-    @staticmethod
-    def _plain_values(
-        values: Iterable[Any], metadata: dict[str, dict[str, Any]]
-    ) -> list[tuple[str, float | _Image]] | None:
-        """Prepare ordinary values before mutating the index for the record."""
-        plain: list[tuple[str, float | _Image]] = []
-        for value in values:
-            kind = value.WhichOneof("value")
-            if kind not in ("simple_value", "image") or value.HasField("metadata"):
-                return None
-            tag = value.tag
-            if tag in metadata:
-                return None
-            data = value.simple_value if kind == "simple_value" else value.image
-            plain.append((tag, data))
-        return plain
 
     @staticmethod
     def _index_plain_values(
@@ -444,24 +443,50 @@ class _EventIndexer:
                 ):
                     image_writer = writer
                 writer = None
-            try:
-                state.media.add_legacy_image(
-                    cache,
-                    ordinal,
-                    record,
-                    data.encoded_image_string,
-                    (tag, step, wall_time),
-                    spans,
-                    writer=image_writer,
-                )
-            except Exception as error:
-                if not _skip_error(
-                    error,
-                    f"value {tag!r} at step {step} in {cache.source_path}",
-                    strict=strict,
-                ):
-                    raise
+            _EventIndexer._index_plain_image(
+                cache,
+                record,
+                state.media,
+                ordinal,
+                data,
+                (tag, step, wall_time),
+                spans,
+                image_writer,
+                strict,
+            )
         return epoch
+
+    @staticmethod
+    def _index_plain_image(
+        cache: EventFileCache,
+        record: Record,
+        media: _MediaIndex,
+        ordinal: int,
+        image: _Image,
+        identity: tuple[str, int, float],
+        spans: PayloadSpans | None,
+        writer: _BinaryWriter | None,
+        strict: bool,
+    ) -> None:
+        """Index an ordinary image with the per-value error policy."""
+        try:
+            media.add_legacy_image(
+                cache,
+                ordinal,
+                record,
+                image.encoded_image_string,
+                identity,
+                spans,
+                writer=writer,
+            )
+        except Exception as error:
+            tag, step, _ = identity
+            if not _skip_error(
+                error,
+                f"value {tag!r} at step {step} in {cache.source_path}",
+                strict=strict,
+            ):
+                raise
 
     @staticmethod
     def _first_time(

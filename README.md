@@ -105,6 +105,12 @@ The initial serial scan uses a 64 KiB read buffer for event files of at least 64
 
 Smaller files and append refreshes use Python's default buffering.
 
+Serial and parallel indexing skip the temporary value list for three legacy summary shapes: one scalar, one image, or a
+scalar followed by an image.
+
+If any value in the summary declares or inherits metadata, the indexer processes the whole summary through the
+metadata-aware path instead.
+
 ### Parallel cold indexing
 
 For a large event file that takes tens of seconds to open, try `tboardfs -j 4 SOURCE MOUNTPOINT`.

@@ -1,5 +1,6 @@
+from collections.abc import Iterable, Sequence
 from math import prod
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from tboardfs.constants import DT_FLOAT, DT_STRING, LARGE_TENSOR_THRESHOLD
 from tboardfs.proto_schema import _ProtoParser
@@ -24,6 +25,13 @@ _PACKED_FIELDS = frozenset(("dtype", "shape", "tensor_content"))
 _MAX_TENSOR_RANK = 254
 
 
+class _Image(Protocol):
+    encoded_image_string: bytes
+
+
+type _ScalarImage = tuple[str, float | None, str, _Image | None]
+
+
 def parse_event(data: bytes) -> dict[str, Any]:
     """Parse a TensorBoard Event protobuf with vendored protobuf classes."""
     return _SummaryParser.parse_event(data)
@@ -31,6 +39,63 @@ def parse_event(data: bytes) -> dict[str, Any]:
 
 class _SummaryParser:
     """Convert TensorBoard protobuf messages to parser dictionaries."""
+
+    @staticmethod
+    def plain_values(
+        values: Sequence[Any], metadata: dict[str, dict[str, Any]]
+    ) -> _ScalarImage | list[tuple[str, float | _Image]] | None:
+        """Prepare a scalar followed by an optional image, a lone image, or an ordered value list."""
+        count = len(values)
+        if count > 2:
+            return _SummaryParser._plain_many(values, metadata)
+        if not count:
+            return []
+        first = values[0]
+        kind = first.WhichOneof("value")
+        if (
+            kind not in ("simple_value", "image")
+            or first.HasField("metadata")
+            or (tag := first.tag) in metadata
+        ):
+            return None
+        if count == 1:
+            if kind == "simple_value":
+                return tag, first.simple_value, "", None
+            return "", None, tag, first.image
+        second = values[1]
+        second_kind = second.WhichOneof("value")
+        if (
+            second_kind not in ("simple_value", "image")
+            or second.HasField("metadata")
+            or (second_tag := second.tag) in metadata
+        ):
+            return None
+        if kind == "simple_value" and second_kind == "image":
+            return tag, first.simple_value, second_tag, second.image
+        return [
+            (tag, first.simple_value if kind == "simple_value" else first.image),
+            (
+                second_tag,
+                second.simple_value if second_kind == "simple_value" else second.image,
+            ),
+        ]
+
+    @staticmethod
+    def _plain_many(
+        values: Iterable[Any], metadata: dict[str, dict[str, Any]]
+    ) -> list[tuple[str, float | _Image]] | None:
+        """Prepare a larger ordinary summary without mutating its index."""
+        plain: list[tuple[str, float | _Image]] = []
+        for value in values:
+            kind = value.WhichOneof("value")
+            if kind not in ("simple_value", "image") or value.HasField("metadata"):
+                return None
+            tag = value.tag
+            if tag in metadata:
+                return None
+            data = value.simple_value if kind == "simple_value" else value.image
+            plain.append((tag, data))
+        return plain
 
     @staticmethod
     def parse_event(data: bytes, *, indexing: bool = False) -> dict[str, Any]:
