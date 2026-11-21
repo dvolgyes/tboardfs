@@ -165,6 +165,11 @@ These hashes detect accidental changes; they do not authenticate the source or t
 The first mount pays for parsing, hashing and writing; subsequent hits avoid protobuf parsing and file-type detection
 but still verify the source and build the virtual tree.
 
+On a parallel cache miss, tboardfs writes ordinary packed binary rows to the persistent index without first creating a
+Python entry object for each row.
+
+The serial and parallel writers use the same disk format and check the rows against the indexed TFRecord frames.
+
 The tree stores the resolved names, including collision suffixes, before a directory is listed.
 
 Listing a directory does not construct its typed file nodes; looking up a file constructs only that node.

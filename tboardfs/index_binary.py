@@ -3,6 +3,7 @@
 import struct
 import sys
 from bisect import bisect_left
+from collections.abc import Iterable
 from operator import index
 
 import numpy as np
@@ -23,7 +24,8 @@ from tboardfs.index_binary_layout import (
     _UNSIGNED,
     Label,
 )
-from tboardfs.index_binary_rows import BinaryRows
+from tboardfs.index_binary_rows import _BATCH_SIZE, _ROW, BinaryRows, _validate_batch
+from tboardfs.index_transport import _FLOAT_STEP, _HAS_PART, _HAS_SPAN, _WorkerRows
 from tboardfs.index_utf8 import encode_utf8
 from tboardfs.model import BinaryEntry, EventFileCache
 from tboardfs.model.graph_summary_entry import GraphSummaryEntry
@@ -59,33 +61,18 @@ class BinarySection:
     @staticmethod
     def encode(cache: EventFileCache, *, limit: int = sys.maxsize) -> bytes:
         """Pack binary entries without serializing source paths or payload bytes."""
-        remaining = limit - BinarySection.minimum_size(cache)
-        if remaining < 0:
-            raise ValueError("binary section exceeds index budget")
-        rows = bytearray(len(cache.binaries) * _SIGNED.size)
-        labels: dict[Label, int] = {}
-        label_data = bytearray()
-        proofs = bytearray()
+        writer = _BinaryWriter(cache, limit)
         try:
-            for position, entry in enumerate(cache.binaries):
-                label = (entry.tag, entry.kind, entry.extension, entry.suffix)
-                next_id = len(labels)
-                label_id = labels.setdefault(label, next_id)
-                if label_id == next_id:
-                    remaining -= _LABEL.size
-                    remaining = BinarySection._write_label(label_data, label, remaining)
-                proof = entry.blob.range_checksums
-                remaining -= len(proof)
-                if remaining < 0:
-                    raise ValueError("binary section exceeds index budget")
-                BinarySection._pack_row(
-                    rows, position * _SIGNED.size, cache, entry, label_id
-                )
-                proofs.extend(proof)
-            header = _HEADER.pack(len(cache.binaries), len(labels), len(label_data))
+            if isinstance(cache.binaries, PackedBinaries):
+                writer.write_packed(cache.binaries)
+            else:
+                writer.write_entries(cache.binaries)
+            header = _HEADER.pack(
+                len(cache.binaries), len(writer.labels), len(writer.label_data)
+            )
         except struct.error as error:
             raise ValueError("binary index field is out of range") from error
-        return b"".join((header, rows, label_data, proofs))
+        return b"".join((header, writer.rows, writer.label_data, writer.proofs))
 
     @staticmethod
     def _write_label(data: bytearray, label: Label, remaining: int) -> int:
@@ -239,3 +226,192 @@ class BinarySection:
         if offset != end:
             raise ValueError("trailing binary label data")
         return labels
+
+
+class _BinaryWriter:
+    """Write entry chunks into a single ordered durable binary section."""
+
+    cache: EventFileCache
+    rows: bytearray
+    labels: dict[Label, int]
+    label_data: bytearray
+    proofs: bytearray
+    remaining: int
+    position: int
+
+    def __init__(self, cache: EventFileCache, limit: int) -> None:
+        self.remaining = limit - BinarySection.minimum_size(cache)
+        if self.remaining < 0:
+            raise ValueError("binary section exceeds index budget")
+        self.cache = cache
+        self.rows = bytearray(len(cache.binaries) * _SIGNED.size)
+        self.labels = {}
+        self.label_data = bytearray()
+        self.proofs = bytearray()
+        self.position = 0
+
+    def write_entries(self, entries: Iterable[BinaryEntry]) -> None:
+        """Encode eager entries and worker exceptions through the object path."""
+        cache, rows = self.cache, self.rows
+        labels, label_data, proofs = self.labels, self.label_data, self.proofs
+        remaining = self.remaining
+        position = self.position - 1
+        for position, entry in enumerate(entries, self.position):
+            label = (entry.tag, entry.kind, entry.extension, entry.suffix)
+            next_id = len(labels)
+            label_id = labels.setdefault(label, next_id)
+            if label_id == next_id:
+                remaining = BinarySection._write_label(
+                    label_data, label, remaining - _LABEL.size
+                )
+            proof = entry.blob.range_checksums
+            remaining -= len(proof)
+            if remaining < 0:
+                raise ValueError("binary section exceeds index budget")
+            BinarySection._pack_row(
+                rows, position * _SIGNED.size, cache, entry, label_id
+            )
+            proofs.extend(proof)
+        self.remaining = remaining
+        self.position = position + 1
+
+    def write_packed(self, binaries: PackedBinaries) -> None:
+        """Encode each chunk according to its in-memory representation."""
+        packed = _PackedWriter(self)
+        for chunk in binaries.chunks():
+            if isinstance(chunk, _WorkerRows):
+                packed.write_worker(chunk)
+            elif isinstance(chunk, list):
+                self.write_entries(chunk)
+            else:
+                self.write_entries(chunk.entry_at(i) for i in range(len(chunk)))
+
+
+class _PackedWriter:
+    """Translate worker rows against one durable output and frame table."""
+
+    writer: _BinaryWriter
+    dest: np.ndarray
+    frame_ends: np.ndarray
+    frame_checksums: np.ndarray
+    processed_pos: int
+
+    def __init__(self, writer: _BinaryWriter) -> None:
+        self.writer = writer
+        self.dest = np.frombuffer(writer.rows, dtype=_ROW)
+        progress = writer.cache.progress
+        self.frame_ends = np.asarray(progress.frames.ends)
+        self.frame_checksums = np.asarray(progress.frames.checksums)
+        self.processed_pos = progress.processed_pos
+
+    def _check_snapshot(self, chunk: _WorkerRows) -> None:
+        if not chunk.row_count:
+            return
+        cache = self.writer.cache
+        if chunk.source_path != cache.source_path:
+            raise ValueError("binary entry refers to another source path")
+        if (
+            chunk.identity != cache.progress.identity
+            or chunk.fingerprint != cache.progress.checked_status
+        ):
+            raise ValueError("binary entry refers to another source snapshot")
+
+    def write_worker(self, chunk: _WorkerRows) -> None:
+        """Write one chunk, interleaving its exceptional rows and range proofs."""
+        self._check_snapshot(chunk)
+        remap = np.full(len(chunk.labels), -1, dtype=np.int64)
+        graph_labels = np.fromiter(
+            (label[1] == "graphs" for label in chunk.labels),
+            dtype=np.bool_,
+            count=len(chunk.labels),
+        )
+        writer = self.writer
+        proof_offset = 0
+        proofs = memoryview(chunk.proofs)
+        for batch in chunk.batches(_BATCH_SIZE):
+            if isinstance(batch, BinaryEntry):
+                writer.write_entries((batch,))
+                continue
+            out = self.dest[writer.position : writer.position + len(batch)]
+            size = self._convert_batch(batch, out, graph_labels)
+            proof_end = proof_offset + size
+            if proof_end > len(proofs):
+                raise ValueError("truncated binary range proof")
+            out["label"] = self._label_ids(batch["label"], chunk.labels, remap)
+            writer.remaining -= size
+            if writer.remaining < 0:
+                raise ValueError("binary section exceeds index budget")
+            if size:
+                writer.proofs.extend(proofs[proof_offset:proof_end])
+            proof_offset = proof_end
+            writer.position += len(batch)
+        if proof_offset != len(proofs):
+            raise ValueError("trailing binary range proof data")
+
+    def _frame_ids(self, starts: np.ndarray, sizes: np.ndarray) -> np.ndarray:
+        ends = starts + sizes
+        positions = np.searchsorted(self.frame_ends, ends)
+        if (ends < starts).any() or (
+            positions >= min(len(self.frame_ends), 2**32)
+        ).any():
+            raise ValueError("binary entry refers to an unindexed frame")
+        return positions
+
+    def _convert_batch(
+        self, batch: np.ndarray, out: np.ndarray, graph_labels: np.ndarray
+    ) -> int:
+        """Convert and validate a batch before remapping its worker-local labels."""
+        flags = batch["flags"]
+        if (flags & (255 ^ (_FLOAT_STEP | _HAS_SPAN | _HAS_PART))).any():
+            raise ValueError("invalid worker binary row flags")
+        has_span = (flags & _HAS_SPAN) != 0
+        out["flags"] = (
+            ((flags & _FLOAT_STEP) != 0) * np.uint8(_REAL)
+            | has_span * np.uint8(_SPAN)
+            | ((flags & _HAS_PART) != 0) * np.uint8(_PART)
+        )
+        frame_starts = batch["offset"]
+        out["frame"] = self._frame_ids(frame_starts, batch["frame_size"])
+        for name in (
+            "step",
+            "time",
+            "label",
+            "frame_size",
+            "checksum",
+            "size",
+            "start",
+            "ordinal",
+            "part",
+        ):
+            out[name] = batch[name]
+        starts, lengths = _validate_batch(
+            out, graph_labels, self.frame_ends, self.frame_checksums, self.processed_pos
+        )
+        if (starts != frame_starts).any():
+            raise ValueError("binary entry refers to an unindexed frame")
+        if (has_span & (batch["span_size"] != batch["size"])).any():
+            raise ValueError("binary span and blob sizes disagree")
+        if (lengths != batch["proof_size"]).any():
+            raise ValueError("invalid binary range proof length")
+        return int(lengths.sum())
+
+    def _label_ids(
+        self, ids: np.ndarray, labels: tuple[Label, ...], remap: np.ndarray
+    ) -> np.ndarray:
+        """Intern referenced labels in first-use order."""
+        mapped = remap[ids]
+        missing = mapped < 0
+        if not missing.any():
+            return mapped
+        writer = self.writer
+        fresh, first = np.unique(ids[missing], return_index=True)
+        for local_id in fresh[np.argsort(first)]:
+            label = labels[local_id]
+            next_id = len(writer.labels)
+            label_id = writer.labels.setdefault(label, next_id)
+            if label_id == next_id:
+                writer.remaining = BinarySection._write_label(
+                    writer.label_data, label, writer.remaining - _LABEL.size
+                )
+            remap[local_id] = label_id
+        return remap[ids]

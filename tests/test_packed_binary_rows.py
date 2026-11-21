@@ -7,14 +7,23 @@ from multiprocessing.reduction import ForkingPickler
 from pathlib import Path
 from weakref import ref
 
+import pytest
+from test_graph_summaries import _graph_event, _run_metadata
 from test_incremental_parse import _frame
 from test_index_transport import _job
 from test_payload_spans import _PNG
+from test_tf2_summaries import _images
 
+from scripts.scale_corpus import _ScaleCorpus
 from tboardfs.extract import extract_binary_blob
+from tboardfs.index_binary import BinarySection
+from tboardfs.index_codec import IndexCodec
 from tboardfs.index_segment import Segment
-from tboardfs.index_transport import _PackedResult
+from tboardfs.index_transport import _PackedResult, _WorkerRows, packed_work
+from tboardfs.model import EventFileCache
 from tboardfs.model.binary_entry import BinaryEntry
+from tboardfs.model.graph_summary_entry import GraphSummaryEntry
+from tboardfs.model.packed_binaries import PackedBinaries
 from tboardfs.proto import compat_pb2
 from tboardfs.range_proof import BLOCK_SIZE, range_proof
 from tboardfs.verified_span import _FrameValidations, _VerifiedSpan
@@ -90,3 +99,140 @@ def test_restored_binary_evidence_outlives_segment(tmp_path: Path) -> None:
     assert entries[2].blob.range_checksums == b""
     for index in (0, 1, 3):
         _assert_verified_span(path, entries[index], media[index])
+
+
+def _restore_worker(result: _PackedResult) -> PackedBinaries:
+    rows = ForkingPickler.loads(ForkingPickler.dumps(result)).unpack().cache.binaries
+    assert isinstance(rows, PackedBinaries)
+    return rows
+
+
+@pytest.fixture
+def mixed_worker_index(
+    tmp_path: Path,
+) -> tuple[EventFileCache, EventFileCache, list[bytes]]:
+    """Make two worker batches with different labels and a shared eager label."""
+    path = tmp_path / "events.out.tfevents"
+    media = _write_media_frames(path)
+    graph = _run_metadata(2)
+    second_png = _ScaleCorpus.small_png(0x00FF00)
+    with path.open("ab") as handle:
+        handle.write(_graph_event(graph, plugin="graph_run_metadata", step=5))
+        boundary = handle.tell()
+        images = _images(6, _PNG, second_png)
+        images.summary.value[0].tag = "é/文"
+        handle.write(_frame(images))
+
+    job = _job(path)
+    left = Segment.work((job[0], 0, boundary, *job[3:]))
+    assert isinstance(left.cache.binaries, list)
+    left_rows = left.cache.binaries
+    left_rows[0] = replace(left_rows[0], step=-(2**63), wall_time=-0.0)
+    left_rows[1] = replace(left_rows[1], step=2**64 - 1)
+    left_rows[3] = replace(left_rows[3], step=4.5, suffix="_β")
+    graph_entry = left_rows[4]
+    assert isinstance(graph_entry, GraphSummaryEntry)
+    assert graph_entry.converts and graph_entry.profiles
+    result = _PackedResult.pack(left)
+    assert set(result.exceptions) == {1, 4}
+    result.exceptions = dict(reversed(result.exceptions.items()))
+    right_job = (job[0], boundary, *job[2:])
+    right_reference = Segment.work(right_job).cache.binaries
+    eager_chunk = [replace(left_rows[0], step=99), right_reference[0]]
+    packed_rows = _restore_worker(result)
+    packed_rows.extend(eager_chunk)
+    packed_rows.extend(_restore_worker(packed_work(right_job)))
+
+    reference = Segment.work(job).cache
+    reference.binaries = [*left_rows, *eager_chunk, *right_reference]
+    packed = replace(reference, binaries=packed_rows)
+    payloads = [*media, graph, media[0], _PNG, _PNG, second_png]
+    return packed, reference, payloads
+
+
+def test_packed_worker_index_matches_eager_encoding(
+    mixed_worker_index: tuple[EventFileCache, EventFileCache, list[bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    packed, reference, payloads = mixed_worker_index
+    expected_bytes = IndexCodec.encode(reference)
+    entry_at = _WorkerRows.entry_at
+
+    def guard_ordinary_rows(rows: _WorkerRows, position: int) -> BinaryEntry:
+        assert position in rows.exceptions, (
+            "persistence materialized an ordinary packed worker row"
+        )
+        return entry_at(rows, position)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_WorkerRows, "entry_at", guard_ordinary_rows)
+        encoded = IndexCodec.encode(packed)
+    assert encoded == expected_bytes
+
+    path = packed.source_path
+    with path.open("rb") as handle:
+        restored = IndexCodec.decode(encoded, path, path.stat(), handle, {})
+    assert restored is not None
+    assert list(restored.binaries) == reference.binaries
+    for entry, payload in zip(restored.binaries, payloads, strict=True):
+        assert extract_binary_blob(entry) == payload
+        assert entry.frame.identity is restored.progress.identity
+        assert entry.frame.fingerprint is restored.progress.checked_status
+        if entry.blob.span is not None:
+            assert entry.blob.range_checksums == range_proof(payload)
+
+
+@pytest.mark.parametrize(
+    ("damage", "message"),
+    [
+        ("frame", "indexed frame"),
+        ("snapshot", "source snapshot"),
+        ("proof", "range proof"),
+        ("span_size", "span"),
+        ("frame_offset_overflow", "frame"),
+    ],
+)
+def test_packed_worker_index_rejects_invalid_evidence(
+    tmp_path: Path, damage: str, message: str
+) -> None:
+    path = tmp_path / "events.out.tfevents"
+    _write_media_frames(path)
+    segment = Segment.work(_job(path))
+    cache = segment.cache
+    assert isinstance(cache.binaries, list)
+    if damage == "proof":
+        entry = cache.binaries[0]
+        proof = entry.blob.range_checksums
+        assert len(proof) > 4
+        cache.binaries[0] = replace(
+            entry, blob=replace(entry.blob, range_checksums=proof[:-4])
+        )
+    elif damage == "span_size":
+        entry = cache.binaries[0]
+        assert entry.blob.span is not None
+        cache.binaries[0] = replace(
+            entry, blob=replace(entry.blob, span=(entry.blob.span[0], entry.size - 1))
+        )
+    elif damage == "frame_offset_overflow":
+        entry = cache.binaries[0]
+        cache.binaries[0] = replace(
+            entry,
+            blob=replace(entry.blob, frame=replace(entry.frame, offset=2**64 - 1)),
+        )
+    cache = _PackedResult.pack(segment).unpack().cache
+    if damage == "frame":
+        cache.progress.frames.checksums[0] ^= 1
+    elif damage == "snapshot":
+        cache.progress.checked_status = ()
+    with pytest.raises(ValueError, match=message):
+        BinarySection.encode(cache)
+
+
+def test_packed_worker_index_enforces_exact_budget(
+    mixed_worker_index: tuple[EventFileCache, EventFileCache, list[bytes]],
+) -> None:
+    packed, reference, _ = mixed_worker_index
+    expected = BinarySection.encode(reference)
+    assert BinarySection.encode(packed, limit=len(expected)) == expected
+    with pytest.raises(ValueError, match="budget"):
+        BinarySection.encode(packed, limit=len(expected) - 1)

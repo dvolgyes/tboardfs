@@ -6,8 +6,11 @@ from array import array
 from bisect import bisect_left
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from itertools import chain
 from pathlib import Path
 from typing import BinaryIO, Self
+
+import numpy as np
 
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.event_source import EventSource
@@ -46,6 +49,24 @@ _UINT32 = struct.Struct("<I")
 _PROOF_SIZE_OFFSET = _ROW_SIZE - _UINT32.size
 _ORDINAL_PART_OFFSET = _PROOF_SIZE_OFFSET - _ORDINAL_PART.size
 _BLOB_SIZE_OFFSET = _INT_HEADER.size + struct.calcsize("<QII")
+
+_WORKER_ROW = np.dtype(
+    [
+        ("flags", "u1"),
+        ("step", "<u8"),
+        ("time", "<f8"),
+        ("label", "<u4"),
+        ("offset", "<u8"),
+        ("frame_size", "<u4"),
+        ("checksum", "<u4"),
+        ("size", "<u4"),
+        ("start", "<u4"),
+        ("span_size", "<u4"),
+        ("ordinal", "<u4"),
+        ("part", "<u4"),
+        ("proof_size", "<u4"),
+    ]
+)
 
 
 def _restore_tensors(segment: Segment, mountpoint: Path | None) -> None:
@@ -152,6 +173,20 @@ class _WorkerRows:
 
     def __len__(self) -> int:
         return self.row_count + len(self.exception_positions)
+
+    def batches(self, batch_size: int) -> Iterator[np.ndarray | BinaryEntry]:
+        """Yield bounded row views and exceptional entries in producer order."""
+        rows = np.frombuffer(self.rows, dtype=_WORKER_ROW)
+        packed_start = logical_start = 0
+        for position in chain(self.exception_positions, (len(self),)):
+            packed_end = packed_start + position - logical_start
+            for start in range(packed_start, packed_end, batch_size):
+                yield rows[start : min(start + batch_size, packed_end)]
+            entry = self.exceptions.get(position)
+            if entry is not None:
+                yield entry
+            packed_start = packed_end
+            logical_start = position + 1
 
     def project(self) -> Iterator[BinaryProjection]:
         """Yield virtual-file metadata in the original row order."""
