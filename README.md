@@ -850,6 +850,60 @@ Ordinary tests use a smaller mixed file with the same data families.
 Use `--target-bytes` to change the minimum generated size or `--narrow` to reproduce the earlier scalar/image-only
 benchmark.
 
+### Cold mounts through Linux FUSE
+
+Keep the established 4 GiB mixed and Lightning-generated logs on the storage device you want to measure, outside the
+checkout.
+
+Under the default corpus root `~/workspace/benchmarks/tboardfs/cold-mount`, put only the named run directory in each
+`log/` directory and only one complete, unchanged `events.out.tfevents.*` file in each run directory:
+
+```text
+cold-mount/
+├── mixed/log/run/
+└── lightning/log/lightning-4g/
+```
+
+Run each workflow separately on a host with Linux FUSE, `/dev/fuse` access and `fusermount3` or `fusermount`:
+
+```bash
+OPENBLAS_NUM_THREADS=1 uv run --locked python -m scripts.benchmark_cold_mount mixed > mixed.jsonl
+OPENBLAS_NUM_THREADS=1 uv run --locked python -m scripts.benchmark_cold_mount lightning > lightning.jsonl
+```
+
+Use `--corpus-root` if the corpus is on another device.
+
+Each sample launches the real foreground `tboardfs` command with a fresh mount and empty persistent index cache in a
+private disposable directory beside `log/` on the corpus filesystem.
+
+The benchmark rejects changed inputs, samples with resident source pages before launch, and samples that fail to publish
+a persistent index.
+
+Use local files you own with writes already flushed; this does not clear filesystem metadata or device-level caches.
+
+On failure, the benchmark reports the retained trial directory and its `mount.log`; confirm the mount is detached before
+removing the directory.
+
+`elapsed_ns` runs from process launch through the first indexed run listing.
+
+The JSON lines also separate mount readiness, root listing and run listing.
+
+The defaults are four rounds with one and four index workers, reversing worker order each round.
+
+For sources of at least 8 MiB, a sample with more than one requested worker must report successful parallel indexing;
+`parallel_ranges` is the count reported by the runtime and is zero for serial samples.
+
+Worker counts do not restrict CPU affinity; use `taskset` with one CPU and four CPUs respectively when measuring
+one-core versus four-core scaling.
+
+For a revision comparison, keep the machine, corpus and settings fixed, alternate revision order across rounds
+(`--repeat 1` per invocation, with `--launcher` pointing to each revision's installed `tboardfs`), and discard the first
+round for each revision.
+
+Report the retained samples, median and sample standard deviation for each workflow and worker count.
+
+Never pool the mixed and Lightning results; when alternatives are otherwise tied, favor the Lightning result.
+
 ## Generate Test Data
 
 The test suite reads `tests/data/producer-cases/` and `test-logs/` without installing the writers.
