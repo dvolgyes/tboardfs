@@ -7,8 +7,9 @@ from typing import Any, Literal, cast
 from tboardfs.errors import fuse_error
 from tboardfs.model.binary_entry import BinaryEntry
 from tboardfs.model.json_entry import JsonEntry
+from tboardfs.model.packed_leaf import PackedLeaf
 
-type LeafValue = BinaryEntry | LeafSpec | dict[str, Any]
+type LeafValue = BinaryEntry | PackedLeaf | LeafSpec | dict[str, Any]
 
 
 @dataclass(slots=True, eq=False)
@@ -33,6 +34,8 @@ class LeafSpec:
         """Return an eager node or construct one from a compact entry."""
         if isinstance(value, dict):
             return value
+        if isinstance(value, PackedLeaf):
+            value = value.entry()
         if isinstance(value, BinaryEntry):
             return {"type": "binary", "entry": value, "mtime": value.wall_time}
         node: dict[str, Any] = {

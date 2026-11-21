@@ -1,8 +1,10 @@
 """Validate packed binary rows and materialize their source evidence on demand."""
 
+from collections.abc import Iterator
 from io import BytesIO
 from pathlib import Path
 from struct import Struct
+from typing import cast
 
 import numpy as np
 
@@ -47,6 +49,9 @@ _ROW = np.dtype(
 
 _STEP_MASK = _UINT | _REAL
 _UINT64 = Struct("=Q")
+_PROJECTION = Struct("<BqdI28x")
+_UNSIGNED_STEP = Struct("<Q")
+_REAL_STEP = Struct("<d")
 _BATCH_SIZE = 64 * 1024
 
 
@@ -153,6 +158,7 @@ class BinaryRows:
     _frame_starts: bytes
     _proof_ends: bytes
     _labels: tuple[Label, ...]
+    _has_graph_labels: bool
     _source_path: Path
     _identity: FileIdentity
     _status: tuple[int | None, ...]
@@ -169,6 +175,7 @@ class BinaryRows:
         self._count = count
         self._proof_start = proofs
         self._labels = tuple(labels)
+        self._has_graph_labels = any(label[1] == "graphs" for label in labels)
         progress = cache.progress
         self._source_path = cache.source_path
         self._identity = progress.identity
@@ -181,41 +188,64 @@ class BinaryRows:
             len(data) - proofs,
         )
 
-    def entries(self) -> list[BinaryEntry]:
-        """Build ordinary entries without retaining the list or resolving blobs."""
-        entries: list[BinaryEntry] = []
-        append = entries.append
+    def __len__(self) -> int:
+        return self._count
+
+    def entry_at(self, index: int) -> BinaryEntry:
+        """Materialize one entry without resolving its blob."""
+        offset = _HEADER.size + index * _SIGNED.size
+        flags = self._data[offset]
+        layout = _FLOAT if flags & _REAL else _UNSIGNED if flags & _UINT else _SIGNED
+        _, step, wall_time, label, _, _, _, _, _, ordinal, part = layout.unpack_from(
+            self._data, offset
+        )
+        tag, kind, extension, suffix = self._labels[label]
+        fields = (
+            _BlobRef(self, index),
+            self._source_path,
+            tag,
+            kind,
+            step,
+            wall_time,
+            extension,
+            ordinal,
+            part if flags & _PART else None,
+            suffix,
+        )
+        if flags & _GRAPH:
+            return GraphSummaryEntry(
+                *fields, bool(flags & _CONVERTS), bool(flags & _PROFILES)
+            )
+        return BinaryEntry(*fields)
+
+    def project(self) -> Iterator[tuple[Label, int | float, float, int]]:
+        """Read path and ordering fields without constructing entries or blobs."""
+        data = self._data
         rows_end = _HEADER.size + self._count * _SIGNED.size
-        for index, offset in enumerate(range(_HEADER.size, rows_end, _SIGNED.size)):
-            flags = self._data[offset]
-            layout = (
-                _FLOAT if flags & _REAL else _UNSIGNED if flags & _UINT else _SIGNED
-            )
-            _, step, wall_time, label, _, _, _, _, _, ordinal, part = (
-                layout.unpack_from(self._data, offset)
-            )
-            tag, kind, extension, suffix = self._labels[label]
-            fields = (
-                _BlobRef(self, index),
-                self._source_path,
-                tag,
-                kind,
-                step,
-                wall_time,
-                extension,
-                ordinal,
-                part if flags & _PART else None,
-                suffix,
-            )
-            if flags & _GRAPH:
-                append(
-                    GraphSummaryEntry(
-                        *fields, bool(flags & _CONVERTS), bool(flags & _PROFILES)
-                    )
-                )
-            else:
-                append(BinaryEntry(*fields))
-        return entries
+        rows = memoryview(data)[_HEADER.size : rows_end]
+        labels = self._labels
+        for index, (flags, signed_step, wall_time, label) in enumerate(
+            _PROJECTION.iter_unpack(rows)
+        ):
+            step: int | float = signed_step
+            if flags & _STEP_MASK:
+                layout = _REAL_STEP if flags & _REAL else _UNSIGNED_STEP
+                step_offset = _HEADER.size + index * _SIGNED.size + 1
+                step = layout.unpack_from(data, step_offset)[0]
+            yield labels[label], step, wall_time, index
+
+    def summaries(self) -> Iterator[GraphSummaryEntry]:
+        """Read graph entries in wire order, skipping scans of non-graph sections."""
+        if not self._has_graph_labels:
+            return
+        rows = np.frombuffer(
+            self._data, dtype=_ROW, count=self._count, offset=_HEADER.size
+        )
+        flags = rows["flags"]
+        for start in range(0, self._count, _BATCH_SIZE):
+            graph_rows = np.flatnonzero(flags[start : start + _BATCH_SIZE] & _GRAPH)
+            for index in graph_rows:
+                yield cast(GraphSummaryEntry, self.entry_at(start + int(index)))
 
     def size_at(self, index: int) -> int:
         """Return the validated blob length without resolving its evidence."""

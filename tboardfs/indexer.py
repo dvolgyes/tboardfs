@@ -218,7 +218,7 @@ class _EventIndexer:
             progress.frames = base_cache.progress.frames.copy()
             state.first_time = base_cache.progress.first_time
             state.epoch = base_cache.progress.epoch
-            cache.binaries = list(base_cache.binaries)
+            cache.binaries = base_cache.binaries.copy()
             cache.graphs = list(base_cache.graphs)
             cache.json_entries = list(base_cache.json_entries)
             cache.scalar_mtimes = dict(base_cache.scalar_mtimes)

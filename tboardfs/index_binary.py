@@ -27,6 +27,7 @@ from tboardfs.index_binary_rows import BinaryRows
 from tboardfs.index_utf8 import encode_utf8
 from tboardfs.model import BinaryEntry, EventFileCache
 from tboardfs.model.graph_summary_entry import GraphSummaryEntry
+from tboardfs.model.packed_binaries import PackedBinaries
 from tboardfs.range_proof import BLOCK_SIZE
 
 _BINARY_KINDS = frozenset({"images", "audio", "videos", "tensors", "graphs"})
@@ -102,8 +103,8 @@ class BinarySection:
         return remaining
 
     @staticmethod
-    def decode(data: bytes | memoryview, cache: EventFileCache) -> list[BinaryEntry]:
-        """Validate every row before publishing entries with deferred read evidence."""
+    def decode(data: bytes | memoryview, cache: EventFileCache) -> PackedBinaries:
+        """Validate every row before publishing the packed source."""
         data = bytes(data)
         if len(data) < _HEADER.size:
             raise ValueError("truncated binary index header")
@@ -115,7 +116,7 @@ class BinarySection:
         ):
             raise ValueError("invalid binary section bounds")
         labels = BinarySection._read_labels(data, label_count, rows_end, labels_end)
-        return BinaryRows(data, row_count, labels, labels_end, cache).entries()
+        return PackedBinaries(BinaryRows(data, row_count, labels, labels_end, cache))
 
     @staticmethod
     def _step_layout(step: float) -> tuple[int, struct.Struct, int | float]:

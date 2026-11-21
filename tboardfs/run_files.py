@@ -7,6 +7,9 @@ from typing import Any, ClassVar
 
 from tboardfs.leaf_spec import LeafSpec, LeafValue
 from tboardfs.model import BinaryEntry, RunCache
+from tboardfs.model.packed_binaries import PackedBinaries
+from tboardfs.model.packed_leaf import PackedLeaf
+from tboardfs.model.packed_source import PackedSource
 from tboardfs.paths import NAME_MAP, _Paths
 from tboardfs.run_listing import RunListing, _LogicalFile
 from tboardfs.run_tree_edit import _IMPLICIT_PRODUCERS, _RunLeaf, _TreeEdits
@@ -14,6 +17,7 @@ from tboardfs.tag_paths import TagPaths
 
 type _Path = tuple[str, ...]
 type _TagScope = tuple[_Path, str, bool]
+type _BinaryValue = BinaryEntry | PackedLeaf
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,10 +150,10 @@ class _BinaryGroup:
 
     root: _Path
     tag: str
-    names: dict[str, BinaryEntry] = field(default_factory=dict)
+    names: dict[str, _BinaryValue] = field(default_factory=dict)
     long_names: set[str] = field(default_factory=set)
 
-    def add(self, name: str, entry: BinaryEntry) -> None:
+    def add(self, name: str, entry: _BinaryValue) -> None:
         """Keep the latest entry and its position in producer order."""
         size = len(name)
         can_shorten = size > 255 or (size > 63 and not name.isascii())
@@ -185,7 +189,7 @@ class _BinaryGroup:
 
 
 type _Stage = _RunFile | _BinaryGroup
-type _CollisionSource = _RunFile | BinaryEntry
+type _CollisionSource = _RunFile | _BinaryValue
 type _SourceNames = dict[str, dict[str, _CollisionSource]]
 
 
@@ -219,7 +223,7 @@ class _LeafPaths:
     """Membership over exceptional paths and grouped ordinary binary names."""
 
     files: set[_Path] = field(default_factory=set)
-    groups: defaultdict[_Path, list[dict[str, BinaryEntry]]] = field(
+    groups: defaultdict[_Path, list[dict[str, _BinaryValue]]] = field(
         default_factory=lambda: defaultdict(list)
     )
 
@@ -294,20 +298,63 @@ class RunFiles:
         """Add a generated file or a sidecar with a distinct source identity."""
         self.files.append(_RunFile(parts[:-1], None, parts[-1], node, False, identity))
 
-    def add_binaries(self, entries: Iterable[BinaryEntry], step_digits: int) -> None:
-        """Group one ordered producer batch by singleton root and reversible tag path."""
-        roots: defaultdict[str, dict[str, _BinaryGroup]] = defaultdict(dict)
+    def add_binaries(
+        self, batches: Iterable[list[BinaryEntry] | PackedBinaries], step_digits: int
+    ) -> None:
+        """Resolve names in file order without expanding packed entries."""
+        groups: dict[tuple[str, str], _BinaryGroup] = {}
+        for batch in batches:
+            for chunk in (
+                batch.chunks() if isinstance(batch, PackedBinaries) else (batch,)
+            ):
+                if isinstance(chunk, list):
+                    self._add_entries(groups, chunk, step_digits)
+                else:
+                    self._add_packed(groups, chunk, step_digits)
+
+    def _binary_group(
+        self, groups: dict[tuple[str, str], _BinaryGroup], kind: str, tag: str
+    ) -> _BinaryGroup:
+        key = kind, tag
+        group = groups.get(key)
+        if group is None:
+            groups[key] = group = _BinaryGroup((kind,), tag)
+            self.files.append(group)
+        return group
+
+    def _add_entries(
+        self,
+        groups: dict[tuple[str, str], _BinaryGroup],
+        entries: list[BinaryEntry],
+        step_digits: int,
+    ) -> None:
+        group = None
         for entry in entries:
-            groups = roots[entry.kind]
-            group = groups.get(entry.tag)
-            if group is None:
-                group = groups[entry.tag] = _BinaryGroup((entry.kind,), entry.tag)
-                self.files.append(group)
+            if group is None or entry.tag != group.tag or entry.kind != group.root[0]:
+                group = self._binary_group(groups, entry.kind, entry.tag)
             name = (
                 f"{_Paths.step_name(entry.step, step_digits)}{entry.suffix}"
                 f".{entry.extension}"
             )
             group.add(name, entry)
+
+    def _add_packed(
+        self,
+        groups: dict[tuple[str, str], _BinaryGroup],
+        source: PackedSource,
+        step_digits: int,
+    ) -> None:
+        previous = None
+        group = None
+        ending = ""
+        for label, step, wall_time, index in source.project():
+            if group is None or label is not previous:
+                tag, kind, extension, suffix = label
+                group = self._binary_group(groups, kind, tag)
+                ending = f"{suffix}.{extension}"
+                previous = label
+            name = _Paths.step_name(step, step_digits) + ending
+            group.add(name, PackedLeaf(source, index, wall_time))
 
     def patch(
         self, tree: dict[str, Any], run: RunCache, *, raw: dict[str, Any]

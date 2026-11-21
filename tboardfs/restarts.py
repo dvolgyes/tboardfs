@@ -1,12 +1,17 @@
 """Drop the rows that a restarted training run writes again, as TensorBoard does."""
 
 from collections.abc import Iterator, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 import numpy as np
+from numpy.typing import NDArray
 
 from tboardfs.model import EventFileCache, RestartMark
+from tboardfs.model.binary_entry import BinaryEntry
+from tboardfs.model.graph_summary_entry import GraphSummaryEntry
+from tboardfs.model.packed_binaries import BinaryEntries, PackedBinaries
+from tboardfs.model.packed_source import BinaryProjection, PackedSource
 
 # A START step and the rows before it by (table, tag); None means all rows.
 _Start = tuple[float, Mapping[tuple[str, str], int] | None]
@@ -38,6 +43,41 @@ class _Stepped(Protocol):
     def step(self) -> int | float:
         """Return the step; 0 when the event has none."""
         ...
+
+
+@dataclass(slots=True)
+class _SelectedRows:
+    """The surviving ordinals of a packed binary source."""
+
+    source: PackedSource
+    indices: NDArray[np.intp]
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def entry_at(self, index: int) -> BinaryEntry:
+        """Resolve a surviving row against its original source."""
+        return self.source.entry_at(int(self.indices[index]))
+
+    def project(self) -> Iterator[BinaryProjection]:
+        """Translate original ordinals to the filtered sequence."""
+        if not self.indices.size:
+            return
+        position = 0
+        for key, step, wall_time, index in self.source.project():
+            if index == self.indices[position]:
+                yield key, step, wall_time, position
+                position += 1
+                if position == len(self.indices):
+                    break
+
+    def summaries(self) -> Iterator[GraphSummaryEntry]:
+        """Preserve graph companions only for surviving summaries."""
+        for (_, kind, _, _), _, _, index in self.project():
+            if kind == "graphs":
+                entry = self.entry_at(index)
+                if isinstance(entry, GraphSummaryEntry):
+                    yield entry
 
 
 class _RestartPurge:
@@ -112,7 +152,7 @@ class _RestartPurge:
                 for tag, mtime in cache.histogram_mtimes.items()
                 if tag in histograms
             },
-            binaries=_RestartPurge.purge_entries(cache.binaries, "binaries", starts),
+            binaries=_RestartPurge.purge_binaries(cache.binaries, starts),
             json_entries=_RestartPurge.purge_entries(
                 cache.json_entries, "json_entries", starts
             ),
@@ -140,6 +180,47 @@ class _RestartPurge:
         steps = np.asarray([entry.step for entry in entries])
         keep = _RestartPurge.kept_rows(steps, (table, ""), starts)
         return [entry for entry, kept in zip(entries, keep, strict=True) if kept]
+
+    @staticmethod
+    def purge_binaries(entries: BinaryEntries, starts: list[_Start]) -> BinaryEntries:
+        """Retain packed rows by ordinal without reconstructing their payloads."""
+        if isinstance(entries, list):
+            return _RestartPurge.purge_entries(entries, "binaries", starts)
+        key = ("binaries", "")
+        if not entries or not any(
+            counts is None or counts.get(key, 0) for _, counts in starts
+        ):
+            return entries
+        steps: list[int | float] = []
+        for chunk in entries.chunks():
+            if isinstance(chunk, list):
+                steps.extend(entry.step for entry in chunk)
+            else:
+                steps.extend(step for _, step, _, _ in chunk.project())
+        keep = _RestartPurge.kept_rows(np.asarray(steps), key, starts)
+        if keep.all():
+            return entries
+        result: BinaryEntries = []
+        offset = 0
+        for chunk in entries.chunks():
+            end = offset + len(chunk)
+            selection = keep[offset:end]
+            if isinstance(chunk, list):
+                result = PackedBinaries.merge(
+                    result,
+                    [
+                        entry
+                        for entry, kept in zip(chunk, selection, strict=True)
+                        if kept
+                    ],
+                )
+            elif selection.all():
+                result = PackedBinaries.merge(result, PackedBinaries(chunk))
+            elif selection.any():
+                source = _SelectedRows(chunk, np.flatnonzero(selection))
+                result = PackedBinaries.merge(result, PackedBinaries(source))
+            offset = end
+        return result
 
     @staticmethod
     def kept_rows(

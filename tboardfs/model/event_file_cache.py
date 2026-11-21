@@ -1,11 +1,13 @@
+"""The parsed index and resume state of one event file."""
+
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
-from tboardfs.model.binary_entry import BinaryEntry
 from tboardfs.model.graph_entry import GraphEntry
 from tboardfs.model.json_entry import JsonEntry
+from tboardfs.model.packed_binaries import BinaryEntries
 from tboardfs.model.parse_progress import ParseProgress
 from tboardfs.model.restart_mark import RestartMark
 
@@ -32,7 +34,7 @@ class EventFileCache:
     scalar_mtimes: dict[str, float] = field(default_factory=dict)
     histograms: dict[str, dict[str, np.ndarray]] = field(default_factory=dict)
     histogram_mtimes: dict[str, float] = field(default_factory=dict)
-    binaries: list[BinaryEntry] = field(default_factory=list)
+    binaries: BinaryEntries = field(default_factory=list)
     json_entries: list[JsonEntry] = field(default_factory=list)
     graphs: list[GraphEntry] = field(default_factory=list)
     restarts: list[RestartMark] = field(default_factory=list)

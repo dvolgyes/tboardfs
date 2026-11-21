@@ -2,7 +2,10 @@
 
 import os
 import struct
-from dataclasses import dataclass
+from array import array
+from bisect import bisect_left
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, Self
 
@@ -21,12 +24,13 @@ from tboardfs.index_segment import (
 )
 from tboardfs.model import EventFileCache
 from tboardfs.model.binary_entry import BinaryEntry
-from tboardfs.model.indexed_blob import IndexedBlob, _BlobRef, _Evidence, _FrameItem
+from tboardfs.model.graph_summary_entry import GraphSummaryEntry
+from tboardfs.model.indexed_blob import IndexedBlob, _BlobRef
+from tboardfs.model.packed_binaries import PackedBinaries
+from tboardfs.model.packed_source import BinaryKey, BinaryProjection
 from tboardfs.tensor import _TensorDType
 from tboardfs.tensor_source import TensorSource
 from tboardfs.tfrecord import _FOOTER_SIZE, _HEADER_SIZE
-
-type _Labels = tuple[str, str, str, str]
 
 _FLOAT_STEP = 1
 _HAS_SPAN = 2
@@ -35,6 +39,13 @@ _ROW_FIELDS = "dIQIIIIIIII"
 _INT_ROW = struct.Struct("<Bq" + _ROW_FIELDS)
 _FLOAT_ROW = struct.Struct("<Bd" + _ROW_FIELDS)
 _ROW_SIZE = _INT_ROW.size
+_INT_HEADER = struct.Struct("<BqdI")
+_FLOAT_HEADER = struct.Struct("<BddI")
+_ORDINAL_PART = struct.Struct("<II")
+_UINT32 = struct.Struct("<I")
+_PROOF_SIZE_OFFSET = _ROW_SIZE - _UINT32.size
+_ORDINAL_PART_OFFSET = _PROOF_SIZE_OFFSET - _ORDINAL_PART.size
+_BLOB_SIZE_OFFSET = _INT_HEADER.size + struct.calcsize("<QII")
 
 
 def _restore_tensors(segment: Segment, mountpoint: Path | None) -> None:
@@ -113,18 +124,97 @@ def _read_tensors(handle: BinaryIO, segment: Segment, mountpoint: Path | None) -
 
 
 @dataclass(slots=True)
-class _PackedEvidence:
-    """Own the checked row buffers without retaining the segment or its entries."""
+class _WorkerRows:
+    """Project worker rows and materialize entries against their original snapshot."""
 
     rows: bytearray
     proofs: bytearray
+    labels: tuple[BinaryKey, ...]
+    exceptions: dict[int, BinaryEntry]
+    source_path: Path
     identity: FileIdentity
     fingerprint: tuple[int | None, ...]
-    proof_starts: dict[int, int]
+    exception_positions: tuple[int, ...] = field(init=False)
+    proof_starts: "array[int]" = field(init=False, default_factory=lambda: array("Q"))
+    row_count: int = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.exception_positions = tuple(sorted(self.exceptions))
+        self.row_count = len(self.rows) // _ROW_SIZE
+        if self.proofs:
+            proof_offset = 0
+            for offset in range(0, len(self.rows), _ROW_SIZE):
+                (proof_size,) = _UINT32.unpack_from(
+                    self.rows, offset + _PROOF_SIZE_OFFSET
+                )
+                self.proof_starts.append(proof_offset)
+                proof_offset += proof_size
+
+    def __len__(self) -> int:
+        return self.row_count + len(self.exception_positions)
+
+    def project(self) -> Iterator[BinaryProjection]:
+        """Yield virtual-file metadata in the original row order."""
+        logical_start = packed_start = 0
+        for position in self.exception_positions:
+            packed_end = packed_start + position - logical_start
+            yield from self._project_rows(packed_start, packed_end, logical_start)
+            entry = self.exceptions[position]
+            labels = (entry.tag, entry.kind, entry.extension, entry.suffix)
+            yield labels, entry.step, entry.wall_time, position
+            logical_start = position + 1
+            packed_start = packed_end
+        yield from self._project_rows(packed_start, self.row_count, logical_start)
+
+    def _project_rows(
+        self, packed_start: int, packed_end: int, logical_start: int
+    ) -> Iterator[BinaryProjection]:
+        rows = self.rows
+        labels = self.labels
+        offsets = range(packed_start * _ROW_SIZE, packed_end * _ROW_SIZE, _ROW_SIZE)
+        for position, offset in enumerate(offsets, logical_start):
+            header = _FLOAT_HEADER if rows[offset] & _FLOAT_STEP else _INT_HEADER
+            _, step, wall_time, label_id = header.unpack_from(rows, offset)
+            yield labels[label_id], step, wall_time, position
+
+    def entry_at(self, index: int) -> BinaryEntry:
+        """Restore one entry by its position before exception separation."""
+        if self.exception_positions:
+            exception = self.exceptions.get(index)
+            if exception is not None:
+                return exception
+            index -= bisect_left(self.exception_positions, index)
+        offset = index * _ROW_SIZE
+        header = _FLOAT_HEADER if self.rows[offset] & _FLOAT_STEP else _INT_HEADER
+        flags, step, wall_time, label_id = header.unpack_from(self.rows, offset)
+        ordinal, part = _ORDINAL_PART.unpack_from(
+            self.rows, offset + _ORDINAL_PART_OFFSET
+        )
+        tag, kind, extension, suffix = self.labels[label_id]
+        return BinaryEntry(
+            _BlobRef(self, offset),
+            self.source_path,
+            tag,
+            kind,
+            step,
+            wall_time,
+            extension,
+            ordinal,
+            part if flags & _HAS_PART else None,
+            suffix,
+        )
+
+    def summaries(self) -> Iterator[GraphSummaryEntry]:
+        """Yield graph companions, which the worker always stores as exceptions."""
+        for position in self.exception_positions:
+            entry = self.exceptions[position]
+            if isinstance(entry, GraphSummaryEntry):
+                yield entry
 
     def size_at(self, index: int) -> int:
         """Read the size from a row identified by its byte offset."""
-        return int(_INT_ROW.unpack_from(self.rows, index)[7])
+        (size,) = _UINT32.unpack_from(self.rows, index + _BLOB_SIZE_OFFSET)
+        return int(size)
 
     def blob_at(self, index: int) -> IndexedBlob:
         """Materialize one row and copy only its proof bytes."""
@@ -135,7 +225,7 @@ class _PackedEvidence:
         span = (start, length) if flags & _HAS_SPAN else None
         proof = b""
         if n:
-            begin = self.proof_starts[index]
+            begin = self.proof_starts[index // _ROW_SIZE]
             proof = bytes(memoryview(self.proofs)[begin : begin + n])
         return IndexedBlob(frame, size, span, proof)
 
@@ -147,7 +237,7 @@ class _PackedResult:
     segment: Segment
     rows: bytearray
     proofs: bytearray
-    labels: tuple[_Labels, ...]
+    labels: tuple[BinaryKey, ...]
     exceptions: dict[int, BinaryEntry]
 
     @classmethod
@@ -156,7 +246,7 @@ class _PackedResult:
         cache = segment.cache
         rows = bytearray(len(cache.binaries) * _ROW_SIZE)
         proofs = bytearray()
-        labels: dict[_Labels, int] = {}
+        labels: dict[BinaryKey, int] = {}
         exceptions: dict[int, BinaryEntry] = {}
         offset = 0
         for position, entry in enumerate(cache.binaries):
@@ -176,7 +266,7 @@ class _PackedResult:
         cache: EventFileCache,
         rows: bytearray,
         offset: int,
-        labels: dict[_Labels, int],
+        labels: dict[BinaryKey, int],
     ) -> bool:
         if type(entry) is not BinaryEntry:
             return False
@@ -234,69 +324,17 @@ class _PackedResult:
         _restore_tensors(segment, mountpoint)
         cache = segment.cache
         progress = cache.progress
-        identity = progress.identity
-        fingerprint = progress.checked_status
-        source_path = cache.source_path
-        rows = self.rows
-        labels = self.labels
-        entries: list[BinaryEntry] = []
-        append = entries.append
-        evidence: _PackedEvidence | None = None
-        offset = proof_offset = 0
-        count = len(rows) // _ROW_SIZE + len(self.exceptions)
-        for position in range(count):
-            exception = self.exceptions.get(position)
-            if exception is not None:
-                append(exception)
-                continue
-
-            row = _FLOAT_ROW if rows[offset] & _FLOAT_STEP else _INT_ROW
-            (
-                flags,
-                step,
-                wall_time,
-                label_id,
-                frame_offset,
-                frame_size,
-                checksum,
-                size,
-                _,
-                _,
-                ordinal,
-                part,
-                proof_size,
-            ) = row.unpack_from(rows, offset)
-            blob: _Evidence
-            if not (flags & _HAS_SPAN or proof_size):
-                blob = _FrameItem(
-                    identity, fingerprint, frame_offset, frame_size, checksum, size
-                )
-            else:
-                if evidence is None:
-                    evidence = _PackedEvidence(
-                        rows, self.proofs, identity, fingerprint, {}
-                    )
-                if proof_size:
-                    evidence.proof_starts[offset] = proof_offset
-                    proof_offset += proof_size
-                blob = _BlobRef(evidence, offset)
-            tag, kind, extension, suffix = labels[label_id]
-            append(
-                BinaryEntry(
-                    blob,
-                    source_path,
-                    tag,
-                    kind,
-                    step,
-                    wall_time,
-                    extension,
-                    ordinal,
-                    part if flags & _HAS_PART else None,
-                    suffix,
-                )
+        cache.binaries = PackedBinaries(
+            _WorkerRows(
+                self.rows,
+                self.proofs,
+                self.labels,
+                self.exceptions,
+                cache.source_path,
+                progress.identity,
+                progress.checked_status,
             )
-            offset += _ROW_SIZE
-        cache.binaries = entries
+        )
         return segment
 
 

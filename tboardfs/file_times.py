@@ -5,7 +5,6 @@ from collections.abc import Iterable, Mapping
 from typing import Any, TypeGuard
 
 from tboardfs.leaf_spec import LeafSpec, LeafValue
-from tboardfs.model.binary_entry import BinaryEntry
 from tboardfs.run_listing import RunListing
 
 type _Directory = dict[str, Any]
@@ -27,12 +26,12 @@ class FileTimes:
         An event wall time can be NaN, infinite, negative, or after the year
         2242, which a file time cannot hold.
         """
-        if isinstance(node, BinaryEntry):
-            value = float(node.wall_time)
+        if isinstance(node, dict):
+            value = float(node.get("mtime", 0.0))
         elif isinstance(node, LeafSpec):
             value = float(node.mtime)
         else:
-            value = float(node.get("mtime", 0.0))
+            value = float(node.wall_time)
         return value if math.isfinite(value) and 0 <= value < 1 << 33 else 0.0
 
     @staticmethod

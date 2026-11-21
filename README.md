@@ -129,7 +129,7 @@ The mount merges results in file order and reprocesses a range if its inherited 
 
 Before exposing the index, the mount checks that the ranges cover the unchanged snapshot without gaps or overlaps.
 
-The parent keeps compact frame coordinates for binary entries and resolves range proofs when a reader needs them.
+The parent builds directory names from packed binary rows and resolves an individual entry when its file is accessed.
 
 For ordinary numeric tensors with a verified `tensor_content` extent of at least 64 KiB, a live parallel mount can list
 the `.npy` and `.json` files without rereading the tensor.
@@ -170,6 +170,8 @@ The tree stores the resolved names, including collision suffixes, before a direc
 Listing a directory does not construct its typed file nodes; looking up a file constructs only that node.
 
 On a persistent-index hit, tboardfs validates every binary row against the frame index before exposing any files.
+
+It uses the packed labels, steps and timestamps to place binary files without constructing a full entry for each one.
 
 Listing names or checking a binary file's size does not unpack its frame and byte-range evidence.
 

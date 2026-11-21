@@ -77,7 +77,7 @@ class RunTree:
             )
         ):
             return None
-        files.add_binaries(binaries, step_digits)
+        files.add_binaries((binaries,), step_digits)
         consumed = add_typed_plugin_files(files, entries, {}, step_digits)
         _Projection.add_json_files(files, entries, step_digits, consumed)
         GraphFiles.add_summaries(files, binaries, step_digits)
@@ -220,9 +220,7 @@ class _Projection:
         _Projection.add_scalar_files(files, caches, scalars, scalar_formats)
         epochs = scalars.get("epoch")
         _ = add_histogram_files(files, caches, epochs, scalar_formats, step_digits)
-        files.add_binaries(
-            (entry for cache in caches for entry in cache.binaries), step_digits
-        )
+        files.add_binaries((cache.binaries for cache in caches), step_digits)
         entries = [entry for cache in caches for entry in cache.json_entries]
         consumed = add_typed_plugin_files(files, entries, scalars, step_digits)
         Open3DFiles.add(files, entries, run.sidecars, step_digits)

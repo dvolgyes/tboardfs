@@ -10,6 +10,7 @@ from tboardfs.model import (
     GraphSummaryEntry,
     MetaGraphEntry,
 )
+from tboardfs.model.packed_binaries import PackedBinaries
 from tboardfs.paths import _Paths
 from tboardfs.run_files import RunFiles
 
@@ -47,6 +48,14 @@ class GraphFiles:
         files: RunFiles, entries: Iterable[BinaryEntry], step_digits: int
     ) -> None:
         """Add companions for indexed TF2 graph summaries."""
+        if isinstance(entries, PackedBinaries):
+            for chunk in entries.chunks():
+                if isinstance(chunk, list):
+                    GraphFiles.add_summaries(files, chunk, step_digits)
+                else:
+                    for summary in chunk.summaries():
+                        _add_summary_files(files, summary, step_digits)
+            return
         summaries = (entry for entry in entries if isinstance(entry, GraphSummaryEntry))
         for entry in summaries:
             _add_summary_files(files, entry, step_digits)

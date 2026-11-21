@@ -9,6 +9,7 @@ from tboardfs.constants import FIXED_TABS
 from tboardfs.file_times import FileTimes
 from tboardfs.leaf_spec import LeafSpec, LeafValue
 from tboardfs.model.binary_entry import BinaryEntry
+from tboardfs.model.packed_leaf import PackedLeaf
 from tboardfs.paths import _DirectoryNode
 from tboardfs.run_listing import RunListing
 
@@ -37,6 +38,8 @@ class _RunLeaf:
             return isinstance(node, dict) and node.get("format") == name
         if producer == "binary":
             entry = node.get("entry") if isinstance(node, dict) else node
+            if isinstance(entry, PackedLeaf):
+                entry = entry.entry()
             return (
                 isinstance(entry, BinaryEntry)
                 and entry.tag == tag

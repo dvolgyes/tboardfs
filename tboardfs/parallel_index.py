@@ -30,6 +30,7 @@ from tboardfs.index_segment import (
 from tboardfs.index_transport import _PackedResult, packed_work
 from tboardfs.indexer import _ParseState
 from tboardfs.model import EventFileCache, TFRecordError
+from tboardfs.model.packed_binaries import PackedBinaries
 from tboardfs.restarts import _offset_restarts
 from tboardfs.tables import _TableRows
 from tboardfs.tfrecord import _iter_tfrecords
@@ -201,7 +202,7 @@ class _Reduction:
             state.first_time = chunk.progress.first_time
         if segment.clock.writes_epoch:
             state.epoch = chunk.progress.epoch
-        cache.binaries.extend(chunk.binaries)
+        cache.binaries = PackedBinaries.merge(cache.binaries, chunk.binaries)
         cache.json_entries.extend(chunk.json_entries)
         cache.graphs.extend(chunk.graphs)
         cache.histogram_mtimes.update(chunk.histogram_mtimes)
