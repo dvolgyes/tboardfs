@@ -930,6 +930,20 @@ The run also includes the traced CNN graph, TensorBoard HParams, `hparams.yaml`,
 
 Change the workload with `--epochs`, `--train-steps`, and `--val-steps`, or change the sample seed with `--seed`.
 
+For a run of about 4 GiB with the same 50 training and two validation iterations per epoch:
+
+```bash
+scripts/generate_lightning_preview.py --epochs 583 --stored-png --synthetic-loss \
+    --output samples/lightning-4g
+```
+
+`--stored-png` disables PNG compression without changing the pixels.
+
+`--synthetic-loss` reports `(1 + ε) / (step + 1)` as the train and validation loss, with seeded uniform noise `ε`
+between −0.1 and 0.1.
+
+The real CNN loss stays under `model_loss` and still drives the optimizer.
+
 ### Compatibility Scope
 
 - **Version marker:** `brain.Event:2` identifies the event format, not the TensorBoard or TensorFlow release.

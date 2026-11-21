@@ -15,6 +15,7 @@
 """Train a small CPU segmentation model and log a dense TensorBoard preview."""
 
 import argparse
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +23,7 @@ import torch
 from lightning import LightningModule, Trainer, seed_everything
 from lightning.pytorch.loggers import TensorBoardLogger
 from PIL import Image, ImageDraw, ImageFont
+from tensorboard.compat.proto.summary_pb2 import Summary
 from torch import nn
 from torch.nn.functional import max_pool2d
 from torch.utils.data import DataLoader
@@ -82,7 +84,15 @@ class _Segmenter(LightningModule):  # type: ignore[misc]
     font: ImageFont.FreeTypeFont | ImageFont.ImageFont
 
     def __init__(
-        self, logger: TensorBoardLogger, epochs: int, train: int, val: int, seed: int
+        self,
+        logger: TensorBoardLogger,
+        epochs: int,
+        train: int,
+        val: int,
+        seed: int,
+        *,
+        synthetic_loss: bool,
+        stored_png: bool,
     ) -> None:
         super().__init__()
         self.tb = logger
@@ -101,6 +111,8 @@ class _Segmenter(LightningModule):  # type: ignore[misc]
                 "train_steps": train,
                 "val_steps": val,
                 "seed": seed,
+                "synthetic_loss": synthetic_loss,
+                "stored_png": stored_png,
                 "image_size": _SIZE,
                 "learning_rate": _LR,
                 "optimizer": "AdamW",
@@ -134,7 +146,32 @@ class _Segmenter(LightningModule):  # type: ignore[misc]
             "label": raw,
             "difference": predicted ^ raw,
         }.items():
-            writer.add_image(f"{phase}/{name}", image, step)
+            tag = f"{phase}/{name}"
+            if self.hparams.stored_png:
+                writer.file_writer.add_summary(self._png(tag, image), step)
+            else:
+                writer.add_image(tag, image, step)
+
+    @staticmethod
+    def _png(tag: str, image: torch.Tensor) -> Summary:
+        """Encode the same RGB pixels as SummaryWriter.add_image without compression."""
+        pixels = Image.fromarray(image.squeeze(0).numpy()).convert("RGB")
+        with BytesIO() as buffer:
+            pixels.save(buffer, format="PNG", compress_level=0)
+            encoded = buffer.getvalue()
+        return Summary(
+            value=[
+                Summary.Value(
+                    tag=tag,
+                    image=Summary.Image(
+                        height=_SIZE,
+                        width=_SIZE,
+                        colorspace=3,
+                        encoded_image_string=encoded,
+                    ),
+                )
+            ]
+        )
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         """Return foreground logits at the original image resolution."""
@@ -149,11 +186,16 @@ class _Segmenter(LightningModule):  # type: ignore[misc]
         """Record run-wide hyperparameters and describe the baseline images."""
         count = sum(p.numel() for p in self.parameters())
         self.tb.log_hyperparams(dict(self.hparams), {"model/parameters": count})
+        loss_note = (
+            "The reported loss follows a seeded synthetic curve; model_loss records the CNN loss."
+            if self.hparams.synthetic_loss
+            else "The reported loss measures the CNN."
+        )
         self.tb.experiment.add_text(
             "run/description",
             "Recover the upright iteration number from its rotated image. "
             "The prediction PNG is a three-by-three dilation baseline. "
-            "The scalars, histogram and PR curve measure the trained CNN.",
+            f"The histogram and classification metrics measure the trained CNN. {loss_note}",
             0,
         )
 
@@ -180,6 +222,10 @@ class _Segmenter(LightningModule):  # type: ignore[misc]
         metrics.update(
             loss=float(loss.detach()), learning_rate=_LR, epoch=self.current_epoch
         )
+        if self.hparams.synthetic_loss:
+            rng = np.random.default_rng((self.seed, step, 1))
+            metrics["model_loss"] = metrics["loss"]
+            metrics["loss"] = float(rng.uniform(0.9, 1.1)) / (step + 1)
         if phase == "val":
             p, r = metrics["precision"], metrics["recall"]
             metrics["f1"] = 2 * p * r / (p + r) if p + r else 0
@@ -208,6 +254,18 @@ def main() -> None:
         "-v", "--val-steps", type=int, default=2, help="iterations per epoch"
     )
     parser.add_argument("-s", "--seed", type=int, default=1729)
+    parser.add_argument(
+        "-L",
+        "--synthetic-loss",
+        action="store_true",
+        help="log a noisy inverse-step loss and keep the true loss as model_loss",
+    )
+    parser.add_argument(
+        "-P",
+        "--stored-png",
+        action="store_true",
+        help="write lossless PNGs without compression",
+    )
     args = parser.parse_args()
     if min(args.epochs, args.train_steps, args.val_steps) < 1:
         parser.error("epoch and iteration counts must be positive")
@@ -239,7 +297,15 @@ def main() -> None:
         logger=logger,
     )
     trainer.fit(
-        _Segmenter(logger, args.epochs, args.train_steps, args.val_steps, args.seed),
+        _Segmenter(
+            logger,
+            args.epochs,
+            args.train_steps,
+            args.val_steps,
+            args.seed,
+            synthetic_loss=args.synthetic_loss,
+            stored_png=args.stored_png,
+        ),
         train_dataloaders=DataLoader(range(args.train_steps), batch_size=None),
         val_dataloaders=DataLoader(range(args.val_steps), batch_size=None),
     )
