@@ -902,6 +902,34 @@ scripts/generate_geometry_cases.py --output samples/geometry
 | `generate_av_clips.py` | One second of motion and synchronized sound in six containers; the generator decodes both streams before recording its reference measurements |
 | `generate_audio_variants.py` | A 440 Hz tone encoded as ADTS AAC, AAC/M4A, ALAC/M4A, float WAV and PCM AIFF; tests check the file type and the decoded signal |
 
+### Lightning Segmentation Preview
+
+Generate a CPU-only preview in a new or empty directory:
+
+```bash
+scripts/generate_lightning_preview.py --output samples/lightning-preview
+mkdir -p mnt
+tboardfs samples/lightning-preview mnt
+ls mnt/segmentation/images/val
+```
+
+The default run logs two epochs, each with 50 training iterations followed by two validation iterations.
+
+Each iteration logs five 96×96 PNGs, a 100-bin probability histogram, and ten scalars under `train/` or `val/`.
+
+The five images show the rendered step number, a seeded rotation, a 3×3 dilation of the input, the unchanged label, and
+the XOR of the dilation and label.
+
+The dilation is a visual baseline.
+
+The histogram and classification metrics use scores from the CNN that Lightning trains on the rotated inputs.
+
+Only validation logs F1 and precision–recall curves.
+
+The run also includes the traced CNN graph, TensorBoard HParams, `hparams.yaml`, and a short description.
+
+Change the workload with `--epochs`, `--train-steps`, and `--val-steps`, or change the sample seed with `--seed`.
+
 ### Compatibility Scope
 
 - **Version marker:** `brain.Event:2` identifies the event format, not the TensorBoard or TensorFlow release.
