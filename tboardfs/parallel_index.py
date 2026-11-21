@@ -6,10 +6,11 @@ from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from contextlib import closing, suppress
 from errno import EAGAIN, EMFILE, ENFILE, ENOMEM
+from itertools import islice
 from multiprocessing import current_process, get_context
 from pathlib import Path
 from struct import pack
-from typing import Any, BinaryIO
+from typing import Any
 
 import numpy as np
 from loguru import logger
@@ -49,7 +50,7 @@ class _Seed:
     @staticmethod
     def guess(
         path: Path,
-        end: int,
+        stop: int,
         metadata: Metadata,
         fingerprint: Fingerprint,
         mountpoint: Path | None,
@@ -63,20 +64,13 @@ class _Seed:
             _check_snapshot(path, status, fingerprint)
             cache.progress.identity = FileIdentity.of(status)
             cache.progress.checked_status = fingerprint
-            _Seed._scan_prefix(handle, end, cache, state)
+            records = _iter_tfrecords(
+                handle, end=status.st_size, stop=min(stop, _PREFIX_BYTES)
+            )
+            for record in islice(records, _PREFIX_RECORDS):
+                _index_record(cache, record, state)
             _check_snapshot(path, os.fstat(handle.fileno()), fingerprint)
         return state.first_time, state.epoch, cache.progress.effective_metadata
-
-    @staticmethod
-    def _scan_prefix(
-        handle: BinaryIO, end: int, cache: EventFileCache, state: _ParseState
-    ) -> None:
-        limit = min(end, _PREFIX_BYTES)
-        records = _iter_tfrecords(handle, end=end)
-        count = 0
-        while count < _PREFIX_RECORDS and handle.tell() < limit:
-            _index_record(cache, next(records), state)
-            count += 1
 
     @staticmethod
     def _same_clock(left: object, right: object) -> bool:
@@ -170,16 +164,17 @@ class _Reduction:
         metadata = cache.progress.effective_metadata
         while pending:
             job = pending[0][0]
-            _Reduction.merge(
-                cache,
+            segment = _Reduction._corrected(
+                _Reduction.worker_segment(pending.popleft()[1], job),
+                job,
                 state,
-                _Reduction._corrected(
-                    _Reduction.worker_segment(pending.popleft()[1], job),
-                    job,
-                    state,
-                    metadata,
-                ),
+                metadata,
             )
+            end = pending[0][0][1] if pending else cache.progress.last_checked_size
+            if (segment.start, segment.end) != (job[1], end):
+                raise _SegmentError(f"{cache.source_path}: unexpected worker range")
+            _Reduction.merge(cache, state, segment)
+            del segment
         cache.progress.first_time = state.first_time
         cache.progress.epoch = state.epoch
         _Tables.finish(cache, state)
@@ -255,9 +250,7 @@ class _Reduction:
     def _corrected(
         segment: Segment, job: Job, state: _ParseState, metadata: Metadata
     ) -> Segment:
-        path, start, end, fingerprint, _, _, _, mountpoint = job
-        if (segment.start, segment.end) != (start, end):
-            raise _SegmentError(f"{path}: unexpected worker range")
+        path, start, stop, fingerprint, _, _, _, mountpoint = job
         if _Seed.matches(segment, state, metadata):
             return segment
         del segment
@@ -265,7 +258,7 @@ class _Reduction:
             (
                 path,
                 start,
-                end,
+                stop,
                 fingerprint,
                 state.first_time,
                 state.epoch,
@@ -315,21 +308,26 @@ def _index_snapshot(
             first = next(ranges, None)
             if first is None:
                 return None
-            start, end = first
-            if start != 0 or end == status.st_size:
-                return None
+            start, stop = first
             executor = _Reduction._new_pool(workers)
-            job: Job = (path, start, end, fingerprint, None, None, metadata, mountpoint)
+            job: Job = (
+                path,
+                start,
+                stop,
+                fingerprint,
+                None,
+                None,
+                metadata,
+                mountpoint,
+            )
             pending.append((job, _Reduction._submit(executor, job)))
             try:
-                guess = _Seed.guess(path, end, metadata, fingerprint, mountpoint)
+                guess = _Seed.guess(path, stop, metadata, fingerprint, mountpoint)
             except TFRecordError:
                 return None
-            for start, end in ranges:
-                job = (path, start, end, fingerprint, *guess, mountpoint)
+            for start, stop in ranges:
+                job = (path, start, stop, fingerprint, *guess, mountpoint)
                 pending.append((job, _Reduction._submit(executor, job)))
-            if end != status.st_size:
-                return None
 
         cache = EventFileCache(path)
         state = _ParseState()

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from errno import EINVAL, EISDIR, ELOOP, ENOENT, ENOTDIR, ENXIO
 from pathlib import Path
 from stat import S_ISREG
-from typing import Any
+from typing import Any, BinaryIO
 
 from tboardfs.event_source import SCAN_BUFFER, EventSource
 from tboardfs.file_status import FileIdentity
@@ -71,16 +71,13 @@ class Segment:
         *,
         mountpoint: Path | None = None,
     ) -> Generator[tuple[int, int], None, None]:
-        """Yield ranges at finalized cuts, validating the snapshot before EOF."""
+        """Yield each occupied bucket's first frame start and exclusive start limit."""
         if n < 1:
             raise ValueError("range count must be positive")
         path = Path(path)
         size = status.st_size
         expected = FileIdentity.fingerprint(status)
         _check_snapshot(path, status, expected)
-        start = 0
-        offset = 0
-        target_index = 1
         try:
             with EventSource.open(
                 path, mountpoint=mountpoint, buffering=4 << 10
@@ -90,26 +87,7 @@ class Segment:
                 _check_snapshot(
                     path, EventSource.stat(path, mountpoint=mountpoint), expected
                 )
-                previous = None
-                while offset < size:
-                    previous = _read_header(
-                        handle, offset, size, DEFAULT_MAX_RECORD_SIZE, previous
-                    )
-                    following = offset + _HEADER_SIZE + previous[1] + _FOOTER_SIZE
-                    if target_index < n and target_index * size <= following * n:
-                        last_target = min(n - 1, following * n // size)
-                        midpoint = (offset + following) * n
-                        if 2 * target_index * size <= midpoint and start < offset:
-                            yield start, offset
-                            start = offset
-                        if (
-                            2 * last_target * size > midpoint
-                            and start < following < size
-                        ):
-                            yield start, following
-                            start = following
-                        target_index = last_target + 1
-                    offset = handle.seek(following)
+                yield from Segment._ranges(handle, size, n)
                 _check_snapshot(path, os.fstat(fd), expected)
                 _check_snapshot(
                     path, EventSource.stat(path, mountpoint=mountpoint), expected
@@ -120,16 +98,40 @@ class Segment:
             if error.errno not in _SOURCE_RACE_ERRNOS:
                 raise
             raise _SegmentError(f"{path}: could not plan snapshot: {error}") from error
-        if size:
-            yield start, size
+
+    @staticmethod
+    def _ranges(
+        handle: BinaryIO, size: int, n: int
+    ) -> Generator[tuple[int, int], None, None]:
+        """Follow frame lengths until every occupied byte range has a known start."""
+        if not size:
+            return
+        previous = _read_header(handle, 0, size, DEFAULT_MAX_RECORD_SIZE, None)
+        offset = _HEADER_SIZE + previous[1] + _FOOTER_SIZE
+        if offset == size:
+            return
+        limit = (size + n - 1) // n
+        yield 0, limit
+        while limit < size:
+            while offset < limit:
+                handle.seek(offset)
+                previous = _read_header(
+                    handle, offset, size, DEFAULT_MAX_RECORD_SIZE, previous
+                )
+                offset += _HEADER_SIZE + previous[1] + _FOOTER_SIZE
+            if offset == size:
+                return
+            bucket = offset * n // size
+            limit = ((bucket + 1) * size + n - 1) // n
+            yield offset, limit
 
     @staticmethod
     def work(job: Job, *, defer_tensor_content: bool = False) -> "Segment":
-        """Strictly index the assigned range using one verified descriptor."""
+        """Index frames starting in the assigned range using one verified descriptor."""
         (
             path_arg,
             start,
-            end,
+            limit,
             expected,
             first_time,
             epoch,
@@ -162,31 +164,31 @@ class Segment:
                 _check_snapshot(
                     path, EventSource.stat(path, mountpoint=mountpoint), expected
                 )
-                if not 0 <= start <= end <= status.st_size:
-                    raise _SegmentError(f"{path}: invalid range [{start}, {end})")
+                if not 0 <= start <= limit <= status.st_size:
+                    raise _SegmentError(f"{path}: invalid range [{start}, {limit})")
                 progress.identity = FileIdentity.of(status)
                 progress.checked_status = expected
                 progress.last_checked_size = status.st_size
                 handle.seek(start)
-                for record in _iter_tfrecords(handle, end=end):
+                for record in _iter_tfrecords(handle, end=status.st_size, stop=limit):
                     _index_record(cache, record, state)
                     position = record.record_offset + record.total_size
                     progress.frames.append(position, record.payload_crc)
-                if position != end:
-                    raise _SegmentError(f"{path}: range did not reach offset {end}")
+                if position < limit:
+                    raise _SegmentError(f"{path}: range did not reach offset {limit}")
                 _check_snapshot(path, os.fstat(fd), expected)
                 _check_snapshot(
                     path, EventSource.stat(path, mountpoint=mountpoint), expected
                 )
         except TFRecordError as error:
             raise _SegmentError(
-                f"{path}: could not index range [{start}, {end}): {error}"
+                f"{path}: could not index range [{start}, {limit}): {error}"
             ) from error
         except OSError as error:
             if error.errno not in _SOURCE_RACE_ERRNOS:
                 raise
             raise _SegmentError(
-                f"{path}: could not index range [{start}, {end}): {error}"
+                f"{path}: could not index range [{start}, {limit}): {error}"
             ) from error
         progress.processed_pos = position
         progress.first_time = state.first_time
@@ -197,7 +199,7 @@ class Segment:
         }
         return Segment(
             start,
-            end,
+            position,
             cache,
             clock,
             metadata.reads,

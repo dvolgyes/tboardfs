@@ -71,16 +71,18 @@ def _iter_tfrecords(
     handle: BinaryIO,
     *,
     end: int | None = None,
+    stop: int | None = None,
     max_record_size: int = DEFAULT_MAX_RECORD_SIZE,
     shared_cursor: bool = False,
 ) -> Iterator[Record]:
-    """Read to a fixed exclusive end, tracking offsets locally unless the caller can seek."""
+    """Yield frames starting before stop and bounded by end."""
     record_offset = handle.tell()
     if end is None:
         end = handle.seek(0, os.SEEK_END)
         handle.seek(record_offset)
+    stop = end if stop is None else min(stop, end)
     previous = None
-    while record_offset < end:
+    while record_offset < stop:
         previous = _read_header(handle, record_offset, end, max_record_size, previous)
         header, payload_size = previous
         payload_offset = record_offset + _HEADER_SIZE

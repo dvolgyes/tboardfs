@@ -111,16 +111,23 @@ For a large event file that takes tens of seconds to open, try `tboardfs -j 4 SO
 
 The mount starts workers only for uncached regular event files of at least 8 MiB.
 
-It limits workers to the available CPUs and the number of nonempty file ranges.
+The mount limits the worker count to the available CPUs and divides the snapshot into equal byte ranges.
 
-The planner uses a 4 KiB buffer to read frame headers and seeks past the payloads.
+The planner follows TFRecord length headers from offset zero with a 4 KiB buffer, seeking past payloads.
 
-Each worker uses a 64 KiB buffer to read its range sequentially and validates the TFRecord checksums.
+It submits each nonempty range as soon as it knows its first record start and stops searching once it reaches the final
+range or EOF.
 
-Workers start as soon as the planner confirms a range boundary.
+Each worker owns records whose starting offsets fall in its range, including the lower bound but excluding the upper
+bound.
 
-After the planner validates the last frame boundary and rechecks the source snapshot, the mount merges worker results in
-file order without copying the event file into shared memory.
+Workers use a 64 KiB buffer and validate complete records, including any record that crosses their upper bound.
+
+A separate prefix scan estimates the initial clock and metadata for later workers.
+
+The mount merges results in file order and reprocesses a range if its inherited state was wrong.
+
+Before exposing the index, the mount checks that the ranges cover the unchanged snapshot without gaps or overlaps.
 
 The parent keeps compact frame coordinates for binary entries and resolves range proofs when a reader needs them.
 
@@ -129,8 +136,8 @@ the `.npy` and `.json` files without rereading the tensor.
 
 The first operation that needs the file's contents or exact size reads and verifies the source bytes.
 
-If the file changes during the scan or a worker exits unexpectedly, the mount discards the partial index and uses the
-serial reader.
+If the snapshot changes, validation detects corruption or inconsistent coverage, or a worker exits unexpectedly, the
+mount discards the partial index and uses the serial reader.
 
 Repeated reads reuse the cache; appends resume from the existing index without starting workers.
 
