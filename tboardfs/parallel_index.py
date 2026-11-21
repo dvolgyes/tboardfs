@@ -85,18 +85,13 @@ class _Seed:
 
     @staticmethod
     def matches(segment: Segment, state: _ParseState, metadata: Metadata) -> bool:
-        """Check inputs that the segment used against the actual prefix."""
+        """Check inherited dependencies that cannot be repaired in place."""
         clock = segment.clock
         return (
-            (
-                not clock.reads_first_time
-                or _Seed._same_clock(clock.first_time, state.first_time)
-            )
-            and (not clock.reads_epoch or _Seed._same_clock(clock.epoch, state.epoch))
-            and all(
-                metadata.get(tag) == seed
-                for tag, seed in segment.metadata_reads.items()
-            )
+            not clock.reads_first_time
+            or _Seed._same_clock(clock.first_time, state.first_time)
+        ) and all(
+            metadata.get(tag) == seed for tag, seed in segment.metadata_reads.items()
         )
 
 
@@ -189,6 +184,8 @@ class _Reduction:
     def merge(cache: EventFileCache, state: _ParseState, segment: Segment) -> None:
         """Append one segment to the settled prefix."""
         _Reduction._validate_segment(cache, segment)
+        if not _Seed._same_clock(segment.clock.epoch, state.epoch):
+            segment.repair_epoch(state.epoch)
         chunk = segment.cache
         progress = cache.progress
         frames = chunk.progress.frames
@@ -200,7 +197,7 @@ class _Reduction:
         progress.effective_metadata.update(segment.metadata_writes)
         if segment.clock.writes_first_time:
             state.first_time = chunk.progress.first_time
-        if segment.clock.writes_epoch:
+        if segment.clock.epoch_prefixes is not None:
             state.epoch = chunk.progress.epoch
         cache.binaries = PackedBinaries.merge(cache.binaries, chunk.binaries)
         cache.json_entries.extend(chunk.json_entries)
@@ -267,7 +264,9 @@ class _Reduction:
                 mountpoint,
             )
         )
-        if not _Seed.matches(segment, state, metadata):
+        if not _Seed.matches(segment, state, metadata) or not _Seed._same_clock(
+            segment.clock.epoch, state.epoch
+        ):
             raise _SegmentError(f"{path}: corrective parse used a mismatched seed")
         return segment
 

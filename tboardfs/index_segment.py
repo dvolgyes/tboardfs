@@ -64,6 +64,22 @@ class Segment:
         default_factory=list
     )
 
+    def repair_epoch(self, epoch: object) -> None:
+        """Replace only the table rows that used the inherited epoch seed."""
+        prefixes = self.clock.epoch_prefixes
+        if prefixes is None:
+            self.cache.progress.epoch = epoch
+        for tag, rows in self.scalar_rows.items():
+            count = len(rows.epoch) if prefixes is None else prefixes[0].get(tag, 0)
+            for i in range(count):
+                rows.epoch[i] = epoch
+        for tag, histogram in self.histogram_rows.items():
+            column = histogram["epoch"]
+            count = len(column) if prefixes is None else prefixes[1].get(tag, 0)
+            for i in range(count):
+                column[i] = epoch
+        self.clock.epoch = epoch
+
     @staticmethod
     def plan(
         path: str | Path,

@@ -100,9 +100,8 @@ class _ClockDependencies:
     first_time: float | None
     epoch: object
     reads_first_time: bool = False
-    reads_epoch: bool = False
     writes_first_time: bool = False
-    writes_epoch: bool = False
+    epoch_prefixes: tuple[dict[str, int], dict[str, int]] | None = None
 
 
 @dataclass
@@ -699,13 +698,17 @@ class _EventIndexer:
     ) -> object:
         """Append a decoded scalar to its tag's columns."""
         step, wall_time, relative_time = timing
-        clock = state.clock
         if tag == "epoch":
             epoch = value
-            if clock is not None:
-                clock.writes_epoch = True
-        elif clock is not None and not clock.writes_epoch:
-            clock.reads_epoch = True
+            clock = state.clock
+            if clock is not None and clock.epoch_prefixes is None:
+                clock.epoch_prefixes = (
+                    {tag: len(rows.epoch) for tag, rows in state.scalar_rows.items()},
+                    {
+                        tag: len(rows["epoch"])
+                        for tag, rows in state.histogram_rows.items()
+                    },
+                )
         rows = state.scalar_rows[tag]
         rows.epoch.append(epoch)
         rows.step.append(step)
@@ -736,10 +739,7 @@ class _EventIndexer:
         tag = value["tag"]
         epoch, step, wall_time, relative_time = timing
         rows = state.histogram_rows[tag]
-        clock = state.clock
         for index, (left, right, count) in enumerate(buckets):
-            if index == 0 and clock is not None and not clock.writes_epoch:
-                clock.reads_epoch = True
             rows["_start"].append(index == 0)
             rows["step"].append(step)
             rows["epoch"].append(epoch)

@@ -3,7 +3,9 @@
 import json
 import os
 import struct
+from collections import deque
 from collections.abc import Iterator
+from concurrent.futures import Future
 from multiprocessing import active_children
 from pathlib import Path
 from typing import Never
@@ -18,9 +20,11 @@ from test_tf2_summaries import _images
 from tboardfs import TensorBoardFS, filesystem
 from tboardfs import parallel_index as cold
 from tboardfs.crc32c import masked_crc32c
+from tboardfs.event_source import EventSource
+from tboardfs.file_status import FileIdentity
 from tboardfs.index_segment import Job, Metadata, Segment
 from tboardfs.index_transport import _PackedResult
-from tboardfs.indexer import _EventIndexer
+from tboardfs.indexer import _EventIndexer, _ParseState
 from tboardfs.model import EventFileCache, JsonEntry
 from tboardfs.proto import compat_pb2
 
@@ -259,6 +263,167 @@ def test_legacy_scalar_metadata_declarations_follow_value_order(
             {"plugin_name": "ScAlArS", "tag": "metric", "plugin_content": b"restored"},
         ),
     ]
+
+
+def _add_epoch(event: compat_pb2.Event, epoch: float) -> None:
+    if isinstance(epoch, int):
+        tensor = event.summary.value.add(tag="epoch").tensor
+        tensor.dtype = 9
+        tensor.int64_val.append(epoch)
+    else:
+        event.summary.value.add(tag="epoch", simple_value=epoch)
+
+
+def _add_metric(event: compat_pb2.Event, value: float) -> None:
+    event.summary.value.add(tag="metric", simple_value=value)
+    _add_histogram(event, value)
+
+
+def _add_histogram(event: compat_pb2.Event, value: float) -> None:
+    histo = event.summary.value.add(tag="metric").histo
+    histo.min = 0.0
+    histo.max = 2.0
+    histo.bucket_limit.extend([1.0, 2.0])
+    histo.bucket.extend([value, 1.0])
+
+
+def _prepare_reduction(
+    path: Path,
+    ranges: tuple[bytes, ...],
+    guess: tuple[float, object, Metadata],
+) -> tuple[EventFileCache, deque[tuple[Job, Future[_PackedResult]]]]:
+    path.write_bytes(b"".join(ranges))
+    status = path.stat()
+    fingerprint = FileIdentity.fingerprint(status)
+    cache = EventFileCache(path)
+    cache.progress.identity = FileIdentity.of(status)
+    cache.progress.checked_status = fingerprint
+    cache.progress.last_checked_size = status.st_size
+    pending: deque[tuple[Job, Future[_PackedResult]]] = deque()
+    offset = 0
+    for frames in ranges:
+        start, offset = offset, offset + len(frames)
+        first_time, epoch, metadata = guess if start else (None, None, {})
+        job: Job = (
+            path,
+            start,
+            offset,
+            fingerprint,
+            first_time,
+            epoch,
+            metadata,
+            None,
+        )
+        result: Future[_PackedResult] = Future()
+        result.set_result(cold.packed_work(job))
+        pending.append((job, result))
+    return cache, pending
+
+
+@pytest.mark.parametrize(
+    ("settled", "guessed", "local"),
+    [
+        pytest.param(7.0, 3.0, 3.0, id="local-equals-guess"),
+        pytest.param(0.0, -0.0, -0.0, id="signed-zero"),
+        pytest.param(None, float("nan"), 3.0, id="missing-not-nan"),
+        pytest.param(float("nan"), None, 3.0, id="nan-not-missing"),
+        pytest.param(_STEP + 2, _STEP, _STEP, id="exact-int64"),
+    ],
+)
+def test_epoch_only_seed_correction_does_not_reopen_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    settled: float | None,
+    guessed: float | None,
+    local: float,
+) -> None:
+    prefix = compat_pb2.Event(step=_STEP, wall_time=10.0)
+    prefix.summary.value.add(tag="start", simple_value=1.0)
+    if settled is not None:
+        _add_epoch(prefix, settled)
+    histogram_only = compat_pb2.Event(step=_STEP + 1, wall_time=10.5)
+    _add_histogram(histogram_only, 1.0)
+    inherited = compat_pb2.Event(step=_STEP + 1, wall_time=11.0)
+    _add_metric(inherited, 1.0)
+    mixed = compat_pb2.Event(step=_STEP + 2, wall_time=12.0)
+    _add_metric(mixed, 2.0)
+    _add_epoch(mixed, local)
+    _add_metric(mixed, 3.0)
+    later = compat_pb2.Event(step=_STEP + 3, wall_time=13.0)
+    _add_metric(later, 4.0)
+
+    path = tmp_path / _SOURCE
+    actual, pending = _prepare_reduction(
+        path,
+        (
+            _frame(prefix),
+            _frame(histogram_only),
+            _frame(inherited),
+            _frame(mixed) + _frame(later),
+        ),
+        (10.0, guessed, {}),
+    )
+    expected = _EventIndexer.parse_event_file(path, ignore_truncated=True)
+
+    def unexpected_open(*_args: object, **_kwargs: object) -> Never:
+        pytest.fail("ordered reduction reopened the source for epoch-only repair")
+
+    monkeypatch.setattr(EventSource, "open", unexpected_open)
+    cold._Reduction.run(actual, _ParseState(), pending)
+
+    _assert_index_equal(actual, expected)
+    assert actual.progress.epoch == local
+    if isinstance(local, float):
+        assert isinstance(actual.progress.epoch, float)
+        assert struct.pack("!d", actual.progress.epoch) == struct.pack("!d", local)
+    assert actual.scalars["metric"]["_inherits_epoch"].tolist() == [
+        settled is None,
+        settled is None,
+        False,
+        False,
+    ]
+    assert actual.histograms["metric"]["_inherits_epoch"].tolist() == (
+        [settled is None] * 6 + [False] * 4
+    )
+    for table, serial_table in (
+        (actual.scalars, expected.scalars),
+        (actual.histograms, expected.histograms),
+    ):
+        assert table["metric"]["epoch"].tobytes() == (
+            serial_table["metric"]["epoch"].tobytes()
+        )
+    if isinstance(local, int):
+        assert actual.scalars["epoch"]["value"].tolist() == [settled, local]
+
+
+@pytest.mark.parametrize("mismatch", ["first-time", "metadata"])
+@pytest.mark.parametrize("epoch_guess", [3.0, 7.0], ids=["wrong-epoch", "right-epoch"])
+def test_non_epoch_seed_mismatches_replay(
+    tmp_path: Path, mismatch: str, epoch_guess: float
+) -> None:
+    prefix = compat_pb2.Event(step=1, wall_time=10.0)
+    _add_epoch(prefix, 7.0)
+    if mismatch == "metadata":
+        value = prefix.summary.value.add(tag="metric", simple_value=1.0)
+        value.metadata.plugin_data.plugin_name = "annotations"
+    event = compat_pb2.Event(step=2, wall_time=12.0)
+    event.summary.value.add(tag="metric", simple_value=2.0)
+
+    path = tmp_path / _SOURCE
+    actual, pending = _prepare_reduction(
+        path,
+        (_frame(prefix), _frame(event)),
+        (9.0 if mismatch == "first-time" else 10.0, epoch_guess, {}),
+    )
+    expected = _EventIndexer.parse_event_file(path, ignore_truncated=True)
+    cold._Reduction.run(actual, _ParseState(), pending)
+
+    _assert_index_equal(actual, expected)
+    if mismatch == "first-time":
+        assert actual.scalars["metric"]["relative_time"].tolist() == [2.0]
+    else:
+        assert actual.json_entries[-1].step == 2
+        assert actual.json_entries[-1].payload["plugin_name"] == "annotations"
 
 
 @pytest.mark.parametrize(

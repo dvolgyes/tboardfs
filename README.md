@@ -136,7 +136,13 @@ Workers use a 64 KiB buffer and validate complete records, including any record 
 
 A separate prefix scan estimates the initial clock and metadata for later workers.
 
-The mount merges results in file order and reprocesses a range if its inherited state was wrong.
+The mount merges worker results in file order.
+
+If only the starting epoch was wrong, the mount corrects the affected scalar and histogram rows in memory.
+
+It leaves rows from the first local epoch onward unchanged, even if that epoch equals the worker's estimate.
+
+If a range used an incorrect first timestamp or inherited plugin metadata, the mount reparses that range.
 
 Before exposing the index, the mount checks that the ranges cover the unchanged snapshot without gaps or overlaps.
 
