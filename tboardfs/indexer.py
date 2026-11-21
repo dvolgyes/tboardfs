@@ -421,7 +421,7 @@ class _EventIndexer:
         cache: EventFileCache,
         record: Record,
         state: _ParseState,
-        values: Iterable[tuple[str, float | _Image]],
+        values: list[tuple[str, float | _Image]],
         timing: tuple[int, float, float],
         spans: PayloadSpans | None,
         strict: bool,
@@ -429,12 +429,21 @@ class _EventIndexer:
         """Write prepared values to scalar columns or binary entries."""
         epoch = state.epoch
         step, wall_time, _ = timing
+        writer = state.media.writer if spans is None else None
+        count = len(values)
         for ordinal, (tag, data) in enumerate(values):
             if isinstance(data, float):
                 epoch = _EventIndexer.add_scalar(
                     state, tag, data, _FLOAT32, epoch, timing
                 )
                 continue
+            image_writer = None
+            if writer is not None:
+                if ordinal + 1 == count or all(
+                    isinstance(values[i][1], float) for i in range(ordinal + 1, count)
+                ):
+                    image_writer = writer
+                writer = None
             try:
                 state.media.add_legacy_image(
                     cache,
@@ -443,6 +452,7 @@ class _EventIndexer:
                     data.encoded_image_string,
                     (tag, step, wall_time),
                     spans,
+                    writer=image_writer,
                 )
             except Exception as error:
                 if not _skip_error(
@@ -537,6 +547,8 @@ class _EventIndexer:
             for tag, rows in state.histogram_rows.items()
         )
         counts[("binaries", "")] = len(cache.binaries)
+        if (writer := state.media.writer) is not None:
+            counts[("binaries", "")] += len(writer)
         counts[("json_entries", "")] = len(cache.json_entries)
         cache.restarts.append(RestartMark("start", event["step"], counts))
 

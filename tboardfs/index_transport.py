@@ -25,7 +25,7 @@ from tboardfs.index_segment import (
     _check_snapshot,
     _SegmentError,
 )
-from tboardfs.model import EventFileCache
+from tboardfs.model import EventFileCache, Record
 from tboardfs.model.binary_entry import BinaryEntry
 from tboardfs.model.graph_summary_entry import GraphSummaryEntry
 from tboardfs.model.indexed_blob import IndexedBlob, _BlobRef
@@ -266,34 +266,76 @@ class _WorkerRows:
 
 
 @dataclass(slots=True)
-class _PackedResult:
-    """A worker segment with its binary entries stored separately in row order."""
+class _WorkerRowWriter:
+    """Append direct and eager rows into one ordered worker representation."""
 
-    segment: Segment
-    rows: bytearray
-    proofs: bytearray
-    labels: tuple[BinaryKey, ...]
-    exceptions: dict[int, BinaryEntry]
+    rows: bytearray = field(default_factory=bytearray)
+    proofs: bytearray = field(default_factory=bytearray)
+    labels: dict[BinaryKey, int] = field(default_factory=dict)
+    exceptions: dict[int, BinaryEntry] = field(default_factory=dict)
 
-    @classmethod
-    def pack(cls, segment: Segment) -> Self:
-        """Consume a segment and encode its large fields for worker transport."""
-        cache = segment.cache
-        rows = bytearray(len(cache.binaries) * _ROW_SIZE)
-        proofs = bytearray()
-        labels: dict[BinaryKey, int] = {}
-        exceptions: dict[int, BinaryEntry] = {}
-        offset = 0
-        for position, entry in enumerate(cache.binaries):
-            if cls._pack_row(entry, cache, rows, offset, labels):
+    def __len__(self) -> int:
+        return len(self.rows) // _ROW_SIZE + len(self.exceptions)
+
+    def append_legacy_image(
+        self,
+        cache: EventFileCache,
+        ordinal: int,
+        record: Record,
+        size: int,
+        identity: tuple[str, int, float],
+        kind: str,
+        extension: str,
+    ) -> bool:
+        """Encode an integral-step legacy image with only whole-frame evidence."""
+        if cache.binaries:
+            self.flush(cache)
+        tag, step, wall_time = identity
+        label = (tag, kind, extension, "")
+        label_id = self.labels.setdefault(label, len(self.labels))
+        try:
+            row = _INT_ROW.pack(
+                0,
+                step,
+                wall_time,
+                label_id,
+                record.record_offset,
+                record.total_size,
+                record.payload_crc,
+                size,
+                0,
+                0,
+                ordinal,
+                0,
+                0,
+            )
+        except struct.error:
+            return False
+        self.rows.extend(row)
+        return True
+
+    def flush(self, cache: EventFileCache) -> None:
+        """Encode pending entries after their per-frame names are finalized."""
+        pending = cache.binaries
+        if not pending:
+            return
+        start = len(self)
+        rows = self.rows
+        offset = len(rows)
+        capacity = len(pending) * _ROW_SIZE
+        if offset:
+            rows.extend(bytes(capacity))
+        else:
+            self.rows = rows = bytearray(capacity)
+        for position, entry in enumerate(pending, start):
+            if self._pack_row(entry, cache, rows, offset, self.labels):
                 offset += _ROW_SIZE
-                proofs.extend(entry.blob.range_checksums)
+                self.proofs.extend(entry.blob.range_checksums)
             else:
-                exceptions[position] = entry
+                self.exceptions[position] = entry
 
         del rows[offset:]
         cache.binaries = []
-        return cls(segment, rows, proofs, tuple(labels), exceptions)
 
     @staticmethod
     def _pack_row(
@@ -353,6 +395,26 @@ class _PackedResult:
             return False
         return True
 
+
+@dataclass(slots=True)
+class _PackedResult:
+    """A worker segment with its binary entries stored separately in row order."""
+
+    segment: Segment
+    rows: bytearray
+    proofs: bytearray
+    labels: tuple[BinaryKey, ...]
+    exceptions: dict[int, BinaryEntry]
+
+    @classmethod
+    def pack(cls, segment: Segment, *, _writer: _WorkerRowWriter | None = None) -> Self:
+        """Consume a segment and encode its remaining fields for worker transport."""
+        writer = _WorkerRowWriter() if _writer is None else _writer
+        writer.flush(segment.cache)
+        return cls(
+            segment, writer.rows, writer.proofs, tuple(writer.labels), writer.exceptions
+        )
+
     def unpack(self, *, mountpoint: Path | None = None) -> Segment:
         """Restore the segment from its locally generated worker representation."""
         segment = self.segment
@@ -375,4 +437,6 @@ class _PackedResult:
 
 def packed_work(job: Job) -> _PackedResult:
     """Index and pack one segment before IPC."""
-    return _PackedResult.pack(Segment.work(job, defer_tensor_content=True))
+    writer = _WorkerRowWriter()
+    segment = Segment.work(job, defer_tensor_content=True, _binary_writer=writer)
+    return _PackedResult.pack(segment, _writer=writer)

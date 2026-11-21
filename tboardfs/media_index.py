@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from tboardfs.classify import _Classifier
 from tboardfs.frame_ref import FrameRef
@@ -25,6 +25,25 @@ def _indexed_blob(frame: FrameRef, data: bytes, span: Span | None) -> IndexedBlo
     )
 
 
+class _BinaryWriter(Protocol):
+    """Accept classified whole-frame image rows in producer order."""
+
+    def __len__(self) -> int: ...
+
+    def append_legacy_image(
+        self,
+        cache: EventFileCache,
+        ordinal: int,
+        record: Record,
+        size: int,
+        identity: tuple[str, int, float],
+        kind: str,
+        extension: str,
+    ) -> bool:
+        """Return false when the image requires an eager entry."""
+        ...
+
+
 @dataclass(slots=True)
 class _MediaIndex:
     """Insert lazy binary entries with extension caches scoped to one parse."""
@@ -32,6 +51,7 @@ class _MediaIndex:
     defer_frames: bool = False
     binary_extensions: dict[tuple[str, bytes], str | None] = field(default_factory=dict)
     large_audio_extension: tuple[bytes, str | None] | None = None
+    writer: _BinaryWriter | None = None
 
     def add_legacy_image(
         self,
@@ -41,6 +61,8 @@ class _MediaIndex:
         data: bytes,
         identity: tuple[str, int, float],
         spans: PayloadSpans | None,
+        *,
+        writer: _BinaryWriter | None = None,
     ) -> None:
         """Index an image without metadata using the ordinary media policies."""
         kind = _Classifier.legacy_image_kind(data)
@@ -48,6 +70,10 @@ class _MediaIndex:
             return
         extension = self._cached_extension(kind, data)
         if extension is None:
+            return
+        if writer is not None and writer.append_legacy_image(
+            cache, ordinal, record, len(data), identity, kind, extension
+        ):
             return
         span = None
         if spans is not None:

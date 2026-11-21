@@ -129,6 +129,10 @@ The mount merges results in file order and reprocesses a range if its inherited 
 
 Before exposing the index, the mount checks that the ranges cover the unchanged snapshot without gaps or overlaps.
 
+Workers can write a small legacy `Summary.Image` directly to a packed row when its only siblings are ordinary scalars.
+
+Images that need a verified byte range or share a record with another image use the general encoding path.
+
 The parent builds directory names from packed binary rows and resolves an individual entry when its file is accessed.
 
 For ordinary numeric tensors with a verified `tensor_content` extent of at least 64 KiB, a live parallel mount can list

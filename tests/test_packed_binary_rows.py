@@ -12,13 +12,14 @@ from test_graph_summaries import _graph_event, _run_metadata
 from test_incremental_parse import _frame
 from test_index_transport import _job
 from test_payload_spans import _PNG
+from test_restart_purge import _start
 from test_tf2_summaries import _images
 
 from scripts.scale_corpus import _ScaleCorpus
 from tboardfs.extract import extract_binary_blob
 from tboardfs.index_binary import BinarySection
 from tboardfs.index_codec import IndexCodec
-from tboardfs.index_segment import Segment
+from tboardfs.index_segment import Segment, _SegmentError
 from tboardfs.index_transport import _PackedResult, _WorkerRows, packed_work
 from tboardfs.model import EventFileCache
 from tboardfs.model.binary_entry import BinaryEntry
@@ -105,6 +106,84 @@ def _restore_worker(result: _PackedResult) -> PackedBinaries:
     rows = ForkingPickler.loads(ForkingPickler.dumps(result)).unpack().cache.binaries
     assert isinstance(rows, PackedBinaries)
     return rows
+
+
+def test_packed_legacy_images_preserve_mixed_range(tmp_path: Path) -> None:
+    path = tmp_path / "events.out.tfevents"
+    green, yellow, blue = (
+        _ScaleCorpus.small_png(rgb) for rgb in (0x00FF00, 0xFFFF00, 0x0000FF)
+    )
+    first = _ScaleCorpus.event_frame(7, pixel=0xFF0000)
+    gradient = _ScaleCorpus._png(128, 16, (b"\0" + bytes(range(128)) * 3) * 16)
+    mixed = compat_pb2.Event(step=8, wall_time=108.0)
+    mixed.summary.value.add(tag="same").image.encoded_image_string = green
+    mixed.summary.value.add(tag="same").image.encoded_image_string = yellow
+    large = compat_pb2.Event(step=9, wall_time=109.0)
+    large.summary.value.add(tag="same").image.encoded_image_string = gradient
+    tail = compat_pb2.Event(step=6, wall_time=12.0)
+    tail.summary.value.add(tag="same").image.encoded_image_string = blue
+    duplicate, spanned, restart, last = (
+        _frame(mixed),
+        _frame(large),
+        _start(6),
+        _frame(tail),
+    )
+    path.write_bytes(first + duplicate + spanned + restart + last)
+
+    job = _job(path)
+    reference = Segment.work(job).cache
+    result = packed_work(job)
+    packed = ForkingPickler.loads(ForkingPickler.dumps(result)).unpack().cache
+    assert BinarySection.encode(packed) == BinarySection.encode(reference)
+    assert packed.restarts == reference.restarts
+    (mark,) = packed.restarts
+    assert (mark.kind, mark.value, mark.counts) == (
+        "start",
+        6,
+        {("scalars", "loss"): 1, ("binaries", ""): 4, ("json_entries", ""): 0},
+    )
+
+    entries = list(packed.binaries)
+    assert entries == reference.binaries
+    assert [
+        (entry.kind, entry.tag, entry.extension, entry.value_ordinal, entry.suffix)
+        for entry in entries
+    ] == [
+        ("images", "series", "png", 1, ""),
+        ("images", "same", "png", 0, ""),
+        ("images", "same", "png", 1, "_v1"),
+        ("images", "same", "png", 0, ""),
+        ("images", "same", "png", 0, ""),
+    ]
+    span_offset = len(first) + len(duplicate)
+    tail_offset = span_offset + len(spanned) + len(restart)
+    for entry, data, offset, frame in zip(
+        entries,
+        (_ScaleCorpus.small_png(0xFF0000), green, yellow, gradient, blue),
+        (0, len(first), len(first), span_offset, tail_offset),
+        (first, duplicate, duplicate, spanned, last),
+        strict=True,
+    ):
+        assert entry.size == len(data)
+        assert (entry.frame.offset, entry.frame.size, entry.frame.checksum) == (
+            offset,
+            len(frame),
+            int.from_bytes(frame[-4:], "little"),
+        )
+        assert extract_binary_blob(entry) == data
+    for index in (0, 1, 2, 4):
+        assert entries[index].blob.span is None
+        assert entries[index].blob.range_checksums == b""
+    _assert_verified_span(path, entries[3], gradient)
+
+
+def test_packed_legacy_image_range_rejects_bad_tail_checksum(tmp_path: Path) -> None:
+    path = tmp_path / "events.out.tfevents"
+    first, last = (_ScaleCorpus.event_frame(step) for step in (1, 2))
+    path.write_bytes(first + last[:-1] + bytes([last[-1] ^ 1]))
+    message = rf"payload checksum mismatch at offset {len(first)}"
+    with pytest.raises(_SegmentError, match=message):
+        packed_work(_job(path))
 
 
 @pytest.fixture

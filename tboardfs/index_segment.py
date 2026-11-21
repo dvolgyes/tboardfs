@@ -16,6 +16,7 @@ from tboardfs.indexer import (
     _EventIndexer,
     _ParseState,
 )
+from tboardfs.media_index import _BinaryWriter, _MediaIndex
 from tboardfs.model import EventFileCache, Record, TFRecordError
 from tboardfs.skip_failure import _ReplayRecordError, _speculative_record
 from tboardfs.tables import _ScalarRows
@@ -126,7 +127,12 @@ class Segment:
             yield offset, limit
 
     @staticmethod
-    def work(job: Job, *, defer_tensor_content: bool = False) -> "Segment":
+    def work(
+        job: Job,
+        *,
+        defer_tensor_content: bool = False,
+        _binary_writer: _BinaryWriter | None = None,
+    ) -> "Segment":
         """Index frames starting in the assigned range using one verified descriptor."""
         (
             path_arg,
@@ -152,6 +158,7 @@ class Segment:
             clock=clock,
             deferred_tensor_content=deferred if defer_tensor_content else None,
             retain_tensor_extents=True,
+            media=_MediaIndex(writer=_binary_writer),
         )
         position = start
         try:
