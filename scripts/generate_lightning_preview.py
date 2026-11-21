@@ -147,17 +147,23 @@ class _Segmenter(LightningModule):  # type: ignore[misc]
             "difference": predicted ^ raw,
         }.items():
             tag = f"{phase}/{name}"
-            if self.hparams.stored_png:
-                writer.file_writer.add_summary(self._png(tag, image), step)
+            jpeg = name in {"input", "prediction"}
+            if jpeg or self.hparams.stored_png:
+                writer.file_writer.add_summary(
+                    self._encoded(tag, image, jpeg=jpeg), step
+                )
             else:
                 writer.add_image(tag, image, step)
 
     @staticmethod
-    def _png(tag: str, image: torch.Tensor) -> Summary:
-        """Encode the same RGB pixels as SummaryWriter.add_image without compression."""
+    def _encoded(tag: str, image: torch.Tensor, *, jpeg: bool) -> Summary:
+        """Encode a JPEG preview or an uncompressed PNG mask."""
         pixels = Image.fromarray(image.squeeze(0).numpy()).convert("RGB")
         with BytesIO() as buffer:
-            pixels.save(buffer, format="PNG", compress_level=0)
+            if jpeg:
+                pixels.save(buffer, format="JPEG", quality=95)
+            else:
+                pixels.save(buffer, format="PNG", compress_level=0)
             encoded = buffer.getvalue()
         return Summary(
             value=[
@@ -194,7 +200,8 @@ class _Segmenter(LightningModule):  # type: ignore[misc]
         self.tb.experiment.add_text(
             "run/description",
             "Recover the upright iteration number from its rotated image. "
-            "The prediction PNG is a three-by-three dilation baseline. "
+            "The input and prediction images use JPEG. "
+            "The prediction shows a three-by-three dilation baseline. "
             f"The histogram and classification metrics measure the trained CNN. {loss_note}",
             0,
         )
@@ -264,7 +271,7 @@ def main() -> None:
         "-P",
         "--stored-png",
         action="store_true",
-        help="write lossless PNGs without compression",
+        help="disable compression for the three PNG images per iteration",
     )
     args = parser.parse_args()
     if min(args.epochs, args.train_steps, args.val_steps) < 1:
