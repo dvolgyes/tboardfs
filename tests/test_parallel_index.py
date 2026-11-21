@@ -21,7 +21,7 @@ from tboardfs.crc32c import masked_crc32c
 from tboardfs.index_segment import Job, Metadata, Segment
 from tboardfs.index_transport import _PackedResult
 from tboardfs.indexer import _EventIndexer
-from tboardfs.model import EventFileCache
+from tboardfs.model import EventFileCache, JsonEntry
 from tboardfs.proto import compat_pb2
 
 _STEP = 2**53 + 1
@@ -193,6 +193,72 @@ def test_legacy_scalar_image_pairs_keep_order_and_metadata(
                 "plugin_name": "annotations",
                 "tag": tag,
             }
+
+
+def test_legacy_scalar_metadata_declarations_follow_value_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cold, "_available_cpus", lambda: 4)
+    seed, custom, restored = (
+        compat_pb2.Event(step=_STEP + offset, wall_time=100.0 + offset)
+        for offset in range(3)
+    )
+    first = seed.summary.value.add(tag="metric", simple_value=1)
+    first.metadata.plugin_data.plugin_name = "SCALARS"
+    first.metadata.plugin_data.content = b"first"
+
+    custom.summary.value.add(tag="metric", simple_value=2)
+    declaration = custom.summary.value.add(tag="metric").metadata.plugin_data
+    declaration.plugin_name = "annotations"
+    declaration.content = b"custom"
+    custom.summary.value.add(tag="metric", simple_value=3).metadata.SetInParent()
+    empty = custom.summary.value.add(tag="metric", simple_value=4)
+    empty.metadata.plugin_data.SetInParent()
+    declaration = custom.summary.value.add(tag="metric").metadata.plugin_data
+    declaration.plugin_name = "annotations"
+
+    restored.summary.value.add(tag="metric", simple_value=5)
+    declaration = restored.summary.value.add(tag="metric").metadata.plugin_data
+    declaration.plugin_name = "ScAlArS"
+    declaration.content = b"restored"
+    restored.summary.value.add(tag="metric", simple_value=6)
+
+    path = tmp_path / _SOURCE
+    filler = _loss(0, 1.0) * cold._PREFIX_RECORDS
+    path.write_bytes(
+        _frame(seed) + filler + _frame(custom) + filler * 4 + _frame(restored)
+    )
+    serial = _EventIndexer.parse_event_file(path, ignore_truncated=True)
+    parallel = cold.parallel_index(path, 4)
+    assert parallel is not None
+    _assert_index_equal(parallel, serial)
+
+    rows = serial.scalars["metric"]
+    np.testing.assert_array_equal(
+        rows["value"], np.arange(1, 7, dtype="float32"), strict=True
+    )
+    assert list(
+        zip(rows["step"], rows["wall_time"], rows["relative_time"], strict=True)
+    ) == [
+        (_STEP, 100.0, 0.0),
+        *[(_STEP + 1, 101.0, 1.0)] * 3,
+        *[(_STEP + 2, 102.0, 2.0)] * 2,
+    ]
+    annotated = {"plugin_name": "annotations", "tag": "metric"}
+    annotated_content = annotated | {"plugin_content": b"custom"}
+    assert serial.json_entries == [
+        JsonEntry("metric", "plugins", _STEP + 1, 101.0, annotated_content),
+        JsonEntry("metric", "plugins", _STEP + 1, 101.0, annotated_content),
+        JsonEntry("metric", "plugins", _STEP + 1, 101.0, annotated),
+        JsonEntry("metric", "plugins", _STEP + 2, 102.0, annotated),
+        JsonEntry(
+            "metric",
+            "scalars",
+            _STEP + 2,
+            102.0,
+            {"plugin_name": "ScAlArS", "tag": "metric", "plugin_content": b"restored"},
+        ),
+    ]
 
 
 @pytest.mark.parametrize(

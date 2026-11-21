@@ -50,6 +50,7 @@ from tboardfs.tfrecord import _iter_tfrecords
 _MALFORMED_RECORD_ERRORS = (DecodeError, ValueError, struct.error)
 _FLOAT32 = np.dtype("float32")
 _FLOAT64 = np.dtype("float64")
+_SCALAR_FIELDS = frozenset(("tag", "simple_value", "plugin_name", "plugin_content"))
 
 
 def parse_file(filename: str | Path) -> dict[str, Any]:
@@ -365,15 +366,15 @@ class _EventIndexer:
         kind = message.WhichOneof("what")
         wall_time = message.wall_time
         spans = PayloadSpans.for_payload(record.payload)
-        plain = (
-            _SummaryParser.plain_values(
-                message.summary.value, cache.progress.effective_metadata
+        plain = None
+        values: Any
+        if kind == "summary":
+            source = message.summary.value
+            plain = _SummaryParser.plain_values(
+                source, cache.progress.effective_metadata
             )
-            if kind == "summary"
-            else None
-        )
-        values: Any = plain
-        if plain is None:
+            values = _SummaryParser.index_values(source) if plain is None else plain
+        else:
             event = _SummaryParser.convert_event(message, kind, indexing=True)
             _EventIndexer.add_restart(cache, event, state)
             _EventIndexer.add_graph(
@@ -641,6 +642,20 @@ class _EventIndexer:
         """
         tag = value["tag"]
         epoch, step, wall_time, relative_time = timing
+        if value.keys() <= _SCALAR_FIELDS:
+            scalar_value = value.get("simple_value")
+            if scalar_value is not None:
+                epoch = _EventIndexer.add_scalar(
+                    state,
+                    tag,
+                    scalar_value,
+                    _FLOAT32,
+                    epoch,
+                    (step, wall_time, relative_time),
+                )
+            if scalar_value is None or _Classifier.plugin_name(value) != "scalars":
+                _EventIndexer.add_plugin(cache, value, (tag, step, wall_time))
+            return epoch
         plain_media = len(value) == 2 and ("image" in value or "audio" in value)
         scalar = None if plain_media else _Classifier.scalar_value(value)
         if scalar is not None:

@@ -98,6 +98,16 @@ class _SummaryParser:
         return plain
 
     @staticmethod
+    def index_values(values: Iterable[Any]) -> list[dict[str, Any]]:
+        """Decode the entire summary before any of its values changes the index."""
+        return [
+            {"tag": value.tag, "simple_value": value.simple_value}
+            if value.HasField("simple_value") and not value.HasField("metadata")
+            else _SummaryParser.parse_summary_value(value, indexing=True)
+            for value in values
+        ]
+
+    @staticmethod
     def parse_event(data: bytes, *, indexing: bool = False) -> dict[str, Any]:
         """Parse one Event protobuf payload."""
         message = cast(Any, _ProtoParser.event(data))

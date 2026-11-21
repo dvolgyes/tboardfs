@@ -111,6 +111,11 @@ scalar followed by an image.
 If any value in the summary declares or inherits metadata, the indexer processes the whole summary through the
 metadata-aware path instead.
 
+A plugin declaration applies to its own value and later values with the same tag, not earlier values in the same
+summary.
+
+Legacy scalars and metadata-only values on this path skip histogram and media detection without skipping plugin output.
+
 ### Parallel cold indexing
 
 For a large event file that takes tens of seconds to open, try `tboardfs -j 4 SOURCE MOUNTPOINT`.
