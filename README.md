@@ -65,6 +65,16 @@ uvx tboardfs SOURCE MOUNTPOINT
 uvx --from tboardfs tboardfs-file list SOURCE
 ```
 
+Source builds on Linux CPython can compile an optional accelerator for live status checks.
+
+To build a pure Python wheel, use `TBOARDFS_PURE_PYTHON=1 uv build --wheel`.
+
+Set `TBOARDFS_PURE_PYTHON=1` for a strict editable install on a machine without a C compiler.
+
+If the installed extension cannot load, tboardfs reports the import error rather than hiding the installation problem.
+
+Reinstall from a pure Python wheel to use the Python comparison instead.
+
 ## Filesystem Mode
 
 ```bash
@@ -277,6 +287,13 @@ Between directory scans, tboardfs reuses the names and expected fingerprints of 
 For an eligible parent, tboardfs encodes its directory name and each event filename once per snapshot.
 
 It opens the parent again and compares each regular file with its indexed fingerprint.
+
+On supported Linux CPython builds, an optional C extension compares sibling fingerprints without creating a Python
+`stat_result` for each file.
+
+Each comparison still reads the current status through the freshly opened directory.
+
+If the extension was not built, or Python reports file birth times, tboardfs uses the Python comparison.
 
 Before discovery is due, matching fingerprints let that access skip rebuilding the list of event files.
 

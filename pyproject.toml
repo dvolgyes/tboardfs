@@ -39,12 +39,15 @@ tboardfs = "tboardfs:main"
 tboardfs-file = "tboardfs.file_cli:main"
 
 [build-system]
-requires = ["uv_build>=0.13"]
-build-backend = "uv_build"
+requires = ["setuptools>=84.2.1"]
+build-backend = "setuptools.build_meta"
 
-[tool.uv.build-backend]
-module-name = "tboardfs"
-module-root = ""
+[tool.setuptools.packages.find]
+include = ["tboardfs", "tboardfs.*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+tboardfs = ["py.typed", "_sibling_stat.c"]
 
 [dependency-groups]
 dev = [

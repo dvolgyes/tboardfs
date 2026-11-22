@@ -4,6 +4,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
+from importlib.util import find_spec
 from pathlib import Path
 from stat import S_ISREG
 from typing import Any
@@ -13,7 +14,7 @@ from loguru import logger
 from tboardfs._directory import _PlainDirectory
 from tboardfs.disk_index import DiskIndex, _IndexHit
 from tboardfs.event_source import EventSource
-from tboardfs.file_status import FileIdentity
+from tboardfs.file_status import _HAS_BIRTH_TIME, FileIdentity
 from tboardfs.indexer import _EventIndexer
 from tboardfs.model import EventFileCache, RunCache
 
@@ -104,12 +105,22 @@ class _IndexOptions:
         return self.disk.candidates(cold, self.workers) if cold else {}
 
 
+type _SiblingFiles = tuple[tuple[bytes, tuple[int | None, ...]], ...]
+
+
+_match_siblings: Callable[[int, _SiblingFiles], bool] | None = (
+    import_module("tboardfs._sibling_stat").matches
+    if not _HAS_BIRTH_TIME and find_spec("tboardfs._sibling_stat") is not None
+    else None
+)
+
+
 @dataclass(frozen=True, slots=True)
 class _SiblingSnapshot:
     """Compare the last indexed siblings without reconstructing the update plan."""
 
     parent: _PlainDirectory
-    files: tuple[tuple[bytes, tuple[int | None, ...]], ...]
+    files: _SiblingFiles
 
     @classmethod
     def capture(
@@ -138,6 +149,8 @@ class _SiblingSnapshot:
         if fd is None:
             return False
         try:
+            if _match_siblings is not None:
+                return _match_siblings(fd, self.files)
             for name, expected in self.files:
                 status = os.lstat(name, dir_fd=fd)
                 if (
