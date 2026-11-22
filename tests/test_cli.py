@@ -34,7 +34,7 @@ def test_mount_cli_defaults_to_background(tmp_path: Path, monkeypatch: Any) -> N
             }
         )
 
-    monkeypatch.setattr(cli, "FUSE", capture_fuse)
+    monkeypatch.setattr(cli, "MountBinding", capture_fuse)
 
     result = CliRunner().invoke(cli.main, ["runs", "mnt"])
 
@@ -65,7 +65,7 @@ def test_mount_cli_foreground_warns_that_background_is_preferred(
         del args
         fuse_calls.append(kwargs)
 
-    monkeypatch.setattr(cli, "FUSE", capture_fuse)
+    monkeypatch.setattr(cli, "MountBinding", capture_fuse)
 
     result = CliRunner().invoke(
         cli.main, [str(source), str(mountpoint), "--foreground"]
@@ -98,7 +98,7 @@ def test_foreground_reports_only_the_accessed_run(
             name == "train" for name, _, _ in filesystem.readdir("/tensorboard/scalars")
         )
 
-    monkeypatch.setattr(cli, "FUSE", capture_fuse)
+    monkeypatch.setattr(cli, "MountBinding", capture_fuse)
 
     result = CliRunner().invoke(
         cli.main,
@@ -126,7 +126,9 @@ def test_mount_cli_refuses_mountpoint_inside_source(
     (tmp_path / "runs" / "a").mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
     fuse_calls: list[object] = []
-    monkeypatch.setattr(cli, "FUSE", lambda *args, **kwargs: fuse_calls.append(args))
+    monkeypatch.setattr(
+        cli, "MountBinding", lambda *args, **kwargs: fuse_calls.append(args)
+    )
 
     result = CliRunner().invoke(cli.main, ["runs", mountpoint])
 
@@ -142,7 +144,9 @@ def test_mount_cli_refuses_source_inside_mountpoint(
     (tmp_path / "mnt" / "runs").mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
     fuse_calls: list[object] = []
-    monkeypatch.setattr(cli, "FUSE", lambda *args, **kwargs: fuse_calls.append(args))
+    monkeypatch.setattr(
+        cli, "MountBinding", lambda *args, **kwargs: fuse_calls.append(args)
+    )
 
     result = CliRunner().invoke(cli.main, ["mnt/runs", "mnt"])
 
@@ -168,7 +172,9 @@ def test_mount_cli_sets_the_render_cache_size(
     monkeypatch.chdir(tmp_path)
     limits: list[int] = []
     monkeypatch.setattr(
-        cli, "FUSE", lambda fs, *args, **kwargs: limits.append(fs._renders.limit_bytes)
+        cli,
+        "MountBinding",
+        lambda fs, *args, **kwargs: limits.append(fs._renders.limit_bytes),
     )
 
     result = CliRunner().invoke(cli.main, ["runs", "mnt", *option])
@@ -184,7 +190,7 @@ def test_mount_cli_refuses_a_negative_cache_size(
     (tmp_path / "runs").mkdir()
     (tmp_path / "mnt").mkdir()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli, "FUSE", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "MountBinding", lambda *args, **kwargs: None)
 
     result = CliRunner().invoke(cli.main, ["runs", "mnt", "--cache-size-mb", "-1"])
 
@@ -201,7 +207,9 @@ def test_mount_cli_refuses_invalid_index_workers(
     source = tmp_path / "runs"
     source.mkdir()
     fuse_calls: list[object] = []
-    monkeypatch.setattr(cli, "FUSE", lambda *args, **kwargs: fuse_calls.append(args))
+    monkeypatch.setattr(
+        cli, "MountBinding", lambda *args, **kwargs: fuse_calls.append(args)
+    )
 
     result = CliRunner().invoke(
         cli.main, [str(source), str(tmp_path / "mnt"), "--index-workers", value]
@@ -223,7 +231,7 @@ def test_mount_cli_sets_index_workers(
     source.mkdir()
     counts: list[int] = []
     monkeypatch.setattr(
-        cli, "FUSE", lambda fs, *args, **kwargs: counts.append(fs.index_workers)
+        cli, "MountBinding", lambda fs, *args, **kwargs: counts.append(fs.index_workers)
     )
 
     result = CliRunner().invoke(cli.main, [str(source), str(tmp_path / "mnt"), *option])
@@ -258,7 +266,7 @@ def test_mount_cli_sets_the_owner(
             status = fs.getattr(path, None)
             owners.append((status["st_uid"], status["st_gid"]))
 
-    monkeypatch.setattr(cli, "FUSE", capture_owners)
+    monkeypatch.setattr(cli, "MountBinding", capture_owners)
 
     result = CliRunner().invoke(cli.main, ["runs", "mnt", *option])
 
@@ -276,7 +284,7 @@ def test_mount_cli_reports_a_failed_mount_without_a_traceback(
     def fail(*args: object, **kwargs: object) -> None:
         raise RuntimeError(1)
 
-    monkeypatch.setattr(cli, "FUSE", fail)
+    monkeypatch.setattr(cli, "MountBinding", fail)
 
     result = CliRunner().invoke(cli.main, ["runs", "missing"])
 
@@ -299,7 +307,7 @@ def test_mount_cli_writes_fuse_library_errors_to_the_logfile(
         except ValueError:
             logging.getLogger("fuse").exception("Uncaught exception from %s", "read")
 
-    monkeypatch.setattr(cli, "FUSE", fail_an_operation)
+    monkeypatch.setattr(cli, "MountBinding", fail_an_operation)
 
     result = CliRunner().invoke(cli.main, ["runs", "mnt", "--logfile", "log.txt"])
 

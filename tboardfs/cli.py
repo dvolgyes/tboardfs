@@ -6,7 +6,6 @@ from typing import cast
 
 import click
 from loguru import logger
-from mfusepy import FUSE
 
 from tboardfs.cli_options import LOGLEVEL, SCALAR_FORMAT, STEP_DIGITS
 from tboardfs.constants import (
@@ -14,6 +13,7 @@ from tboardfs.constants import (
     DEFAULT_DISCOVERY_SECONDS,
     LOG_FORMAT,
 )
+from tboardfs.mount_binding import MountBinding
 from tboardfs.mount_index import _DEFAULT_DISK_INDEX_SIZE_MB
 from tboardfs.mounted import MountedTensorBoardFS
 from tboardfs.stdlib_logging import StdlibToLoguru
@@ -115,7 +115,7 @@ def main(
     # attr_timeout=0 makes fstat and SEEK_END ask for the size of the open
     # handle; a cached size from an older version would cut its data.
     try:
-        FUSE(
+        MountBinding(
             filesystem,
             str(mountpoint_path),
             foreground=foreground,

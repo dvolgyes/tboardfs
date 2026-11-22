@@ -208,6 +208,10 @@ separate `stat` for every file on Linux.
 
 Commands that request sizes or timestamps, such as `find MOUNTPOINT -ls`, still need file attributes.
 
+The mount resolves each attribute request against the current path or open handle.
+
+When the attributes match a recent result, the mount reuses its encoded `stat` structure.
+
 Only complete, stable parses without skipped records or conversion warnings are saved.
 
 Within a mount, appends still extend the in-memory index; a later mount reparses a changed file rather than trusting a

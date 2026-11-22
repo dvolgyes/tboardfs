@@ -5,7 +5,7 @@ import stat
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from errno import EIO, EISDIR, ENOENT, ENOTDIR, EROFS
+from errno import EINVAL, EIO, EISDIR, ENOENT, ENOTDIR, EROFS
 from functools import lru_cache, partial
 from io import FileIO
 from pathlib import Path
@@ -21,6 +21,7 @@ from tboardfs.constants import (
     DEFAULT_SCALAR_FORMATS,
 )
 from tboardfs.errors import fuse_error
+from tboardfs.file_attributes import _FileAttributes
 from tboardfs.file_times import FileTimes
 from tboardfs.leaf_cache import _CachedLeaf, _MountTree, _resolve_node
 from tboardfs.model import (
@@ -192,29 +193,24 @@ class TensorBoardFS:
 
     def getattr(self, path: str, *file_handles: object) -> dict[str, Any]:
         """Return stat data for a virtual path, or for an open handle."""
+        return self._attributes(path, file_handles).as_dict()
+
+    def _attributes(
+        self, path: str | None, file_handles: tuple[object, ...]
+    ) -> _FileAttributes:
+        """Read current path metadata or the metadata pinned by an open handle."""
         opened = self._open_file(file_handles)
-        mode, nlink = stat.S_IFREG | 0o444, 1
         if opened is not None:
             content, mtime = opened
             size = content.size if isinstance(content, _VerifiedSpan) else len(content)
-        else:
-            node, key, mtime = self._getattr_node(path)
-            if node["type"] == "dir":
-                mode, nlink, size = stat.S_IFDIR | 0o555, 2, 0
-            else:
-                size = self._node_size(node, key)
-        uid, gid = self.owner
-        return {
-            "st_mode": mode,
-            "st_nlink": nlink,
-            "st_size": size,
-            "st_blocks": (size + 511) // 512,
-            "st_ctime": mtime,
-            "st_mtime": mtime,
-            "st_atime": mtime,
-            "st_uid": uid,
-            "st_gid": gid,
-        }
+            return _FileAttributes(False, size, mtime, self.owner)
+        if path is None:
+            raise fuse_error(EINVAL)
+        node, key, mtime = self._getattr_node(path)
+        directory = node["type"] == "dir"
+        return _FileAttributes(
+            directory, 0 if directory else self._node_size(node, key), mtime, self.owner
+        )
 
     def readdir(self, path: str, *file_handles: object) -> list[str]:
         """Return virtual directory entries."""
