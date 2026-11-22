@@ -274,7 +274,7 @@ tboardfs does not reuse that result on later accesses.
 
 Between directory scans, tboardfs reuses the names and expected fingerprints of indexed sibling files.
 
-For an eligible parent, tboardfs also prepares its encoded directory name once for that snapshot.
+For an eligible parent, tboardfs encodes its directory name and each event filename once per snapshot.
 
 It opens the parent again and compares each regular file with its indexed fingerprint.
 
@@ -349,6 +349,10 @@ If the filesystem reports identical metadata across a same-size rewrite, a statu
 Opening a rendered export pins its bytes; opening a directly indexed binary pins the source descriptor.
 
 Appending, renaming or unlinking that source does not redirect an open handle to a replacement.
+
+When the kernel supplies a handle with an attribute request, the mount reports the size pinned by that handle.
+
+Linux can issue `fstat(fd)` without a FUSE handle; that request sees the current path, not necessarily the open version.
 
 An in-place rewrite can make the original binary unavailable: if verification fails, the read returns `EIO` rather than
 mixing versions.

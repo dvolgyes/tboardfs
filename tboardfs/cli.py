@@ -112,8 +112,6 @@ def main(
         disk_index=cast(bool, params["disk_index"]),
         disk_index_size_mb=cast(int, params["disk_index_size_mb"]),
     )
-    # attr_timeout=0 makes fstat and SEEK_END ask for the size of the open
-    # handle; a cached size from an older version would cut its data.
     try:
         MountBinding(
             filesystem,

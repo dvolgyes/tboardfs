@@ -7,10 +7,13 @@ from pathlib import Path
 from unittest.mock import call, patch
 
 import pytest
+from test_incremental_parse import _frame
 from test_open_handles import LOSS, _append, _read_in_chunks
 from test_render_cache import EVENTS, _count_renders
+from test_tf_producer_cases import CORPUS
 
 from tboardfs import TensorBoardFS
+from tboardfs.proto import compat_pb2
 
 
 def _read_open(fs: TensorBoardFS, path: str) -> bytes:
@@ -127,3 +130,66 @@ def test_warmed_neighboring_leaves_follow_append_and_discovery(tmp_path: Path) -
             assert (raised.value.errno, raised.value.filename) == (ENOENT, path)
     finally:
         fs.release(LOSS, handle)
+
+
+def _image_frame(png: bytes, wall_time: float) -> bytes:
+    event = compat_pb2.Event(step=1, wall_time=wall_time)
+    event.summary.value.add(tag="img").image.encoded_image_string = png
+    return _frame(event)
+
+
+@pytest.mark.parametrize("age", [3600.0, float("inf")], ids=["live", "frozen"])
+def test_warmed_binary_stat_rejects_event_retargeted_into_mountpoint(
+    tmp_path: Path, age: float
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    mountpoint = tmp_path / "mount"
+    mountpoint.mkdir()
+    event = source / EVENTS
+    png = (CORPUS / "plugins/assets/sprite.png").read_bytes()
+    frame = _image_frame(png, 1.0)
+    event.write_bytes(frame)
+    _append(source / "events.out.tfevents.sibling", 0)
+    excluded = mountpoint / EVENTS
+    excluded.write_bytes(frame)
+    fs = TensorBoardFS(source, mountpoint=mountpoint, refresh_age_seconds=age)
+    path = "/images/img/000001.png"
+    assert fs.getattr(path)["st_size"] == len(png)
+    assert fs.getattr(path)["st_size"] == len(png)
+
+    event.unlink()
+    event.symlink_to(excluded)
+    with pytest.raises(OSError) as raised:
+        fs.getattr(path)
+    assert raised.value.errno == ENOENT
+
+
+def test_repeated_binary_stat_after_sibling_and_payload_changes(tmp_path: Path) -> None:
+    event = tmp_path / "events.out.tfevents.café"
+    png = (CORPUS / "plugins/assets/sprite.png").read_bytes()
+    event.write_bytes(_image_frame(png, 1.0))
+    sibling = tmp_path / "events.out.tfevents.2"
+    _append(sibling, 0)
+    fs = TensorBoardFS(
+        tmp_path, mountpoint=tmp_path / "mount", refresh_age_seconds=3600
+    )
+    path = "/images/img/000001.png"
+    before = fs.getattr(path)
+    assert before["st_size"] == len(png)
+
+    _append(sibling, 1)
+    assert fs.getattr(path) == before
+    assert fs.getattr(path) == before
+    assert [row["step"] for row in json.loads(_read_open(fs, LOSS))] == [0, 1]
+    assert fs.getattr(path) == before
+
+    payload = (CORPUS / "embedding-cases/00004/finder/sprite.png").read_bytes()
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(_image_frame(payload, 2.0))
+    replacement.replace(event)
+    after = fs.getattr(path)
+    assert after["st_size"] == len(payload)
+    assert after["st_mtime"] == 2.0
+    assert fs.getattr(path) == after
+    assert _read_open(fs, path) == payload

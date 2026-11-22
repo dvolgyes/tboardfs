@@ -109,7 +109,7 @@ class _SiblingSnapshot:
     """Compare the last indexed siblings without reconstructing the update plan."""
 
     parent: _PlainDirectory
-    files: tuple[tuple[str, tuple[int | None, ...]], ...]
+    files: tuple[tuple[bytes, tuple[int | None, ...]], ...]
 
     @classmethod
     def capture(
@@ -129,7 +129,7 @@ class _SiblingSnapshot:
         for path, cache in run.files.items():
             if path.parent != parent or path in roots or path.name in ("", ".", ".."):
                 return None
-            files.append((path.name, cache.progress.checked_status))
+            files.append((os.fsencode(path.name), cache.progress.checked_status))
         return cls(directory, tuple(files))
 
     def matches(self) -> bool:
@@ -139,7 +139,7 @@ class _SiblingSnapshot:
             return False
         try:
             for name, expected in self.files:
-                status = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                status = os.lstat(name, dir_fd=fd)
                 if (
                     not S_ISREG(status.st_mode)
                     or FileIdentity.fingerprint(status) != expected

@@ -3,6 +3,10 @@
 import os
 from typing import NamedTuple, Self
 
+_HAS_BIRTH_TIME = hasattr(os.stat_result, "st_birthtime_ns") or hasattr(
+    os.stat_result, "st_birthtime"
+)
+
 
 def _birth_ns(status: os.stat_result) -> int | None:
     birth: int | None = getattr(status, "st_birthtime_ns", None)
@@ -22,15 +26,16 @@ class FileIdentity(NamedTuple):
     @classmethod
     def of(cls, status: os.stat_result) -> Self:
         """Read creation time without interpreting Linux ctime as birth time."""
-        return cls(status.st_dev, status.st_ino, _birth_ns(status))
+        birth = _birth_ns(status) if _HAS_BIRTH_TIME else None
+        return cls(status.st_dev, status.st_ino, birth)
 
-    @classmethod
-    def fingerprint(cls, status: os.stat_result) -> tuple[int | None, ...]:
+    @staticmethod
+    def fingerprint(status: os.stat_result) -> tuple[int | None, ...]:
         """Return status used to skip unchanged sources without reopening them."""
         return (
             status.st_dev,
             status.st_ino,
-            _birth_ns(status),
+            _birth_ns(status) if _HAS_BIRTH_TIME else None,
             status.st_size,
             status.st_mtime_ns,
             status.st_ctime_ns,
