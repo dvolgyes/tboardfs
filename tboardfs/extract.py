@@ -12,7 +12,7 @@ from tboardfs.summary import parse_event
 
 def extract_binary_blob(entry: BinaryEntry) -> bytes:
     """Read one indexed binary blob from its source event record."""
-    payload = IndexedFrame.read(entry.source_path, entry.frame).payload
+    payload = IndexedFrame.read(entry.source_path, entry.frame)
     if (span := entry.blob.span) is not None:
         offset, size = span
         return payload[offset : offset + size]
@@ -32,7 +32,7 @@ def extract_binary_blob(entry: BinaryEntry) -> bytes:
 
 def _extract_graph_blob(entry: GraphEntry) -> bytes:
     """Read one indexed graph or meta graph payload from its source event record."""
-    payload = IndexedFrame.read(entry.source_path, entry.frame).payload
+    payload = IndexedFrame.read(entry.source_path, entry.frame)
     if (span := entry.blob.span) is not None:
         offset, size = span
         return payload[offset : offset + size]

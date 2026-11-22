@@ -1,7 +1,9 @@
 """Check TFRecord header reuse, frame validation, and iterator positions."""
 
+import os
 import struct
 from collections.abc import Buffer
+from errno import EIO
 from io import BufferedReader, BytesIO, FileIO
 from pathlib import Path
 from typing import IO
@@ -107,16 +109,55 @@ def test_nonzero_start_keeps_absolute_offsets_for_empty_frame() -> None:
 
 
 @pytest.mark.parametrize("size", [0, (64 << 10) - 16, (64 << 10) - 15])
-def test_indexed_read_preserves_record_and_source_offsets(
-    tmp_path: Path, size: int
-) -> None:
+def test_indexed_read_returns_payload_or_exact_frame(tmp_path: Path, size: int) -> None:
     source = tmp_path / "events"
-    data = _frame(b"first") + _frame(b"x" * size) + _frame(b"last")
+    payload = b"x" * size
+    framed = _frame(payload)
+    data = _frame(b"first") + framed + _frame(b"last")
     source.write_bytes(data)
     _, middle, _ = tfrecord.iter_tfrecords(BytesIO(data))
     ref = middle.reference(FileIdentity.of(source.stat()))
 
-    assert IndexedFrame.read(source, ref) == middle
+    assert IndexedFrame.read(source, ref) == payload
+    assert IndexedFrame.read(source, ref, raw=True) == framed
+
+
+@pytest.mark.parametrize("raw", [False, True], ids=["payload", "raw"])
+def test_indexed_read_rejects_padded_shorter_frame(tmp_path: Path, raw: bool) -> None:
+    source = tmp_path / "events"
+    prefix = _frame(b"first")
+    suffix = _frame(b"last")
+    payload = bytes.fromhex("d8ea82a26ffb6f70")
+    assert masked_crc32c(payload) == masked_crc32c(b"")
+    original = _frame(payload)
+    data = prefix + original + suffix
+    source.write_bytes(data)
+    _, middle, _ = tfrecord.iter_tfrecords(BytesIO(data))
+    ref = middle.reference(FileIdentity.of(source.stat()))
+    shorter = _frame(b"")
+    padded = shorter[:12] + original[12:]
+    assert padded.startswith(shorter)
+    source.write_bytes(prefix + padded + suffix)
+
+    with pytest.raises(OSError) as corrupt:
+        IndexedFrame.read(source, ref, raw=raw)
+    assert corrupt.value.errno == EIO
+
+
+@pytest.mark.parametrize("raw", [False, True], ids=["payload", "raw"])
+def test_indexed_read_rejects_identical_replacement(tmp_path: Path, raw: bool) -> None:
+    source = tmp_path / "events"
+    replacement = tmp_path / "replacement"
+    framed = _frame(b"original")
+    source.write_bytes(framed)
+    replacement.write_bytes(framed)
+    (record,) = tfrecord.iter_tfrecords(BytesIO(framed))
+    ref = record.reference(FileIdentity.of(source.stat()))
+    replacement.replace(source)
+
+    with pytest.raises(OSError) as replaced:
+        IndexedFrame.read(source, ref, raw=raw)
+    assert replaced.value.errno == EIO
 
 
 @pytest.mark.parametrize("size", [8 << 10, 65 << 10], ids=["small", "large"])
@@ -125,7 +166,9 @@ def test_indexed_read_accepts_positive_short_transfers(
 ) -> None:
     """Reading an intact indexed frame must tolerate short raw transfers."""
     source = tmp_path / "events"
-    data = _frame(b"first") + _frame(b"x" * size) + _frame(b"last")
+    payload = b"x" * size
+    framed = _frame(payload)
+    data = _frame(b"first") + framed + _frame(b"last")
     source.write_bytes(data)
     _, expected, _ = tfrecord.iter_tfrecords(BytesIO(data))
     ref = expected.reference(FileIdentity.of(source.stat()))
@@ -158,7 +201,31 @@ def test_indexed_read_accepts_positive_short_transfers(
         return BufferedReader(raw, buffer_size=buffering)
 
     monkeypatch.setattr(Path, "open", open_source)
-    assert IndexedFrame.read(source, ref) == expected
+    if hasattr(os, "pread"):
+        original_pread = os.pread
+
+        def short_pread(fd: int, count: int, offset: int) -> bytes:
+            return original_pread(fd, min(count, 2048), offset)
+
+        monkeypatch.setattr(os, "pread", short_pread)
+    assert IndexedFrame.read(source, ref) == payload
+    assert IndexedFrame.read(source, ref, raw=True) == framed
+
+
+def test_indexed_read_without_pread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "events"
+    framed = _frame(b"middle")
+    data = _frame(b"first") + framed + _frame(b"last")
+    source.write_bytes(data)
+    _, middle, _ = tfrecord.iter_tfrecords(BytesIO(data))
+    ref = middle.reference(FileIdentity.of(source.stat()))
+    read = os.read
+    monkeypatch.delattr(os, "pread", raising=False)
+    monkeypatch.setattr(os, "read", lambda fd, count: read(fd, min(count, 3)))
+
+    assert IndexedFrame.read(source, ref, raw=True) == framed
 
 
 def test_public_iterator_honors_seek_between_yields() -> None:

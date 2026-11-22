@@ -172,5 +172,4 @@ class RawFrames:
     @staticmethod
     def read(node: dict[str, Any]) -> bytes:
         """Return the original header, payload, and footer after validation."""
-        record = IndexedFrame.read(node["source"], node["frame"])
-        return b"".join((record.header, record.payload, record.footer))
+        return IndexedFrame.read(node["source"], node["frame"], raw=True)

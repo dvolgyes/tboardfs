@@ -405,6 +405,8 @@ For a whole indexed TFRecord of at most 64 KiB, tboardfs reads only that frame, 
 
 It validates both TFRecord checksums and compares the payload checksum with the index before returning data.
 
+The raw view returns the verified frame unchanged; typed readers use its payload without reconstructing the frame.
+
 Stat uses the indexed size of stored binaries and graphs; it does not render them.
 
 On a stable source, a mapped binary read checks only the 4 KiB blocks that overlap the requested range.
