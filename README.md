@@ -270,6 +270,8 @@ tboardfs does not reuse that result on later accesses.
 
 Between directory scans, tboardfs reuses the names and expected fingerprints of indexed sibling files.
 
+For an eligible parent, tboardfs also prepares its encoded directory name once for that snapshot.
+
 It opens the parent again and compares each regular file with its indexed fingerprint.
 
 Before discovery is due, matching fingerprints let that access skip rebuilding the list of event files.

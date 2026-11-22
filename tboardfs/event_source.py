@@ -9,7 +9,7 @@ from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import BinaryIO
 
-from tboardfs._directory import open_plain_directory
+from tboardfs._directory import _PlainDirectory
 from tboardfs.file_status import FileIdentity
 
 SCAN_BUFFER = 64 << 10
@@ -71,7 +71,8 @@ class EventSource:
         roots = tuple(root for root in (mountpoint, storage) if root is not None)
         blocked_roots = tuple(map(str, roots))
         with ExitStack() as stack:
-            fd = open_plain_directory(parent, blocked_roots)
+            plan = _PlainDirectory.prepare(parent, blocked_roots)
+            fd = plan.open() if plan is not None else None
             if fd is None:
                 try:
                     resolved, fd, _, _ = stack.enter_context(

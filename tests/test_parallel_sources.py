@@ -246,6 +246,45 @@ def test_live_siblings_share_a_guarded_walk_and_refresh_immediately(
     assert paths[-1] not in fs._state.runs[()].files
 
 
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX byte paths")
+def test_warmed_siblings_follow_rebound_parent_without_discovery(
+    tmp_path: Path,
+) -> None:
+    """Reopen the lexical parent rather than holding a directory across reads."""
+    run = tmp_path / os.fsdecode(b"run-\xff")
+    moved = tmp_path / "moved"
+    replacement = tmp_path / "replacement"
+    mountpoint = tmp_path / "mount"
+    for directory in (run, replacement, mountpoint):
+        directory.mkdir()
+    for directory, first in ((run, 1), (replacement, 3)):
+        for index in range(2):
+            path = directory / f"events.out.tfevents.{index}"
+            path.write_bytes(_scalar_record(first + index))
+
+    fs = TensorBoardFS(run, mountpoint=mountpoint, refresh_age_seconds=3600)
+    virtual = "/scalars/loss.json"
+
+    def steps() -> list[int]:
+        return [row["step"] for row in json.loads(fs.read(virtual, 1 << 20, 0))]
+
+    assert steps() == [1, 2]
+    local = fs._state.directories[()]
+    scanned_at = local.scanned_at
+    assert local.siblings is not None
+    assert steps() == [1, 2]
+
+    run.rename(moved)
+    run.symlink_to(replacement, target_is_directory=True)
+    assert steps() == [3, 4]
+    assert steps() == [3, 4]
+
+    run.unlink()
+    moved.rename(run)
+    assert steps() == [1, 2]
+    assert local.scanned_at == scanned_at
+
+
 def test_sibling_status_resolves_aliases_again_after_retargeting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

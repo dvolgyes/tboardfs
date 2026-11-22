@@ -10,7 +10,7 @@ from typing import Any
 
 from loguru import logger
 
-from tboardfs._directory import open_plain_directory
+from tboardfs._directory import _PlainDirectory
 from tboardfs.disk_index import DiskIndex, _IndexHit
 from tboardfs.event_source import EventSource
 from tboardfs.file_status import FileIdentity
@@ -108,8 +108,7 @@ class _IndexOptions:
 class _SiblingSnapshot:
     """Compare the last indexed siblings without reconstructing the update plan."""
 
-    parent: Path
-    blocked: tuple[str, ...]
+    parent: _PlainDirectory
     files: tuple[tuple[str, tuple[int | None, ...]], ...]
 
     @classmethod
@@ -121,18 +120,21 @@ class _SiblingSnapshot:
             return None
         parent = next(iter(run.files)).parent
         roots = (options.mountpoint, options.storage)
+        directory = _PlainDirectory.prepare(
+            parent, tuple(str(root) for root in roots if root is not None)
+        )
+        if directory is None:
+            return None
         files = []
         for path, cache in run.files.items():
             if path.parent != parent or path in roots or path.name in ("", ".", ".."):
                 return None
             files.append((path.name, cache.progress.checked_status))
-        return cls(
-            parent, tuple(str(root) for root in roots if root is not None), tuple(files)
-        )
+        return cls(directory, tuple(files))
 
     def matches(self) -> bool:
         """Check fresh no-follow status; defer any uncertain or changed source."""
-        fd = open_plain_directory(self.parent, self.blocked)
+        fd = self.parent.open()
         if fd is None:
             return False
         try:

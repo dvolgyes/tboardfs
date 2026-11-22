@@ -4,8 +4,9 @@ import ctypes
 import os
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Self
 
 _AT_FDCWD = -100
 _RESOLVE_NO_SYMLINKS = 0x04
@@ -86,18 +87,34 @@ def _plain_path(path: Path) -> bool:
     return True
 
 
-def open_plain_directory(path: Path, blocked: tuple[str, ...]) -> int | None:
-    """Return an owned descriptor, or defer to the guarded component walk."""
-    text = os.fspath(path)
-    if (
-        _OPEN_DIRECTORY is None
-        or path.anchor != "/"
-        or ".." in path.parts
-        or "\0" in text
-        or any(
-            text == root or text.startswith(root.rstrip("/") + "/") for root in blocked
-        )
-    ):
-        return None
-    fd = _OPEN_DIRECTORY(os.fsencode(text))
-    return fd if fd >= 0 else None
+@dataclass(frozen=True, slots=True)
+class _PlainDirectory:
+    """Lexically eligible directory name; resolving it still requires a fresh open."""
+
+    name: bytes
+
+    @classmethod
+    def prepare(cls, path: Path, blocked: tuple[str, ...]) -> Self | None:
+        """Encode a canonical absolute name outside the protected roots without doing I/O."""
+        text = os.fspath(path)
+        if (
+            path.anchor != "/"
+            or ".." in path.parts
+            or "\0" in text
+            or any(
+                text == root or text.startswith(root.rstrip("/") + "/")
+                for root in blocked
+            )
+        ):
+            return None
+        try:
+            return cls(os.fsencode(text))
+        except UnicodeEncodeError:
+            return None
+
+    def open(self) -> int | None:
+        """Return a new no-follow directory descriptor or defer to guarded lookup."""
+        if _OPEN_DIRECTORY is None:
+            return None
+        fd = _OPEN_DIRECTORY(self.name)
+        return fd if fd >= 0 else None
