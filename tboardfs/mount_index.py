@@ -108,11 +108,17 @@ class _IndexOptions:
 type _SiblingFiles = tuple[tuple[bytes, tuple[int | None, ...]], ...]
 
 
-_match_siblings: Callable[[int, _SiblingFiles], bool] | None = (
-    import_module("tboardfs._sibling_stat").matches
+_native_status = (
+    import_module("tboardfs._sibling_stat")
     if not _HAS_BIRTH_TIME and find_spec("tboardfs._sibling_stat") is not None
     else None
 )
+_match_siblings: Callable[[int, _SiblingFiles], bool] | None = (
+    _native_status.matches if _native_status is not None else None
+)
+_prepare_siblings: (
+    Callable[[bytes, _SiblingFiles], Callable[[], bool] | None] | None
+) = getattr(_native_status, "prepare_siblings", None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +127,7 @@ class _SiblingSnapshot:
 
     parent: _PlainDirectory
     files: _SiblingFiles
+    prepared: Callable[[], bool] | None
 
     @classmethod
     def capture(
@@ -141,10 +148,16 @@ class _SiblingSnapshot:
             if path.parent != parent or path in roots or path.name in ("", ".", ".."):
                 return None
             files.append((os.fsencode(path.name), cache.progress.checked_status))
-        return cls(directory, tuple(files))
+        rows = tuple(files)
+        prepared = (
+            _prepare_siblings(directory.name, rows) if _prepare_siblings else None
+        )
+        return cls(directory, rows, prepared)
 
     def matches(self) -> bool:
         """Check fresh no-follow status; defer any uncertain or changed source."""
+        if self.prepared is not None:
+            return self.prepared()
         fd = self.parent.open()
         if fd is None:
             return False

@@ -21,6 +21,12 @@
 #endif
 #endif
 
+typedef struct {
+    const char *path;
+    unsigned long long dev, ino;
+    long long size, mtime_ns, ctime_ns;
+} SiblingRow;
+
 static int
 long_long_at(PyObject *tuple, Py_ssize_t index, long long *value)
 {
@@ -42,7 +48,9 @@ unsigned_long_long_at(PyObject *tuple, Py_ssize_t index, unsigned long long *val
     }
     *value = PyLong_AsUnsignedLongLong(item);
     if (*value == ULLONG_MAX && PyErr_Occurred()) {
-        PyErr_Clear();
+        if (PyErr_ExceptionMatches(PyExc_OverflowError)) {
+            PyErr_Clear();
+        }
         return 0;
     }
     return 1;
@@ -52,6 +60,43 @@ static __int128
 nanoseconds(struct timespec timestamp)
 {
     return (__int128)timestamp.tv_sec * 1000000000 + timestamp.tv_nsec;
+}
+
+static int
+parse_row(PyObject *row, SiblingRow *expected)
+{
+    if (!PyTuple_CheckExact(row) || PyTuple_GET_SIZE(row) != 2) {
+        return 0;
+    }
+    PyObject *name = PyTuple_GET_ITEM(row, 0);
+    PyObject *fingerprint = PyTuple_GET_ITEM(row, 1);
+    if (!PyBytes_CheckExact(name) || !PyTuple_CheckExact(fingerprint) ||
+        PyTuple_GET_SIZE(fingerprint) != 6 || PyTuple_GET_ITEM(fingerprint, 2) != Py_None) {
+        return 0;
+    }
+    const char *path = PyBytes_AS_STRING(name);
+    Py_ssize_t len = PyBytes_GET_SIZE(name);
+    if (!len || memchr(path, '/', len) || memchr(path, '\0', len) ||
+        (path[0] == '.' && (len == 1 || (len == 2 && path[1] == '.')))) {
+        return 0;
+    }
+    expected->path = path;
+    return unsigned_long_long_at(fingerprint, 0, &expected->dev) &&
+           unsigned_long_long_at(fingerprint, 1, &expected->ino) &&
+           long_long_at(fingerprint, 3, &expected->size) &&
+           long_long_at(fingerprint, 4, &expected->mtime_ns) &&
+           long_long_at(fingerprint, 5, &expected->ctime_ns);
+}
+
+static int
+match_row(int fd, const SiblingRow *expected)
+{
+    struct stat status;
+    return fstatat(fd, expected->path, &status, AT_SYMLINK_NOFOLLOW) == 0 &&
+           S_ISREG(status.st_mode) && status.st_dev == expected->dev &&
+           status.st_ino == expected->ino && status.st_size == expected->size &&
+           nanoseconds(status.st_mtim) == expected->mtime_ns &&
+           nanoseconds(status.st_ctim) == expected->ctime_ns;
 }
 
 static PyObject *
@@ -68,39 +113,18 @@ matches(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
     }
     PyObject *files = args[1];
     for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(files); i++) {
-        PyObject *row = PyTuple_GET_ITEM(files, i);
-        if (!PyTuple_CheckExact(row) || PyTuple_GET_SIZE(row) != 2) {
+        SiblingRow expected;
+        if (!parse_row(PyTuple_GET_ITEM(files, i), &expected)) {
+            if (PyErr_Occurred()) {
+                return NULL;
+            }
             Py_RETURN_FALSE;
         }
-        PyObject *name = PyTuple_GET_ITEM(row, 0);
-        PyObject *fingerprint = PyTuple_GET_ITEM(row, 1);
-        if (!PyBytes_CheckExact(name) || !PyTuple_CheckExact(fingerprint) ||
-            PyTuple_GET_SIZE(fingerprint) != 6 || PyTuple_GET_ITEM(fingerprint, 2) != Py_None) {
-            Py_RETURN_FALSE;
-        }
-        const char *path = PyBytes_AS_STRING(name);
-        Py_ssize_t len = PyBytes_GET_SIZE(name);
-        if (!len || memchr(path, '/', len) || memchr(path, '\0', len) ||
-            (path[0] == '.' && (len == 1 || (len == 2 && path[1] == '.')))) {
-            Py_RETURN_FALSE;
-        }
-        unsigned long long dev, ino;
-        long long size, mtime_ns, ctime_ns;
-        if (!unsigned_long_long_at(fingerprint, 0, &dev) ||
-            !unsigned_long_long_at(fingerprint, 1, &ino) ||
-            !long_long_at(fingerprint, 3, &size) ||
-            !long_long_at(fingerprint, 4, &mtime_ns) ||
-            !long_long_at(fingerprint, 5, &ctime_ns)) {
-            Py_RETURN_FALSE;
-        }
-        struct stat status;
         int result;
         Py_BEGIN_ALLOW_THREADS
-        result = fstatat((int)fd, path, &status, AT_SYMLINK_NOFOLLOW);
+        result = match_row((int)fd, &expected);
         Py_END_ALLOW_THREADS
-        if (result != 0 || !S_ISREG(status.st_mode) || status.st_dev != dev ||
-            status.st_ino != ino || status.st_size != size ||
-            nanoseconds(status.st_mtim) != mtime_ns || nanoseconds(status.st_ctim) != ctime_ns) {
+        if (!result) {
             Py_RETURN_FALSE;
         }
     }
@@ -108,37 +132,41 @@ matches(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
 }
 
 #ifdef TBOARDFS_HAVE_OPENAT2
-static int
-guarded_open(PyObject *name, int directory)
+static const char *
+absolute_path(PyObject *name)
 {
     if (!PyBytes_CheckExact(name)) {
-        return -1;
+        return NULL;
     }
     const char *path = PyBytes_AS_STRING(name);
     Py_ssize_t len = PyBytes_GET_SIZE(name);
     if (!len || path[0] != '/' || memchr(path, '\0', len)) {
-        return -1;
+        return NULL;
     }
+    return path;
+}
 
+static int
+guarded_open(const char *path, int directory)
+{
     const struct open_how how = {
         .flags = O_PATH | O_CLOEXEC | (directory ? O_DIRECTORY : 0),
         .resolve = RESOLVE_NO_SYMLINKS,
     };
-    int fd;
-    Py_BEGIN_ALLOW_THREADS
-    fd = (int)syscall(SYS_openat2, AT_FDCWD, path, &how, sizeof(how));
-    if (fd >= 0 && !directory) {
-        close(fd);
-    }
-    Py_END_ALLOW_THREADS
-    return fd;
+    return (int)syscall(SYS_openat2, AT_FDCWD, path, &how, sizeof(how));
 }
 
 static PyObject *
 open_directory(PyObject *self, PyObject *name)
 {
     (void)self;
-    int fd = guarded_open(name, 1);
+    const char *path = absolute_path(name);
+    int fd = -1;
+    if (path != NULL) {
+        Py_BEGIN_ALLOW_THREADS
+        fd = guarded_open(path, 1);
+        Py_END_ALLOW_THREADS
+    }
     PyObject *result = PyLong_FromLong(fd);
     if (result == NULL && fd >= 0) {
         Py_BEGIN_ALLOW_THREADS
@@ -152,7 +180,103 @@ static PyObject *
 plain_path(PyObject *self, PyObject *name)
 {
     (void)self;
-    return PyBool_FromLong(guarded_open(name, 0) >= 0);
+    const char *path = absolute_path(name);
+    if (path == NULL) {
+        Py_RETURN_FALSE;
+    }
+    int fd;
+    Py_BEGIN_ALLOW_THREADS
+    fd = guarded_open(path, 0);
+    if (fd >= 0) {
+        close(fd);
+    }
+    Py_END_ALLOW_THREADS
+    return PyBool_FromLong(fd >= 0);
+}
+
+typedef struct {
+    PyObject_VAR_HEAD
+    PyObject *parent;
+    PyObject *files;
+    const char *path;
+    SiblingRow rows[];
+} PreparedSiblings;
+
+static void
+prepared_siblings_dealloc(PyObject *self)
+{
+    PreparedSiblings *prepared = (PreparedSiblings *)self;
+    Py_DECREF(prepared->files);
+    Py_DECREF(prepared->parent);
+    PyObject_Del(self);
+}
+
+static PyObject *
+prepared_siblings_call(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    if (PyTuple_GET_SIZE(args) != 0 || (kwargs != NULL && PyDict_GET_SIZE(kwargs) != 0)) {
+        PyErr_SetString(PyExc_TypeError, "prepared sibling checker takes no arguments");
+        return NULL;
+    }
+    const PreparedSiblings *prepared = (PreparedSiblings *)self;
+    Py_ssize_t count = Py_SIZE(self);
+    int matches_all = 0;
+    Py_BEGIN_ALLOW_THREADS
+    int fd = guarded_open(prepared->path, 1);
+    if (fd >= 0) {
+        matches_all = 1;
+        for (Py_ssize_t i = 0; i < count; i++) {
+            if (!match_row(fd, &prepared->rows[i])) {
+                matches_all = 0;
+                break;
+            }
+        }
+        close(fd);
+    }
+    Py_END_ALLOW_THREADS
+    return PyBool_FromLong(matches_all);
+}
+
+static PyTypeObject prepared_siblings_type = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = "tboardfs._sibling_stat._PreparedSiblings",
+    .tp_basicsize = sizeof(PreparedSiblings),
+    .tp_itemsize = sizeof(SiblingRow),
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_DISALLOW_INSTANTIATION,
+    .tp_dealloc = prepared_siblings_dealloc,
+    .tp_call = prepared_siblings_call,
+};
+
+static PyObject *
+prepare_siblings(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    (void)self;
+    if (nargs != 2 || !PyTuple_CheckExact(args[1])) {
+        Py_RETURN_NONE;
+    }
+    const char *path = absolute_path(args[0]);
+    Py_ssize_t count = PyTuple_GET_SIZE(args[1]);
+    if (path == NULL || count == 0 ||
+        (size_t)count > (PY_SSIZE_T_MAX - sizeof(PreparedSiblings)) / sizeof(SiblingRow)) {
+        Py_RETURN_NONE;
+    }
+    PreparedSiblings *prepared = PyObject_NewVar(PreparedSiblings, &prepared_siblings_type, count);
+    if (prepared == NULL) {
+        return NULL;
+    }
+    prepared->parent = Py_NewRef(args[0]);
+    prepared->files = Py_NewRef(args[1]);
+    prepared->path = path;
+    for (Py_ssize_t i = 0; i < count; i++) {
+        if (!parse_row(PyTuple_GET_ITEM(prepared->files, i), &prepared->rows[i])) {
+            Py_DECREF(prepared);
+            if (PyErr_Occurred()) {
+                return NULL;
+            }
+            Py_RETURN_NONE;
+        }
+    }
+    return (PyObject *)prepared;
 }
 #endif
 
@@ -162,6 +286,7 @@ static PyMethodDef methods[] = {
 #ifdef TBOARDFS_HAVE_OPENAT2
     {"open_directory", open_directory, METH_O, NULL},
     {"plain_path", plain_path, METH_O, NULL},
+    {"prepare_siblings", _PyCFunction_CAST(prepare_siblings), METH_FASTCALL, NULL},
 #endif
     {NULL, NULL, 0, NULL},
 };
@@ -176,5 +301,10 @@ static struct PyModuleDef module = {
 PyMODINIT_FUNC
 PyInit__sibling_stat(void)
 {
+#ifdef TBOARDFS_HAVE_OPENAT2
+    if (PyType_Ready(&prepared_siblings_type) < 0) {
+        return NULL;
+    }
+#endif
     return PyModule_Create(&module);
 }

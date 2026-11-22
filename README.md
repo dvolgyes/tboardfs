@@ -293,7 +293,9 @@ It opens the parent again and compares each regular file with its indexed finger
 On supported Linux CPython builds, an optional C extension compares sibling fingerprints without creating a Python
 `stat_result` for each file.
 
-Each comparison still reads the current status through the freshly opened directory.
+With native `openat2` support, the extension prepares the expected fingerprints once per snapshot.
+
+Each check still opens the parent, compares the live sibling fingerprints, and closes the descriptor.
 
 If the extension was not built, or Python reports file birth times, tboardfs uses the Python comparison.
 

@@ -201,6 +201,7 @@ def test_live_siblings_share_a_guarded_walk_and_refresh_immediately(
     paths = [run / f"events.out.tfevents.{step:02}" for step in range(24)]
     for step, path in enumerate(paths):
         path.write_bytes(_scalar_record(step))
+    monkeypatch.setattr("tboardfs.mount_index._prepare_siblings", None)
     fs = TensorBoardFS(run, mountpoint=mountpoint, refresh_age_seconds=3600)
     virtual = "/scalars/loss.json"
 
