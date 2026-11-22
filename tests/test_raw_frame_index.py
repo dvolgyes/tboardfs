@@ -6,6 +6,7 @@ import struct
 from collections.abc import Callable
 from errno import EBADF, EIO, ENOENT
 from pathlib import Path
+from stat import S_IFDIR, S_IFREG
 from typing import NoReturn
 
 import pytest
@@ -14,6 +15,7 @@ from test_open_handles import _append, _loss_record
 from tboardfs import TensorBoardFS, _directory
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.file_tree import SingleEventTree
+from tboardfs.mounted import MountedTensorBoardFS
 from tboardfs.raw_frames import RawFrames, _RawFrameChildren
 
 _EVENTS = "events.out.tfevents.host"
@@ -34,6 +36,7 @@ def test_raw_listing_lookup_and_snapshot(
     names = [_name(0), _name(len(first))]
     directory = f"/raw/{_EVENTS}"
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    mounted = MountedTensorBoardFS(tmp_path, refresh_age_seconds=0)
 
     def materialized(*args: object) -> NoReturn:
         pytest.fail("building or listing a raw tree materialized a frame")
@@ -43,6 +46,11 @@ def test_raw_listing_lookup_and_snapshot(
         before = fs.virtual_tree()
         assert fs.readdir(directory) == [".", "..", *names]
         assert fs.readdir(directory) == [".", "..", *names]
+        assert list(mounted.readdir(directory)) == [
+            (".", S_IFDIR, 0),
+            ("..", S_IFDIR, 0),
+            *((name, S_IFREG, 0) for name in names),
+        ]
         assert fs.getattr(directory)["st_mtime"] == 0
 
     before_source = before["children"]["raw"]["children"][_EVENTS]["children"]

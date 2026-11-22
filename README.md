@@ -259,6 +259,14 @@ Listing a run or looking up a path inside it indexes the event files directly in
 
 A recursive `find MOUNTPOINT` enters each listed run, so its first traversal still indexes them all.
 
+The mount lists final virtual names in case-sensitive lexicographic order, even after a refresh.
+
+It does not group directories before files or use the original tag names to sort entries.
+
+Step names sort as text: with the default `--step-digits`, `1000000.png` sorts before `999999.png`.
+
+Raw filenames use fixed-width byte offsets, so their name order is also their order within the source event file.
+
 When only leaf runs have exports and all run folders retain their original names, updating a leaf run replaces its
 branch without rebuilding populated siblings.
 

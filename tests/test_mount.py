@@ -19,7 +19,10 @@ from typing import TextIO
 import numpy as np
 import pytest
 from test_concurrency import _run_threads
+from test_incremental_parse import _frame
 from test_open_handles import _append
+
+from tboardfs.proto import compat_pb2
 
 FUSERMOUNT = shutil.which("fusermount3") or shutil.which("fusermount")
 pytestmark = pytest.mark.skipif(
@@ -210,3 +213,54 @@ def test_getdents_returns_types_across_pages_and_refreshes_on_reopen(
     offset = event.stat().st_size
     _append(event, 400)
     assert _getdents(raw) == [*before, (f"{offset:020d}.tfrecord", _DT_REG)]
+
+
+def test_scandir_lists_names_in_lexical_order_after_append(
+    mounted: tuple[Path, Path],
+) -> None:
+    """The real mount sorts final names without grouping files by type."""
+    event, run = mounted
+    (event.parent.parent / "a_run").mkdir()
+    earlier_source = event.with_name("events.out.tfevents.earlier")
+    image = (
+        Path(__file__).parent / "data/producer-cases/plugins/assets/sprite.png"
+    ).read_bytes()
+
+    def append(step: int, tags: tuple[str, ...]) -> None:
+        record = compat_pb2.Event(wall_time=1000.0 + step, step=step)
+        for tag in tags:
+            record.summary.value.add(tag=tag, simple_value=1.0)
+        record.summary.value.add(tag="steps").image.encoded_image_string = image
+        with event.open("ab") as handle:
+            _ = handle.write(_frame(record))
+
+    def listing(directory: Path) -> list[tuple[str, bool]]:
+        with os.scandir(directory) as entries:
+            return [(entry.name, entry.is_dir()) for entry in entries]
+
+    _ = earlier_source.write_bytes(_frame(compat_pb2.Event(wall_time=1.0)))
+    append(999999, ("z", "middle/child"))
+    scalars = run / "scalars"
+    images = run / "images" / "steps"
+    assert listing(run.parent) == [("a_run", True), ("run_a", True)]
+    assert listing(run / "raw") == [(earlier_source.name, True), (event.name, True)]
+    before = [
+        ("loss.json", False),
+        ("loss.npz", False),
+        ("loss.tsv", False),
+        ("middle", True),
+        ("z.json", False),
+        ("z.npz", False),
+        ("z.tsv", False),
+    ]
+    assert listing(scalars) == before
+    assert listing(images) == [("999999.png", False)]
+
+    append(1000000, ("a",))
+    assert listing(scalars) == [
+        ("a.json", False),
+        ("a.npz", False),
+        ("a.tsv", False),
+        *before,
+    ]
+    assert listing(images) == [("1000000.png", False), ("999999.png", False)]

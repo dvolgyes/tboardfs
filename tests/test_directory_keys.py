@@ -49,7 +49,9 @@ def test_warm_listing_follows_discovery_and_collision_renames(tmp_path: Path) ->
     assert "images" in fs.readdir("/scalars")
 
     _append(tmp_path / EVENTS, 1)
-    assert "scalars~2" in fs.readdir("/")
+    names = fs.readdir("/")
+    assert names[2:] == sorted(names[2:])
+    assert names.index("scalars") + 1 == names.index("scalars~2")
     assert "loss.json" in fs.readdir("/scalars")
     assert "images" in fs.readdir("/scalars~2")
 
@@ -58,6 +60,7 @@ def test_warm_listing_follows_discovery_and_collision_renames(tmp_path: Path) ->
     (tmp_path / "extra").mkdir()
     names = fs.readdir("/")
     assert "extra" in names and "scalars~2" not in names
+    assert names[2:] == sorted(names[2:])
 
 
 def test_stamp_reused_subtree_does_not_visit_children() -> None:

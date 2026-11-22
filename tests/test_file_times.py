@@ -146,7 +146,7 @@ def test_cold_stat_does_not_read_retargeted_directory_metadata(
 def test_listing_then_stat_does_not_open_or_scan_cold_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for i in range(32):
+    for i in reversed(range(32)):
         _scalar(tmp_path / f"run{i:02}", 1000.0 + i, "loss")
     os.utime(tmp_path, (500.0, 500.0))
     fs = TensorBoardFS(tmp_path)
@@ -156,7 +156,7 @@ def test_listing_then_stat_does_not_open_or_scan_cold_runs(
     assert _times(fs, "/") == (500.0, 500.0, 500.0)
     assert listed == []
     names = fs.readdir("/")[2:]
-    assert len(names) == 32
+    assert names == [f"run{i:02}" for i in range(32)]
     assert all(stat.S_ISDIR(fs.getattr(f"/{name}")["st_mode"]) for name in names)
     assert listed == [tmp_path]
     assert opened == []
