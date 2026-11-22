@@ -12,7 +12,20 @@ from typing import ClassVar, Self
 
 _AT_FDCWD = -100
 _RESOLVE_NO_SYMLINKS = 0x04
+_GUARD_PLAN_MAX_PATH_CHARS = 1024
 _GUARD_PLAN_MAX_PREFIX_CHARS = 4096
+_NATIVE_PATHS = (
+    import_module("tboardfs._sibling_stat")
+    if sys.platform == "linux"
+    and hasattr(os, "O_PATH")
+    and find_spec("tboardfs._sibling_stat") is not None
+    else None
+)
+_open_readonly: Callable[[bytes], int] | None = getattr(
+    _NATIVE_PATHS, "open_readonly", None
+)
+
+type _GuardPlans = Callable[[Path], tuple[tuple[str, ...], bool] | None]
 
 
 def _guard_plan(
@@ -39,6 +52,28 @@ def _guard_plan(
 class _OpenHow(ctypes.Structure):
     """Linux openat2 arguments from <linux/openat2.h>."""
 
+    @staticmethod
+    def open_source(
+        path: Path, plans: _GuardPlans | None, mountpoint: Path | None
+    ) -> int | None:
+        """Return a no-symlink read descriptor for a lexically permitted source."""
+        if (
+            _open_readonly is None
+            or plans is None
+            or mountpoint is None
+            or len(str(path)) > _GUARD_PLAN_MAX_PATH_CHARS
+            or str(mountpoint) == "/"
+        ):
+            return None
+        plan = plans(path)
+        if plan is None or not plan[1]:
+            return None
+        try:
+            fd = _open_readonly(os.fsencode(path))
+        except (OSError, UnicodeEncodeError):
+            return None
+        return fd if fd >= 0 else None
+
     _fields_: ClassVar[list[tuple[str, type]]] = [
         ("flags", ctypes.c_uint64),
         ("mode", ctypes.c_uint64),
@@ -50,13 +85,11 @@ class _OpenHow(ctypes.Structure):
         """Bind either a fresh directory fd lookup or an ordinary path probe."""
         if sys.platform != "linux" or not hasattr(os, "O_PATH"):
             return None
-        if find_spec("tboardfs._sibling_stat") is not None:
-            native = import_module("tboardfs._sibling_stat")
-            probe: Callable[[bytes], int] | None = getattr(
-                native, "open_directory" if directory else "plain_path", None
-            )
-            if probe is not None:
-                return probe
+        probe: Callable[[bytes], int] | None = getattr(
+            _NATIVE_PATHS, "open_directory" if directory else "plain_path", None
+        )
+        if probe is not None:
+            return probe
         call = getattr(ctypes.CDLL(None), "openat2", None)
         if call is None:
             return None

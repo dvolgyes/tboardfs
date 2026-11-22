@@ -1,15 +1,17 @@
 """The raw view creates frame nodes only when a file is requested."""
 
 import json
+import os
 import struct
-from errno import EIO
+from collections.abc import Callable
+from errno import EBADF, EIO, ENOENT
 from pathlib import Path
 from typing import NoReturn
 
 import pytest
 from test_open_handles import _append, _loss_record
 
-from tboardfs import TensorBoardFS
+from tboardfs import TensorBoardFS, _directory
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.file_tree import SingleEventTree
 from tboardfs.raw_frames import RawFrames, _RawFrameChildren
@@ -161,3 +163,139 @@ def test_empty_source_and_raw_named_nested_run(tmp_path: Path) -> None:
     assert fs.readdir("/raw") == [".", "..", _EVENTS]
     assert fs.readdir(f"/raw/{_EVENTS}") == [".", "..", _name(0)]
     assert fs.readdir(f"/raw~2/raw/{_EVENTS}") == [".", "..", _name(0)]
+
+
+def _guarded_mount(source: Path) -> tuple[TensorBoardFS, str]:
+    fs = TensorBoardFS(
+        source.parent,
+        mountpoint=source.parent.parent / "mount",
+        refresh_age_seconds=float("inf"),
+    )
+    virtual = f"/raw/{source.name}/{_name(0)}"
+    assert fs.readdir(f"/raw/{source.name}") == [".", "..", _name(0)]
+    return fs, virtual
+
+
+def _native_open(source: Path) -> Callable[[bytes], int]:
+    native_open = _directory._open_readonly
+    if native_open is None:
+        pytest.skip("native guarded open is unavailable")
+    fd = native_open(os.fsencode(source))
+    if fd < 0:
+        pytest.skip("native guarded open does not work on the test path")
+    os.close(fd)
+    return native_open
+
+
+def _assert_closed(fd: int) -> None:
+    with pytest.raises(OSError) as closed:
+        os.fstat(fd)
+    assert closed.value.errno == EBADF
+
+
+def test_guarded_mount_reads_the_authorized_descriptor_after_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = tmp_path.resolve() / "run"
+    run.mkdir()
+    source = run / _EVENTS
+    original = _loss_record(1)
+    source.write_bytes(original)
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(_loss_record(2))
+    fs, virtual = _guarded_mount(source)
+    native_open = _native_open(source)
+    descriptors: list[int] = []
+
+    def replace_after_open(path: bytes) -> int:
+        fd = native_open(path)
+        if path == os.fsencode(source) and fd >= 0:
+            descriptors.append(fd)
+            replacement.replace(source)
+        return fd
+
+    monkeypatch.setattr(_directory, "_open_readonly", replace_after_open)
+    handle = fs.open(virtual, os.O_RDONLY)
+    try:
+        assert fs.read(virtual, len(original) + 1, 0, handle) == original
+    finally:
+        fs.release(virtual, handle)
+    assert replacement.exists() is False
+    (descriptor,) = descriptors
+    _assert_closed(descriptor)
+
+
+def test_guarded_mount_denies_lexical_private_path_before_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mount = tmp_path.resolve() / "mount"
+    mount.mkdir()
+    private = mount / _EVENTS
+    private.write_bytes(_loss_record(1))
+    unguarded = TensorBoardFS(mount)
+    node, key = unguarded._locate(f"/raw/{private.name}/{_name(0)}")
+    guarded = TensorBoardFS(tmp_path, mountpoint=mount)
+
+    def unexpected_open(*args: object, **kwargs: object) -> NoReturn:
+        pytest.fail("render attempted to open the private payload")
+
+    monkeypatch.setattr(_directory, "_open_readonly", unexpected_open)
+    monkeypatch.setattr(os, "open", unexpected_open)
+    with pytest.raises(OSError) as denied:
+        guarded._node_bytes(node, key)
+    assert denied.value.errno == ENOENT
+
+
+@pytest.mark.parametrize("link", ["parent", "event"])
+def test_guarded_mount_follows_benign_source_links(tmp_path: Path, link: str) -> None:
+    root = tmp_path.resolve()
+    target = root / "target"
+    target.mkdir()
+    original = _loss_record(1)
+    (target / _EVENTS).write_bytes(original)
+    run = root / "run"
+    source = run / _EVENTS
+    if link == "parent":
+        run.symlink_to(target, target_is_directory=True)
+    else:
+        run.mkdir()
+        source.symlink_to(Path("..") / target.name / _EVENTS)
+
+    fs, virtual = _guarded_mount(source)
+    assert fs.read(virtual, len(original) + 1, 0) == original
+
+
+@pytest.mark.parametrize("change", ["new inode", "short frame", "bad checksum"])
+def test_guarded_mount_closes_descriptor_on_frame_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    run = tmp_path.resolve() / "run"
+    run.mkdir()
+    source = run / _EVENTS
+    original = _loss_record(1)
+    source.write_bytes(original)
+    fs, virtual = _guarded_mount(source)
+    native_open = _native_open(source)
+    if change == "new inode":
+        replacement = tmp_path / "replacement"
+        replacement.write_bytes(original)
+        replacement.replace(source)
+    elif change == "short frame":
+        source.write_bytes(original[:-1])
+    else:
+        source.write_bytes(original[:-1] + bytes([original[-1] ^ 1]))
+
+    descriptors: list[int] = []
+
+    def observe_open(path: bytes) -> int:
+        fd = native_open(path)
+        if path == os.fsencode(source) and fd >= 0:
+            descriptors.append(fd)
+        return fd
+
+    monkeypatch.setattr(_directory, "_open_readonly", observe_open)
+    with pytest.raises(OSError) as rejected:
+        fs.open(virtual, os.O_RDONLY)
+    assert rejected.value.errno == EIO
+    (descriptor,) = descriptors
+    _assert_closed(descriptor)

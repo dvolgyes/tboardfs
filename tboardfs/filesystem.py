@@ -3,7 +3,6 @@
 import os
 import stat
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from errno import EINVAL, EIO, EISDIR, ENOENT, ENOTDIR, EROFS
 from functools import lru_cache, partial
@@ -14,7 +13,13 @@ from typing import Any, TypedDict, Unpack
 
 from loguru import logger
 
-from tboardfs._directory import _guard_plan, _plain_path
+from tboardfs._directory import (
+    _GUARD_PLAN_MAX_PATH_CHARS,
+    _guard_plan,
+    _GuardPlans,
+    _plain_path,
+)
+from tboardfs._guarded_render import _render_miss
 from tboardfs.constants import (
     DEFAULT_CACHE_SIZE_MB,
     DEFAULT_DISCOVERY_SECONDS,
@@ -43,7 +48,6 @@ from tboardfs.verified_span import _FrameValidations, _VerifiedSpan
 _PARALLEL_MIN_BYTES = 8 << 20
 
 _GUARD_PLAN_LIMIT = 256
-_GUARD_PLAN_MAX_PATH_CHARS = 1024
 
 
 @dataclass
@@ -74,7 +78,7 @@ class _FsState:
     """
 
     index: _IndexOptions
-    guard_plans: Callable[[Path], tuple[tuple[str, ...], bool] | None] | None
+    guard_plans: _GuardPlans | None
     runs: dict[tuple[str, ...], RunCache] = field(default_factory=dict)
     directories: dict[tuple[str, ...], _Directory] = field(default_factory=dict)
     tree: _MountTree = field(default_factory=_MountTree)
@@ -518,11 +522,12 @@ class TensorBoardFS:
             return render_node(node)
         data = self._renders.get(key)
         if data is None:
-            entry = node.get("entry")
-            source = node.get("source") if entry is None else entry.source_path
-            if source is not None and not self._allowed(source):
-                raise fuse_error(ENOENT)
-            data = render_node(node)
+            data = _render_miss(
+                node,
+                self._allowed,
+                self._state.guard_plans,
+                self._state.index.mountpoint,
+            )
             self._renders.put(key, data)
         if isinstance(node, _CachedLeaf) and node.size is None:
             with self._lock:

@@ -1,6 +1,7 @@
 """Validate lazy reads against an indexed source frame and generation."""
 
 import os
+import stat
 import struct
 from errno import EIO
 from pathlib import Path
@@ -23,10 +24,15 @@ def _seek_read(fd: int, size: int, offset: int) -> bytes:
     return os.read(fd, size)
 
 
-def _pread_extent(path: Path, ref: FrameRef) -> bytes:
-    fd = os.open(path, _READ_FLAGS)
+def _pread_extent(path: Path, ref: FrameRef, *, fd: int | None = None) -> bytes:
+    guarded = fd is not None
+    if fd is None:
+        fd = os.open(path, _READ_FLAGS)
     try:
-        if FileIdentity.of(os.fstat(fd)) != ref.identity:
+        status = os.fstat(fd)
+        if (guarded and not stat.S_ISREG(status.st_mode)) or FileIdentity.of(
+            status
+        ) != ref.identity:
             raise TFRecordError(f"{path} changed generation", corrupt=True)
         read_at = getattr(os, "pread", _seek_read)
         data = read_at(fd, ref.size, ref.offset)
@@ -45,6 +51,11 @@ def _pread_extent(path: Path, ref: FrameRef) -> bytes:
 
 class IndexedFrame:
     """Read previously indexed frames without mixing source generations."""
+
+    @staticmethod
+    def _is_small_frame(ref: FrameRef) -> bool:
+        """Return whether the frame fits a bounded positional read."""
+        return _HEADER_SIZE + _FOOTER_SIZE <= ref.size <= _SMALL_FRAME
 
     @staticmethod
     def _verified_bytes(data: bytes, ref: FrameRef, raw: bool) -> bytes:
@@ -98,10 +109,9 @@ class IndexedFrame:
     @staticmethod
     def read(path: Path, ref: FrameRef, *, raw: bool = False) -> bytes:
         """Read the verified payload or full frame from its original generation."""
-        small = _HEADER_SIZE + _FOOTER_SIZE <= ref.size <= _SMALL_FRAME
+        if IndexedFrame._is_small_frame(ref):
+            return IndexedFrame._read_small(path, ref, raw=raw)
         try:
-            if small:
-                return IndexedFrame._verified_bytes(_pread_extent(path, ref), ref, raw)
             with path.open("rb") as handle:
                 status = os.fstat(handle.fileno())
                 if FileIdentity.of(status) != ref.identity:
@@ -113,5 +123,16 @@ class IndexedFrame:
                     if raw
                     else record.payload
                 )
+        except (TFRecordError, OSError) as error:
+            raise fuse_error(EIO) from error
+
+    @staticmethod
+    def _read_small(
+        path: Path, ref: FrameRef, *, raw: bool, fd: int | None = None
+    ) -> bytes:
+        """Validate a complete small frame, consuming an optional guarded fd."""
+        try:
+            data = _pread_extent(path, ref, fd=fd)
+            return IndexedFrame._verified_bytes(data, ref, raw)
         except (TFRecordError, OSError) as error:
             raise fuse_error(EIO) from error

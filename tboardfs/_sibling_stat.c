@@ -147,24 +147,23 @@ absolute_path(PyObject *name)
 }
 
 static int
-guarded_open(const char *path, int directory)
+guarded_open(const char *path, int flags)
 {
     const struct open_how how = {
-        .flags = O_PATH | O_CLOEXEC | (directory ? O_DIRECTORY : 0),
+        .flags = flags | O_CLOEXEC,
         .resolve = RESOLVE_NO_SYMLINKS,
     };
     return (int)syscall(SYS_openat2, AT_FDCWD, path, &how, sizeof(how));
 }
 
 static PyObject *
-open_directory(PyObject *self, PyObject *name)
+open_owned_fd(PyObject *name, int flags)
 {
-    (void)self;
     const char *path = absolute_path(name);
     int fd = -1;
     if (path != NULL) {
         Py_BEGIN_ALLOW_THREADS
-        fd = guarded_open(path, 1);
+        fd = guarded_open(path, flags);
         Py_END_ALLOW_THREADS
     }
     PyObject *result = PyLong_FromLong(fd);
@@ -177,6 +176,20 @@ open_directory(PyObject *self, PyObject *name)
 }
 
 static PyObject *
+open_directory(PyObject *self, PyObject *name)
+{
+    (void)self;
+    return open_owned_fd(name, O_PATH | O_DIRECTORY);
+}
+
+static PyObject *
+open_readonly(PyObject *self, PyObject *name)
+{
+    (void)self;
+    return open_owned_fd(name, O_RDONLY | O_NONBLOCK);
+}
+
+static PyObject *
 plain_path(PyObject *self, PyObject *name)
 {
     (void)self;
@@ -186,7 +199,7 @@ plain_path(PyObject *self, PyObject *name)
     }
     int fd;
     Py_BEGIN_ALLOW_THREADS
-    fd = guarded_open(path, 0);
+    fd = guarded_open(path, O_PATH);
     if (fd >= 0) {
         close(fd);
     }
@@ -222,7 +235,7 @@ prepared_siblings_call(PyObject *self, PyObject *args, PyObject *kwargs)
     Py_ssize_t count = Py_SIZE(self);
     int matches_all = 0;
     Py_BEGIN_ALLOW_THREADS
-    int fd = guarded_open(prepared->path, 1);
+    int fd = guarded_open(prepared->path, O_PATH | O_DIRECTORY);
     if (fd >= 0) {
         matches_all = 1;
         for (Py_ssize_t i = 0; i < count; i++) {
@@ -285,6 +298,7 @@ static PyMethodDef methods[] = {
      "Compare live regular-file fingerprints through a caller-owned guarded directory fd."},
 #ifdef TBOARDFS_HAVE_OPENAT2
     {"open_directory", open_directory, METH_O, NULL},
+    {"open_readonly", open_readonly, METH_O, NULL},
     {"plain_path", plain_path, METH_O, NULL},
     {"prepare_siblings", _PyCFunction_CAST(prepare_siblings), METH_FASTCALL, NULL},
 #endif

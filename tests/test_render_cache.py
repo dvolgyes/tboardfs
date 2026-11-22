@@ -11,8 +11,7 @@ import pytest
 from test_concurrency import _run_threads
 from test_open_handles import _append
 
-import tboardfs.filesystem
-from tboardfs import TensorBoardFS
+from tboardfs import TensorBoardFS, _guarded_render
 from tboardfs.render_cache import ENTRY_OVERHEAD_BYTES, RenderCache
 
 EVENTS = "events.out.tfevents.host"
@@ -25,14 +24,14 @@ def _entry(size: int) -> bytes:
 
 def _count_renders(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Record the node type of each render of a virtual file."""
-    original = tboardfs.filesystem.render_node
+    original = _guarded_render.render_node
     renders: list[str] = []
 
     def counting(node: dict[str, Any]) -> bytes:
         renders.append(node["type"])
         return original(node)
 
-    monkeypatch.setattr(tboardfs.filesystem, "render_node", counting)
+    monkeypatch.setattr(_guarded_render, "render_node", counting)
     return renders
 
 
@@ -234,7 +233,7 @@ def test_render_finishing_after_run_change_does_not_repopulate_cache(
     _append(event, 0)
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
     path = "/scalars/loss.json"
-    original = tboardfs.filesystem.render_node
+    original = _guarded_render.render_node
     rendering = threading.Event()
     resume = threading.Event()
 
@@ -244,7 +243,7 @@ def test_render_finishing_after_run_change_does_not_repopulate_cache(
         assert resume.wait(timeout=5)
         return data
 
-    monkeypatch.setattr(tboardfs.filesystem, "render_node", delayed)
+    monkeypatch.setattr(_guarded_render, "render_node", delayed)
     with ThreadPoolExecutor(max_workers=1) as pool:
         pending = pool.submit(fs.read, path, 1 << 20, 0)
         try:
@@ -256,7 +255,7 @@ def test_render_finishing_after_run_change_does_not_repopulate_cache(
         old_bytes = pending.result(timeout=5)
 
     assert fs._renders.size_bytes == 0
-    monkeypatch.setattr(tboardfs.filesystem, "render_node", original)
+    monkeypatch.setattr(_guarded_render, "render_node", original)
     assert fs.read(path, 1 << 20, 0) != old_bytes
 
 

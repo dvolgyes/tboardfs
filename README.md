@@ -432,7 +432,12 @@ Raw frame lookup searches sorted byte offsets without allocating all raw filenam
 
 For a whole indexed TFRecord of at most 64 KiB, tboardfs reads only that frame, usually in one request.
 
-It validates both TFRecord checksums and compares the payload checksum with the index before returning data.
+On Linux with the native extension and `openat2`, the mount can check the path and read a small frame through the same
+descriptor.
+
+This applies to raw frames and binary exports that need the whole frame when the source path contains no symlink.
+
+The reader validates both TFRecord checksums and compares the payload checksum with the index before returning data.
 
 The raw view returns the verified frame unchanged; typed readers use its payload without reconstructing the frame.
 

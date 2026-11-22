@@ -16,18 +16,7 @@ def extract_binary_blob(entry: BinaryEntry) -> bytes:
     if (span := entry.blob.span) is not None:
         offset, size = span
         return payload[offset : offset + size]
-    event = _source_event(payload)
-    try:
-        value = event["values"][entry.value_ordinal]
-        if value["tag"] == entry.tag:
-            if entry.part is not None:
-                return bytes(value["tensor"]["string_val"][entry.part])
-            blob = _Classifier.binary_blob(value)
-            if blob is not None:
-                return blob
-    except (IndexError, KeyError) as error:
-        raise fuse_error(EIO) from error
-    raise fuse_error(EIO)
+    return _IndexedBlobDecoder.binary(entry, payload)
 
 
 def _extract_graph_blob(entry: GraphEntry) -> bytes:
@@ -36,7 +25,7 @@ def _extract_graph_blob(entry: GraphEntry) -> bytes:
     if (span := entry.blob.span) is not None:
         offset, size = span
         return payload[offset : offset + size]
-    event = _source_event(payload)
+    event = _IndexedBlobDecoder.source_event(payload)
     field = "meta_graph_def" if isinstance(entry, MetaGraphEntry) else "graph_def"
     graph = event.get(field)
     if graph is None:
@@ -44,9 +33,29 @@ def _extract_graph_blob(entry: GraphEntry) -> bytes:
     return bytes(graph)
 
 
-def _source_event(payload: bytes) -> dict[str, Any]:
-    """Parse the verified event payload, or report EIO if it cannot be decoded."""
-    try:
-        return parse_event(payload)
-    except DecodeError:
-        raise fuse_error(EIO) from None
+class _IndexedBlobDecoder:
+    """Decode verified event payloads for indexed binary and graph entries."""
+
+    @staticmethod
+    def binary(entry: BinaryEntry, payload: bytes) -> bytes:
+        """Decode an unspanned binary entry from its verified event payload."""
+        event = _IndexedBlobDecoder.source_event(payload)
+        try:
+            value = event["values"][entry.value_ordinal]
+            if value["tag"] == entry.tag:
+                if entry.part is not None:
+                    return bytes(value["tensor"]["string_val"][entry.part])
+                blob = _Classifier.binary_blob(value)
+                if blob is not None:
+                    return blob
+        except (IndexError, KeyError) as error:
+            raise fuse_error(EIO) from error
+        raise fuse_error(EIO)
+
+    @staticmethod
+    def source_event(payload: bytes) -> dict[str, Any]:
+        """Parse the verified event payload, or report EIO if it cannot be decoded."""
+        try:
+            return parse_event(payload)
+        except DecodeError:
+            raise fuse_error(EIO) from None
