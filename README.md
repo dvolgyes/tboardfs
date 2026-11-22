@@ -904,6 +904,23 @@ Report the retained samples, median and sample standard deviation for each workf
 
 Never pool the mixed and Lightning results; when alternatives are otherwise tied, favor the Lightning result.
 
+Set `run_dir` to the absolute path of the run inside the mount, not a symlink.
+
+Run each command on a fresh mount so the listing does not warm the full-read sample:
+
+```bash
+find "$run_dir" >/dev/null                # Traversal only (all paths)
+scripts/benchmark_find_cat.sh "$run_dir"  # Traversal plus reading regular files to EOF
+```
+
+The script uses GNU `find` to read every regular file, including raw and derived exports.
+
+It rejects a symlink as the starting directory and does not follow symlinks inside the tree.
+
+It discards the file contents and exits nonzero if traversal or reading fails.
+
+Use a stable directory tree during each measurement.
+
 ## Generate Test Data
 
 The test suite reads `tests/data/producer-cases/` and `test-logs/` without installing the writers.
