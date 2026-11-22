@@ -1,3 +1,5 @@
+"""Serve the mounted, read-only view of TensorBoard event data."""
+
 import os
 import stat
 import time
@@ -19,8 +21,8 @@ from tboardfs.constants import (
     DEFAULT_SCALAR_FORMATS,
 )
 from tboardfs.errors import fuse_error
-from tboardfs.event_source import EventSource
 from tboardfs.file_times import FileTimes
+from tboardfs.leaf_cache import _CachedLeaf, _MountTree, _resolve_node
 from tboardfs.model import (
     BinaryEntry,
     EventFileCache,
@@ -56,15 +58,6 @@ class _Directory:
     pieces: dict[tuple[str, ...], tuple[SidecarEntry, ...]] = field(
         default_factory=dict
     )
-
-
-@dataclass
-class _MountTree:
-    """Last published root and the runs changed since that publication."""
-
-    root: dict[str, Any] | None = None
-    dirty: set[tuple[str, ...]] = field(default_factory=set)
-    generation: int = 0
 
 
 @dataclass
@@ -243,7 +236,7 @@ class TensorBoardFS:
         node, key = self._locate(path)
         if node["type"] == "dir":
             raise fuse_error(EISDIR)
-        mtime = FileTimes.of(node)
+        mtime = _CachedLeaf.time_of(node)
         span = self._node_span(node)
         opened = (self._node_bytes(node, key) if span is None else span, mtime)
         with self._lock:
@@ -342,24 +335,13 @@ class TensorBoardFS:
     def _getattr_node(self, path: str) -> tuple[dict[str, Any], RenderKey, float]:
         with self._lock:
             node, key = self._locate_locked(path, directory_attrs=True)
-            mtime = FileTimes.of(node)
+            mtime = _CachedLeaf.time_of(node)
             if mtime:
                 return node, key, mtime
             owner = self._run_places.disk_parts.get(key[1])
             if owner is None or self._state.directories[owner].scanned_at is not None:
                 return node, key, mtime
-        return node, key, self._backing_directory_time(owner)
-
-    def _backing_directory_time(self, owner: tuple[str, ...]) -> float:
-        index = self._state.index
-        try:
-            return EventSource.directory_stat(
-                self.source.joinpath(*owner),
-                mountpoint=index.mountpoint,
-                storage=index.storage,
-            ).st_mtime
-        except OSError:
-            return 0.0
+        return node, key, self._state.index.directory_time(self.source.joinpath(*owner))
 
     def _locate(self, path: str) -> tuple[dict[str, Any], RenderKey]:
         """Return the node at ``path`` and its generation-scoped render key.
@@ -373,18 +355,30 @@ class TensorBoardFS:
         self, path: str, *, directory_attrs: bool
     ) -> tuple[dict[str, Any], RenderKey]:
         parts = _Paths.path_parts(path)
-        tree, owner = self._refresh_lookup(parts, directory_attrs=directory_attrs)
-        node = tree
-        for part in parts:
-            if node["type"] != "dir" or (child := node["children"].get(part)) is None:
-                raise FileNotFoundError(ENOENT, os.strerror(ENOENT), path)
-            node = child
+        snapshot = self._state.tree
+        leaves = snapshot.leaves
+        refreshed = None
+        if (entry := leaves.get(parts)) is not None:
+            refreshed, result = entry
+            generation = snapshot.generation
+            self._activate(refreshed)
+            if generation == snapshot.generation:
+                return result
+        tree, owner = self._refresh_lookup(parts, refreshed, directory_attrs)
+        published = snapshot.root is tree
+        node = _resolve_node(tree, parts, path)
         run = self._state.runs.get(owner)
         version = None if node["type"] == "name_map" or run is None else run.version
-        return node, (self._renders.scope(version), parts)
+        key = self._renders.scope(version), parts
+        if published and version is not None:
+            return leaves.remember(path, owner, node, key)
+        return node, key
 
     def _refresh_lookup(
-        self, parts: tuple[str, ...], *, directory_attrs: bool
+        self,
+        parts: tuple[str, ...],
+        refreshed: tuple[str, ...] | None,
+        directory_attrs: bool,
     ) -> tuple[dict[str, Any], tuple[str, ...]]:
         tree = self._cached_tree()
         depth, owner = self._lookup_start(parts, directory_attrs=directory_attrs)
@@ -395,14 +389,16 @@ class TensorBoardFS:
                 and self._state.directories[owner].scanned_at is None
             ):
                 return tree, owner
-            self._activate(owner)
-            tree = self._cached_tree()
+            if owner != refreshed:
+                self._activate(owner)
+                tree = self._cached_tree()
             if depth == len(parts):
                 break
             child_owner = self._run_places.disk_parts.get(parts[: depth + 1])
             if child_owner is None:
                 break
             owner = child_owner
+            refreshed = None
             depth += 1
         return tree, self._mapped_owner(parts, depth)[1]
 
@@ -466,6 +462,8 @@ class TensorBoardFS:
             return self._state.open_files.get(handle)
 
     def _node_size(self, node: dict[str, Any], key: RenderKey) -> int:
+        if isinstance(node, _CachedLeaf) and (size := node.size) is not None:
+            return size
         if node["type"] == "raw":
             return int(node["frame"].size)
         if node["type"] in {"binary", "graph"}:
@@ -532,6 +530,9 @@ class TensorBoardFS:
                 raise fuse_error(ENOENT)
             data = render_node(node)
             self._renders.put(key, data)
+        if isinstance(node, _CachedLeaf) and node.size is None:
+            with self._lock:
+                node.size = len(data)
         return data
 
     def _allowed(self, path: Path) -> bool:
@@ -863,6 +864,7 @@ class TensorBoardFS:
         """Retain the last snapshot only while its folder placement is valid."""
         self._renders.expire(None)
         snapshot = self._state.tree
+        snapshot.leaves.clear()
         snapshot.generation += 1
         if (
             parts

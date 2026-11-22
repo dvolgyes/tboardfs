@@ -295,6 +295,18 @@ Listing the run discovers its contents, so its timestamp can change even if no p
 
 After indexing, `stat` reports the newest discovered content time and checks for changes in live mode.
 
+The mount caches up to 32,768 recently used event-backed file paths across all runs.
+
+A cache hit still checks the owning run for changes in live mode.
+
+Raw records and stored binary exports use their indexed sizes.
+
+For exports generated entirely from indexed data, the first render supplies the exact size.
+
+While that path remains in the metadata cache, `stat` can reuse its size even after eviction of the rendered bytes.
+
+External sidecars retain their own status checks; their presence does not disable caching for event-backed exports.
+
 Append complete frames, and replace the event file when rewriting history.
 
 On growth, tboardfs verifies the last complete frame and resumes at its end, retrying any incomplete tail.

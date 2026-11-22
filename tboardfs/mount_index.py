@@ -87,6 +87,15 @@ class _IndexOptions:
         disk = DiskIndex(storage, limit=disk_index_size_mb << 20, mountpoint=mounted_at)
         return cls(mounted_at, index_workers, parallel_min_bytes, disk, storage)
 
+    def directory_time(self, directory: Path) -> float:
+        """Read a backing directory's timestamp without scanning its entries."""
+        try:
+            return EventSource.directory_stat(
+                directory, mountpoint=self.mountpoint, storage=self.storage
+            ).st_mtime
+        except OSError:
+            return 0.0
+
     def candidates(self, paths: list[Path], run: RunCache) -> dict[Path, _IndexHit]:
         """Check only the not-yet-indexed files of this run."""
         if self.disk is None:
