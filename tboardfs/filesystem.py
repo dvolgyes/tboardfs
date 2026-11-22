@@ -350,24 +350,38 @@ class TensorBoardFS:
     def _locate_locked(
         self, path: str, *, directory_attrs: bool
     ) -> tuple[dict[str, Any], RenderKey]:
-        parts = _Paths.path_parts(path)
         snapshot = self._state.tree
         leaves = snapshot.leaves
-        refreshed = None
-        if (entry := leaves.get(parts)) is not None:
-            refreshed, result = entry
-            generation = snapshot.generation
+        parts, entry, parent = leaves.probe(path)
+        refreshed: tuple[str, ...] | None
+        if entry is not None:
+            refreshed = entry[0]
+        else:
+            refreshed = parent.owner if parent is not None else None
+        generation = snapshot.generation
+        if refreshed is not None:
             self._activate(refreshed)
-            if generation == snapshot.generation:
-                return result
+        unchanged = generation == snapshot.generation
+        if unchanged and entry is not None:
+            return entry[1]
+        sibling = parent.leaf(parts[-1]) if unchanged and parent is not None else None
+        if sibling is not None and refreshed is not None:
+            scope = self._renders.scope(self._state.runs[refreshed].version)
+            return leaves.remember(path, refreshed, sibling, (scope, parts))
         tree, owner = self._refresh_lookup(parts, refreshed, directory_attrs)
-        published = snapshot.root is tree
-        node = _resolve_node(tree, parts, path)
+        node, children = _resolve_node(tree, parts, path)
         run = self._state.runs.get(owner)
         version = None if node["type"] == "name_map" or run is None else run.version
         key = self._renders.scope(version), parts
-        if published and version is not None:
-            return leaves.remember(path, owner, node, key)
+        if snapshot.root is tree and version is not None:
+            return leaves.remember(
+                path,
+                owner,
+                node,
+                key,
+                children=children,
+                disk_parts=self._run_places.disk_parts,
+            )
         return node, key
 
     def _refresh_lookup(
@@ -396,12 +410,12 @@ class TensorBoardFS:
             owner = child_owner
             refreshed = None
             depth += 1
-        return tree, self._mapped_owner(parts, depth)[1]
+        return tree, self._run_places.mapped_owner(parts, depth)[1]
 
     def _lookup_start(
         self, parts: tuple[str, ...], *, directory_attrs: bool
     ) -> tuple[int, tuple[str, ...]]:
-        depth, owner = self._mapped_owner(parts, len(parts))
+        depth, owner = self._run_places.mapped_owner(parts, len(parts))
         if directory_attrs and depth == len(parts) and depth:
             now = time.time()
             disk_parts = self._run_places.disk_parts
@@ -410,14 +424,6 @@ class TensorBoardFS:
                 scanned_at = self._state.directories[ancestor].scanned_at
                 if scanned_at is None or now - scanned_at >= self.refresh_age_seconds:
                     return ancestor_depth, ancestor
-        return depth, owner
-
-    def _mapped_owner(
-        self, parts: tuple[str, ...], depth: int
-    ) -> tuple[int, tuple[str, ...]]:
-        disk_parts = self._run_places.disk_parts
-        while (owner := disk_parts.get(parts[:depth])) is None:
-            depth -= 1
         return depth, owner
 
     def _build_tree(self) -> dict[str, Any]:

@@ -86,3 +86,44 @@ def test_name_map_leaf_disappears_on_direct_lookup(
         else:
             _read_open(fs, path)
     assert raised.value.errno == ENOENT
+
+
+def test_warmed_neighboring_leaves_follow_append_and_discovery(tmp_path: Path) -> None:
+    event = tmp_path / EVENTS
+    _append(event, 0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    neighbor = "/scalars/loss.tsv"
+    alternate = "scalars//./loss.json"
+    handle = fs.open(LOSS, 0)
+    try:
+        old_size = fs.getattr(LOSS)["st_size"]
+        assert fs.getattr(LOSS)["st_size"] == old_size
+        old_neighbor_size = fs.getattr(neighbor)["st_size"]
+        assert fs.getattr(alternate)["st_size"] == old_size
+
+        _append(event, 1)
+        new_size = fs.getattr(alternate)["st_size"]
+        assert fs.getattr(LOSS)["st_size"] == new_size > old_size
+        assert fs.getattr(neighbor)["st_size"] > old_neighbor_size
+        assert [row["step"] for row in json.loads(_read_open(fs, LOSS))] == [0, 1]
+        pinned = _read_in_chunks(fs, LOSS, handle, 64)
+        assert fs.getattr(LOSS, handle)["st_size"] == len(pinned) == old_size
+        assert [row["step"] for row in json.loads(pinned)] == [0]
+
+        child = tmp_path / "scalars"
+        child.mkdir()
+        _append(child / EVENTS, 9)
+        child_rows = json.loads(_read_open(fs, "/scalars~2/scalars/loss.json"))
+        assert [row["step"] for row in child_rows] == [9]
+
+        for path in (
+            "/scalars/absent.tsv",
+            "scalars//./absent.json",
+            "/scalars//loss.json/child",
+        ):
+            assert fs.getattr(alternate)["st_size"] == new_size
+            with pytest.raises(FileNotFoundError) as raised:
+                fs.getattr(path)
+            assert (raised.value.errno, raised.value.filename) == (ENOENT, path)
+    finally:
+        fs.release(LOSS, handle)

@@ -41,6 +41,14 @@ class RunPlaces:
         self.flat = False
         self._blank = None
 
+    def mapped_owner(
+        self, parts: tuple[str, ...], depth: int
+    ) -> tuple[int, tuple[str, ...]]:
+        """Find the deepest mapped run at or above the given depth."""
+        while (owner := self.disk_parts.get(parts[:depth])) is None:
+            depth -= 1
+        return depth, owner
+
     def build(
         self, run_trees: Mapping[tuple[str, ...], dict[str, Any]]
     ) -> dict[str, Any]:

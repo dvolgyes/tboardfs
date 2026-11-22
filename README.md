@@ -309,6 +309,10 @@ The mount caches up to 32,768 recently used event-backed file paths across all r
 
 A cache hit still checks the owning run for changes in live mode.
 
+Consecutive lookups can reuse the last resolved file or its virtual parent directory.
+
+The mount discards these shortcuts when it publishes a changed tree.
+
 Raw records and stored binary exports use their indexed sizes.
 
 For exports generated entirely from indexed data, the first render supplies the exact size.
