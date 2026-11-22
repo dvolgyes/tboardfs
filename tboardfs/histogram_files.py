@@ -3,11 +3,13 @@
 from functools import partial
 from typing import Any
 
+from tboardfs._step_npz import StepArchives
 from tboardfs.leaf_spec import LeafSpec
 from tboardfs.model import EventFileCache
 from tboardfs.paths import _Paths
 from tboardfs.run_files import RunFiles
 from tboardfs.skip_failure import skip_failure
+from tboardfs.step_export import StepColumns
 from tboardfs.tables import _TableMerge
 
 
@@ -27,6 +29,7 @@ def add_histogram_files(
         (cache.histogram_mtimes for cache in caches), tags=tags
     )
     complete = True
+    archives = StepArchives()
     for tag, series in histograms.items():
         built = skip_failure(
             f"histogram {tag!r}",
@@ -36,6 +39,7 @@ def add_histogram_files(
                 {"tag": tag, "series": series, "mtime": mtimes.get(tag, 0.0)},
                 scalar_formats,
                 step_digits,
+                archives,
             ),
         )
         complete = bool(built) and complete
@@ -51,12 +55,15 @@ class _HistogramFiles:
         item: dict[str, Any],
         scalar_formats: tuple[str, ...],
         step_digits: int,
+        archives: StepArchives,
     ) -> bool:
         """Add the histogram and distribution tables of one tag."""
         tag, series, mtime = item["tag"], item["series"], item["mtime"]
         for step, step_series in _TableMerge.split_steps(series):
             distribution = _TableMerge.distribution_from_histogram(step_series)
             del step_series["_start"]
+            histogram_columns = StepColumns(step_series, archives)
+            distribution_columns = StepColumns(distribution, archives)
             for fmt in scalar_formats:
                 _HistogramFiles.add_step_table(
                     files,
@@ -64,7 +71,7 @@ class _HistogramFiles:
                         "tab": "histograms",
                         "tag": tag,
                         "step": step,
-                        "series": step_series,
+                        "series": histogram_columns,
                         "fmt": fmt,
                         "mtime": mtime,
                     },
@@ -76,7 +83,7 @@ class _HistogramFiles:
                         "tab": "distributions",
                         "tag": tag,
                         "step": step,
-                        "series": distribution,
+                        "series": distribution_columns,
                         "fmt": fmt,
                         "mtime": mtime,
                     },

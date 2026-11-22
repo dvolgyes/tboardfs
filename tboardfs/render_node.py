@@ -14,6 +14,7 @@ from tboardfs.npy_export import array_to_npy
 from tboardfs.open3d_asset import OPEN3D_PLUGIN, Open3DAsset
 from tboardfs.raw_frames import RawFrames
 from tboardfs.run_metadata_text import run_metadata_text
+from tboardfs.step_export import _render_step
 from tboardfs.summary_graph import summary_graph_def
 from tboardfs.tables import _TableExport, export_table
 from tboardfs.tensor import _read_tensor_array
@@ -58,7 +59,7 @@ _RENDERERS: Final[Mapping[str, Callable[[dict[str, Any]], bytes]]] = MappingProx
         ).encode("ascii"),
         "raw": RawFrames.read,
         "scalar": lambda node: export_table(node["series"], node["format"]),
-        "table": lambda node: export_table(node["series"], node["format"]),
+        "table": lambda node: _render_step(node["series"], node["format"]),
         "binary": lambda node: extract_binary_blob(node["entry"]),
         "graph": lambda node: _extract_graph_blob(node["entry"]),
         "graph_def": lambda node: _derived(

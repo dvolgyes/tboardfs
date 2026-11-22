@@ -641,6 +641,10 @@ A distribution table has the values that the TensorBoard Distributions tab shows
 93.32 and 100: the minimum, the maximum, and the positions of the mean and ±1, 2 and 3 standard deviations of a normal
 distribution. Each value interpolates linearly inside its histogram bucket.
 
+For small tables with identical metadata on every row, the text writer formats those fields once.
+
+For common NPZ shapes, the mount reuses a NumPy-generated archive layout, not data from an earlier step.
+
 ### PR Curves
 
 The `.json` and `.tsv` tables have one row per threshold, with the columns `threshold`, `true_positives`,
