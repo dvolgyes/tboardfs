@@ -599,15 +599,21 @@ class TensorBoardFS:
         return Path("/") if absolute else link.parent
 
     def _activate(self, parts: tuple[str, ...]) -> None:
-        directory = self.source.joinpath(*parts)
         run = self._ensure_run(parts)
         local = self._state.directories[parts]
         previous = local.scanned_at
         if previous is not None and self.refresh_age_seconds == float("inf"):
             return
         now = time.time()
+        scan = previous is None or now - previous >= self.refresh_age_seconds
+        if not scan and local.siblings is not None and local.siblings.matches():
+            if local.owner != parts or local.pieces or run.sidecars:
+                self._refresh_sidecars(run, None)
+            run.refreshed_at = now
+            return
+        directory = self.source.joinpath(*parts)
         entries = None
-        if previous is None or now - previous >= self.refresh_age_seconds:
+        if scan:
             entries = self._scan_entries(directory)
             local.scanned_at = now
         files, entries = self._run_sources(run, directory, entries)
@@ -716,32 +722,21 @@ class TensorBoardFS:
         run: RunCache,
         files: list[Path],
         entries: list[os.DirEntry[str]] | None,
-        *,
-        force: bool = False,
     ) -> bool:
         """Check known files on access; discover new files only with a fresh listing."""
         now = time.time()
         local = self._state.directories[run.run_parts]
-        unchanged = (
-            entries is None
-            and not force
-            and local.siblings is not None
-            and local.siblings.matches()
+        local.siblings = None
+        options = self._state.index
+        changed, base = _RunData.refresh_event_files(
+            run,
+            files,
+            force=False,
+            log=logger.info if self.log_to_screen else None,
+            options=options,
         )
-        changed = False
-        base = None
-        if not unchanged:
-            local.siblings = None
-            options = self._state.index
-            changed, base = _RunData.refresh_event_files(
-                run,
-                files,
-                force=force,
-                log=logger.info if self.log_to_screen else None,
-                options=options,
-            )
-            if changed or entries is not None:
-                local.siblings = _SiblingSnapshot.capture(run, options)
+        if changed or entries is not None:
+            local.siblings = _SiblingSnapshot.capture(run, options)
         self._refresh_sidecars(run, entries)
         run.refreshed_at = now
         if changed:

@@ -3,11 +3,12 @@
 import errno
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from test_open_handles import _append
 
-from tboardfs import TensorBoardFS
+from tboardfs import TensorBoardFS, filesystem
 
 EVENTS = "events.out.tfevents.host"
 
@@ -30,6 +31,59 @@ def test_new_sidecar_appears_without_new_events(tmp_path: Path) -> None:
 
     assert fs.readdir("/profile/2026_10_30")[2:] == ["host.xplane.pb"]
     assert fs.read("/profile/2026_10_30/host.xplane.pb", 100, 0) == b"xplane"
+
+
+@pytest.mark.parametrize("grouped", [False, True], ids=["run", "group"])
+def test_warmed_run_discovers_and_refreshes_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, grouped: bool
+) -> None:
+    """Discovery waits for a scan; known sidecars stay live under their run."""
+    now = 1000.0
+    monkeypatch.setattr(filesystem, "time", SimpleNamespace(time=lambda: now))
+    source = tmp_path / "run"
+    source.mkdir()
+    mountpoint = tmp_path / "mount"
+    mountpoint.mkdir()
+    _append(source / f"{EVENTS}.1", 0)
+    _append(source / f"{EVENTS}.2", 1)
+    discovery_path = "/group" if grouped else "/"
+    discovery_dir = source / "group" if grouped else source
+    discovery_dir.mkdir(exist_ok=True)
+    fs = TensorBoardFS(source, mountpoint=mountpoint, refresh_age_seconds=60)
+    assert fs.read("/scalars/loss.json", 4096, 0)
+    fs.readdir(discovery_path)
+    assert fs.readdir("/profile")[2:] == []
+
+    profile = discovery_dir / "profile"
+    profile.mkdir()
+    trace = profile / "trace"
+    trace.write_bytes(b"trace")
+    virtual = "/profile/trace"
+
+    now += 59
+    fs.readdir(discovery_path)
+    assert fs.readdir("/profile")[2:] == []
+    now += 1
+    fs.readdir(discovery_path)
+    assert fs.readdir("/profile")[2:] == ["trace"]
+    assert fs.getattr(virtual)["st_size"] == len(b"trace")
+    assert fs.read(virtual, 100, 0) == b"trace"
+
+    now += 1
+    updated = b"longer trace"
+    trace.write_bytes(updated)
+    os.utime(trace, (now, now))
+    attrs = fs.getattr(virtual)
+    assert attrs["st_size"] == len(updated)
+    assert attrs["st_mtime"] == now
+    assert fs.read(virtual, 100, 0) == updated
+
+    now += 1
+    trace.unlink()
+    assert fs.readdir("/profile")[2:] == []
+    with pytest.raises(OSError) as raised:
+        fs.getattr(virtual)
+    assert raised.value.errno == errno.ENOENT
 
 
 def test_removed_sidecar_is_no_longer_listed(tmp_path: Path) -> None:

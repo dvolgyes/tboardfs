@@ -272,7 +272,11 @@ Between directory scans, tboardfs reuses the names and expected fingerprints of 
 
 It opens the parent again and compares each regular file with its indexed fingerprint.
 
-If any check fails or detects a change, tboardfs refreshes the run in source order to preserve inherited metadata.
+Before discovery is due, matching fingerprints let that access skip rebuilding the list of event files.
+
+The mount still checks known sidecars, but it skips sidecar processing for an event-only run.
+
+If a sibling check fails or detects a change, tboardfs refreshes the run in source order to preserve inherited metadata.
 
 For paths that need symlink resolution or cannot use `openat2`, tboardfs keeps the guarded component-by-component
 lookup.
