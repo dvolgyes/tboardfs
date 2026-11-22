@@ -34,17 +34,21 @@ class MountBinding(mfusepy.FUSE):  # type: ignore[misc]
         mfusepy.set_st_attrs(st, attrs.as_dict(), use_ns=use_ns)
         return st
 
+    def _resolve_stat(
+        self, path: bytes | None, fip: mfusepy.fuse_fi_p | None
+    ) -> mfusepy.c_stat:
+        decoded = None if path is None else path.decode(self.encoding, self.errors)
+        handles = (fip.contents.fh,) if fip else ()
+        return self._native_stat(
+            self.operations._attributes(decoded, handles), self.use_ns
+        )
+
     def fgetattr(
         self, path: bytes | None, buf: mfusepy.c_stat_p, fip: mfusepy.fuse_fi_p | None
     ) -> int:
         """Resolve and encode fresh attributes, leaving a zeroed buffer on error."""
         try:
-            decoded_path = (
-                None if path is None else path.decode(self.encoding, self.errors)
-            )
-            handles = (fip.contents.fh,) if fip else ()
-            attrs = self.operations._attributes(decoded_path, handles)
-            st = self._native_stat(attrs, self.use_ns)
+            st = self._resolve_stat(path, fip)
         except BaseException:
             buf[0] = mfusepy.c_stat()
             raise

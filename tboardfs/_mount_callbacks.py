@@ -18,6 +18,9 @@ type _GetattrCallback = Callable[[bytes | None, mfusepy.c_stat_p], int]
 type _StatHandler = Callable[
     [bytes | None, mfusepy.c_stat_p, mfusepy.fuse_fi_p | None], int
 ]
+type _StatReply = Callable[
+    [bytes | None, mfusepy.fuse_fi_p | None], mfusepy.c_stat | int
+]
 
 _EXTENSION = "tboardfs._stat_extern"
 
@@ -54,7 +57,7 @@ class StatCallbacks:
     _handle: object
 
     @classmethod
-    def try_create(cls, handler: _StatHandler) -> Self | None:
+    def try_create(cls, handler: _StatReply) -> Self | None:
         """Return callbacks only when supported and the optional extension was built."""
         if not _supported() or (extension := _load_extension()) is None:
             return None

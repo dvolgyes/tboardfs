@@ -68,7 +68,9 @@ uvx --from tboardfs tboardfs-file list SOURCE
 Source builds on Linux CPython can compile an optional accelerator for live status checks.
 
 On x86-64 Linux with GIL-enabled CPython, libfuse 2.9 and mfusepy 3.1.1, a second optional extension lets FUSE workers
-reuse Python thread state without caching attributes or changing source validation.
+reuse Python thread state and copy encoded stat data directly into libfuse's reply buffer.
+
+This does not change source validation or the size reported for an open handle.
 
 Other builds, including libfuse 3 mounts, use the ordinary mfusepy callbacks.
 

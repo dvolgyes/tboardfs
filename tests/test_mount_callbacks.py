@@ -62,6 +62,71 @@ def _stat_buffer() -> mfusepy.c_stat:
     return result
 
 
+@pytest.mark.parametrize(
+    "attrs",
+    [
+        pytest.param(_FileAttributes(False, -513, -0.25, (-1, -2)), id="negative"),
+        pytest.param(
+            _FileAttributes(True, (1 << 70) + 513, (1 << 40) + 0.25, (1 << 40, 9)),
+            id="wide",
+        ),
+        pytest.param(
+            _FileAttributes(False, 7, float(1 << 63), (2, 3)), id="wrapped-seconds"
+        ),
+        pytest.param(
+            _FileAttributes(False, 7, -float((1 << 63) + 4096), (2, 3)),
+            id="wrapped-negative-seconds",
+        ),
+    ],
+)
+def test_native_stat_matches_mfusepy_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    native_transport: None,
+    attrs: _FileAttributes,
+) -> None:
+    fs = MountedTensorBoardFS(tmp_path)
+    monkeypatch.setattr(fs, "_attributes", lambda _path, _handles: attrs)
+    expected = mfusepy.c_stat()
+    mfusepy.set_st_attrs(expected, attrs.as_dict())
+
+    def loop(ops: Any) -> int:
+        result = _stat_buffer()
+        assert ops.getattr(b"/", pointer(result)) == 0
+        assert bytes(result) == bytes(expected)
+        result = _stat_buffer()
+        assert ops.fgetattr(b"/", pointer(result), None) == 0
+        assert bytes(result) == bytes(expected)
+        return 0
+
+    _mount_with_loop(monkeypatch, fs, loop)
+
+
+@pytest.mark.parametrize(
+    "mtime", [float("nan"), float("inf"), -float("inf")], ids=["nan", "inf", "-inf"]
+)
+def test_native_stat_zeros_nonfinite_timestamps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    native_transport: None,
+    mtime: float,
+) -> None:
+    fs = MountedTensorBoardFS(tmp_path)
+    attrs = _FileAttributes(False, 513, mtime, (2, 3))
+    monkeypatch.setattr(fs, "_attributes", lambda _path, _handles: attrs)
+
+    def loop(ops: Any) -> int:
+        result = _stat_buffer()
+        assert ops.getattr(b"/", pointer(result)) == -EINVAL
+        assert bytes(result) == bytes(sizeof(result))
+        result = _stat_buffer()
+        assert ops.fgetattr(b"/", pointer(result), None) == -EINVAL
+        assert bytes(result) == bytes(sizeof(result))
+        return 0
+
+    _mount_with_loop(monkeypatch, fs, loop)
+
+
 def test_native_stat_keeps_the_open_version_after_append(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_transport: None
 ) -> None:

@@ -7,11 +7,13 @@ from typing import cast
 
 import mfusepy
 
-from ._mount_callbacks import _GetattrCallback, _StatHandler
+from ._mount_callbacks import _GetattrCallback, _StatHandler, _StatReply
 
 _native = import_module("tboardfs._stat_extern")
 ffi = _native.ffi
 lib = _native.lib
+_STAT_SIZE = ctypes.sizeof(mfusepy.c_stat)
+_EMPTY_STAT = bytes(_STAT_SIZE)
 
 
 def _dispatch(path: object, stat: object, fi: object) -> int:
@@ -21,14 +23,18 @@ def _dispatch(path: object, stat: object, fi: object) -> int:
     context = mfusepy._libfuse.fuse_get_context()
     if not context or not (private_data := context.contents.private_data):
         return -errno.EFAULT
-    handler: _StatHandler = ffi.from_handle(ffi.cast("void *", private_data))
-    return handler(
+    handler: _StatReply = ffi.from_handle(ffi.cast("void *", private_data))
+    reply = handler(
         None if path == ffi.NULL else ffi.string(path),
-        ctypes.cast(int(ffi.cast("uintptr_t", stat)), mfusepy.c_stat_p),
         None
         if fi == ffi.NULL
         else ctypes.cast(int(ffi.cast("uintptr_t", fi)), mfusepy.fuse_fi_p),
     )
+    if isinstance(reply, int):
+        ffi.memmove(stat, _EMPTY_STAT, _STAT_SIZE)
+        return reply
+    ffi.memmove(stat, reply, _STAT_SIZE)
+    return 0
 
 
 def _slot_callbacks() -> tuple[_GetattrCallback, _StatHandler]:

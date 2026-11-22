@@ -6,11 +6,13 @@ from collections.abc import Callable
 from ctypes import c_char_p, pointer, sizeof
 from functools import partial
 from signal import SIG_DFL, SIGINT, getsignal, signal
+from stat import S_IFDIR, S_IFREG
 from threading import current_thread, main_thread
 
 import mfusepy
 
 from tboardfs._mount_callbacks import StatCallbacks
+from tboardfs.file_attributes import _FileAttributes
 from tboardfs.mount_binding import MountBinding
 from tboardfs.mounted import MountedTensorBoardFS
 
@@ -52,13 +54,35 @@ class _Fuse2Session(MountBinding):
         self._prepare_stat()
         self._fatal = None
 
-    def _invoke(self, method: Callable[..., int | None], *args: object) -> int:
+    @staticmethod
+    def _encode_stat(attrs: _FileAttributes, use_ns: bool) -> mfusepy.c_stat:
+        """Fill the audited FUSE 2 layout, converting the shared timestamp once."""
+        directory, size, mtime, owner = attrs
+        st = mfusepy.c_stat()
+        st.st_mode = S_IFDIR | 0o555 if directory else S_IFREG | 0o444
+        st.st_nlink = 2 if directory else 1
+        st.st_uid, st.st_gid = owner
+        st.st_size = size
+        st.st_blocks = (size + 511) // 512
+        ts = st.st_mtimespec
+        if use_ns:
+            ts.tv_sec, ts.tv_nsec = divmod(int(mtime), 10**9)
+        else:
+            ts.tv_sec = int(mtime)
+            ts.tv_nsec = int((mtime - ts.tv_sec) * 1e9)
+        st.st_atimespec = st.st_ctimespec = ts
+        return st
+
+    def _invoke[T](self, method: Callable[..., T], *args: object) -> T | int:
         """Keep exceptions from escaping through a native callback."""
         try:
             return method(*args) or 0
         except Exception as error:  # noqa: BLE001 - native callback boundary
             try:
-                return self._errno(method.__name__, error)
+                operation = (
+                    "fgetattr" if method == self._resolve_stat else method.__name__
+                )
+                return self._errno(operation, error)
             except BaseException as logging_error:  # noqa: BLE001 - defer to mount thread
                 return self._abort(method.__name__, logging_error)
         except BaseException as error:  # noqa: BLE001 - defer to mount thread
@@ -183,7 +207,9 @@ def _try_mount(
     if any(name in attributes for name in custom_fields):
         return False
     session = _Fuse2Session(operations)
-    callbacks = StatCallbacks.try_create(partial(session._invoke, session.fgetattr))
+    callbacks = StatCallbacks.try_create(
+        partial(session._invoke, session._resolve_stat)
+    )
     if callbacks is None:
         return False
     fuse_options = session._normalize_fuse_options(
