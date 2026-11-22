@@ -391,6 +391,10 @@ An exact name lookup uses a mapping.
 
 Raw frame lookup searches sorted byte offsets without allocating all raw filenames.
 
+For a whole indexed TFRecord of at most 64 KiB, tboardfs reads only that frame, usually in one request.
+
+It validates both TFRecord checksums and compares the payload checksum with the index before returning data.
+
 Stat uses the indexed size of stored binaries and graphs; it does not render them.
 
 On a stable source, a mapped binary read checks only the 4 KiB blocks that overlap the requested range.

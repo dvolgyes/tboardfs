@@ -1,12 +1,17 @@
 """Check TFRecord header reuse, frame validation, and iterator positions."""
 
 import struct
-from io import BytesIO
+from collections.abc import Buffer
+from io import BufferedReader, BytesIO, FileIO
+from pathlib import Path
+from typing import IO
 
 import pytest
 
 from tboardfs import tfrecord
 from tboardfs.crc32c import masked_crc32c
+from tboardfs.file_status import FileIdentity
+from tboardfs.indexed_frame import IndexedFrame
 from tboardfs.model import TFRecordError
 from tboardfs.proto import compat_pb2
 
@@ -99,6 +104,61 @@ def test_nonzero_start_keeps_absolute_offsets_for_empty_frame() -> None:
     assert second.record_offset == len(prefix) + len(empty)
     assert second.payload_offset == second.record_offset + 12
     assert second.payload == b"data"
+
+
+@pytest.mark.parametrize("size", [0, (64 << 10) - 16, (64 << 10) - 15])
+def test_indexed_read_preserves_record_and_source_offsets(
+    tmp_path: Path, size: int
+) -> None:
+    source = tmp_path / "events"
+    data = _frame(b"first") + _frame(b"x" * size) + _frame(b"last")
+    source.write_bytes(data)
+    _, middle, _ = tfrecord.iter_tfrecords(BytesIO(data))
+    ref = middle.reference(FileIdentity.of(source.stat()))
+
+    assert IndexedFrame.read(source, ref) == middle
+
+
+@pytest.mark.parametrize("size", [8 << 10, 65 << 10], ids=["small", "large"])
+def test_indexed_read_accepts_positive_short_transfers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, size: int
+) -> None:
+    """Reading an intact indexed frame must tolerate short raw transfers."""
+    source = tmp_path / "events"
+    data = _frame(b"first") + _frame(b"x" * size) + _frame(b"last")
+    source.write_bytes(data)
+    _, expected, _ = tfrecord.iter_tfrecords(BytesIO(data))
+    ref = expected.reference(FileIdentity.of(source.stat()))
+
+    class ShortFileIO(FileIO):
+        def read(self, size: int = -1, /) -> bytes | None:
+            return super().read(min(size, 4096) if size >= 0 else size)
+
+        def readinto(self, buffer: Buffer, /) -> int | None:
+            with memoryview(buffer).cast("B") as view:
+                return super().readinto(view[:4096])
+
+    original_open = Path.open
+
+    def open_source(
+        path: Path,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> IO[str] | IO[bytes] | FileIO | BufferedReader:
+        if path != source or mode != "rb":
+            return original_open(path, mode, buffering, encoding, errors, newline)
+        raw = ShortFileIO(path, mode)
+        if buffering == 0:
+            return raw
+        if buffering < 0:
+            return BufferedReader(raw)
+        return BufferedReader(raw, buffer_size=buffering)
+
+    monkeypatch.setattr(Path, "open", open_source)
+    assert IndexedFrame.read(source, ref) == expected
 
 
 def test_public_iterator_honors_seek_between_yields() -> None:

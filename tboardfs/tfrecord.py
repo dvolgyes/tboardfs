@@ -70,13 +70,14 @@ def iter_tfrecords(
 def _iter_tfrecords(
     handle: BinaryIO,
     *,
+    start: int | None = None,
     end: int | None = None,
     stop: int | None = None,
     max_record_size: int = DEFAULT_MAX_RECORD_SIZE,
     shared_cursor: bool = False,
 ) -> Iterator[Record]:
-    """Yield frames starting before stop and bounded by end."""
-    record_offset = handle.tell()
+    """Yield bounded frames; start is the source offset of the current cursor."""
+    record_offset = handle.tell() if start is None else start
     if end is None:
         end = handle.seek(0, os.SEEK_END)
         handle.seek(record_offset)

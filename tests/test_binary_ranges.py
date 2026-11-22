@@ -84,9 +84,10 @@ def test_small_member_does_not_read_large_sibling(
     expected = ScaleCorpus.small_png(0xABCDEF)
     assert fs.getattr(SIBLING)["st_size"] == len(expected)
 
-    def reject_full_read(handle: BinaryIO, frame: FrameRef) -> Record:
+    def reject_full_read(source: BinaryIO | Path, frame: FrameRef) -> Record:
         pytest.fail(f"reading {frame.size} frame bytes for a {len(expected)}-byte PNG")
 
+    monkeypatch.setattr(IndexedFrame, "read", staticmethod(reject_full_read))
     monkeypatch.setattr(IndexedFrame, "verify", staticmethod(reject_full_read))
     handle = fs.open(SIBLING, os.O_RDONLY)
     try:

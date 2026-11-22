@@ -1,14 +1,16 @@
 """The raw view creates frame nodes only when a file is requested."""
 
 import json
+import struct
 from errno import EIO
 from pathlib import Path
 from typing import NoReturn
 
 import pytest
-from test_open_handles import _append
+from test_open_handles import _append, _loss_record
 
 from tboardfs import TensorBoardFS
+from tboardfs.crc32c import masked_crc32c
 from tboardfs.file_tree import SingleEventTree
 from tboardfs.raw_frames import RawFrames, _RawFrameChildren
 
@@ -107,6 +109,47 @@ def test_raw_export_preserves_long_names_and_validates_original_frame(
         tree.read_file(first_path)
     assert corrupt.value.errno == EIO
     assert tree.read_file(second_path) == all_frames[len(first) :]
+
+
+@pytest.mark.parametrize(
+    "change", ["length-crc", "footer", "replacement", "longer", "truncated"]
+)
+def test_indexed_raw_frame_rejects_source_changes(tmp_path: Path, change: str) -> None:
+    source = tmp_path / _EVENTS
+    first, middle, last = (_loss_record(step) for step in (1, 2, 3))
+    original = first + middle + last
+    source.write_bytes(original)
+    tree = SingleEventTree(source)
+    first_path, middle_path, _ = tree.list_file_paths(view="raw")
+    assert tree.read_file(middle_path) == middle
+
+    start = len(first)
+    end = start + len(middle)
+    changed = bytearray(original)
+    match change:
+        case "length-crc":
+            changed[start + 8] ^= 1
+        case "footer":
+            changed[end - 1] ^= 1
+        case "replacement":
+            replacement = _loss_record(4)
+            assert len(replacement) == len(middle)
+            changed[start:end] = replacement
+        case "longer":
+            payload = original[start + 12 : -4]
+            length = struct.pack("<Q", len(payload))
+            changed[start : start + 12] = length + struct.pack(
+                "<I", masked_crc32c(length)
+            )
+            changed[-4:] = struct.pack("<I", masked_crc32c(payload))
+        case "truncated":
+            del changed[end - 1 :]
+    source.write_bytes(changed)
+
+    with pytest.raises(OSError) as corrupt:
+        tree.read_file(middle_path)
+    assert corrupt.value.errno == EIO
+    assert tree.read_file(first_path) == first
 
 
 def test_empty_source_and_raw_named_nested_run(tmp_path: Path) -> None:
