@@ -68,7 +68,7 @@ def test_an_unchanged_event_file_is_not_opened(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (event,) = _runs(tmp_path, "run")
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     fs.readdir("/run/scalars")
     opened = _spy_opens(monkeypatch)
 
@@ -81,7 +81,7 @@ def test_a_grown_event_file_is_read_again(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (event,) = _runs(tmp_path, "run")
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     before = fs.read("/run/scalars/loss.json", 1 << 20, 0)
     _append(event, 1)
     opened = _spy_opens(monkeypatch)
@@ -136,7 +136,7 @@ def test_rewrite_before_unchanged_checkpoint_refreshes_scalars(
     event = tmp_path / EVENTS
     frames = _loss(0, 1.0) + _loss(1, 1.0)
     event.write_bytes(frames + _loss(2, 1.0)[:tail_bytes])
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     before = fs.read("/scalars/loss.json", 1 << 20, 0)
     times = event.stat()
     time.sleep(0.02)  # past the clock tick of coarse file timestamps
@@ -155,7 +155,7 @@ def test_unreadable_replacement_drops_only_its_previous_index(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bad, _ = _runs(tmp_path, "bad", "good")
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     good_path = "/good/scalars/loss.json"
     bad_path = "/bad/scalars/loss.json"
     expected = fs.read(good_path, 4096, 0)
@@ -180,7 +180,7 @@ def test_a_touched_event_file_is_opened_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (event,) = _runs(tmp_path, "run")
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     fs.readdir("/run/scalars")
     os.utime(event, ns=(1, 1))
     opened = _spy_opens(monkeypatch)

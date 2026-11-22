@@ -11,15 +11,21 @@ import mfusepy
 import pytest
 from test_open_handles import LOSS, _append
 
+from tboardfs.constants import DEFAULT_SOURCE_CHECK_SECONDS
 from tboardfs.file_attributes import _FileAttributes
 from tboardfs.mount_binding import MountBinding
 from tboardfs.mounted import MountedTensorBoardFS
 
 
-def _mounted(tmp_path: Path) -> tuple[MountedTensorBoardFS, Path]:
+def _mounted(
+    tmp_path: Path, *, source_check_seconds: float = DEFAULT_SOURCE_CHECK_SECONDS
+) -> tuple[MountedTensorBoardFS, Path]:
     event = tmp_path / "events.out.tfevents"
     _append(event, 0, 1)
-    return MountedTensorBoardFS(tmp_path, refresh_age_seconds=0), event
+    fs = MountedTensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=source_check_seconds
+    )
+    return fs, event
 
 
 def _binding(fs: MountedTensorBoardFS, monkeypatch: pytest.MonkeyPatch) -> MountBinding:
@@ -94,7 +100,7 @@ def test_native_getattr_repopulates_stat_from_resolved_fields(
 def test_native_getattr_keeps_old_handle_after_append(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fs, event = _mounted(tmp_path)
+    fs, event = _mounted(tmp_path, source_check_seconds=0)
     binding = _binding(fs, monkeypatch)
     info = mfusepy.fuse_file_info()
     assert fs.open(LOSS, info) == 0
@@ -112,7 +118,7 @@ def test_native_getattr_keeps_old_handle_after_append(
 
 def test_open_uses_direct_io_and_keeps_a_version(tmp_path: Path) -> None:
     """The kernel must not cache pages or sizes across file versions."""
-    fs, event = _mounted(tmp_path)
+    fs, event = _mounted(tmp_path, source_check_seconds=0)
     info = SimpleNamespace(flags=0, fh=0, direct_io=0)
 
     assert fs.open(LOSS, info) == 0
@@ -127,7 +133,7 @@ def test_open_uses_direct_io_and_keeps_a_version(tmp_path: Path) -> None:
 
 def test_release_frees_the_version_of_the_file_info(tmp_path: Path) -> None:
     """After release the same file info number reads the current version."""
-    fs, event = _mounted(tmp_path)
+    fs, event = _mounted(tmp_path, source_check_seconds=0)
     info = SimpleNamespace(flags=0, fh=0, direct_io=0)
     fs.open(LOSS, info)
     _append(event, 2)

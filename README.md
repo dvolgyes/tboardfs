@@ -105,7 +105,8 @@ tboardfs runs in the background by default. With `--foreground`, it stays in the
 | -- | -- | -- |
 | `--scalar-format LIST` | `json,tsv,npz` | Comma-separated table formats for scalars, histograms and distributions: `json`, `tsv`, `csv`, `npz`. |
 | `--step-digits N` | `6` | Zero-padding width of step file names, from 1 to 20. |
-| `--refresh-age-seconds S` | `150` | Minimum interval between local searches for new files and directories (`0` for immediate discovery, `inf` to freeze each directory after its first scan). |
+| `--refresh-age-seconds S` | `150` | Minimum interval between local searches for new files and directories (`0` to search on each access, `inf` to freeze each directory after its first scan). |
+| `--source-check-seconds S` | `120` | Minimum interval between status checks of known event files in an accessed run. Accepts finite, nonnegative seconds; `0` checks on every access. |
 | `--cache-size-mb N` | `1024` | Memory for rendered files. `0` turns the cache off. |
 | `-j N`, `--index-workers N` | `1` | Maximum workers per cold file index (`1` keeps indexing serial). |
 | `--disk-index` | off | Reuse verified per-file indexes across mounts. |
@@ -277,7 +278,15 @@ This works for sibling runs and for runs nested below grouping directories.
 Adding or removing a directory, changing a run with child runs, or resolving a folder-name collision uses full
 placement.
 
-After a run is indexed, accessing its virtual paths checks known event files even within the discovery interval.
+After indexing, tboardfs checks the status of known event files on the first access to that run after its 120-second
+check interval expires.
+
+Until then, path lookups and directory listings can reflect the previously indexed view.
+
+No background polling or checks for running training processes are needed.
+
+Directory discovery has its own 150-second default interval and can update the run's event index when it finds files
+were added or removed.
 
 The check uses device, inode, birth time where available, size, modification time and status-change time; it ignores
 access time.
@@ -286,7 +295,18 @@ Unchanged sources need no reopen for indexing.
 
 On a FUSE mount with `--disk-index`, the status check excludes the private index without a separate path walk.
 
-Opening a virtual file on a live run checks the known event files again, even after a path-based `getattr`.
+Use `--source-check-seconds 0` to check known event files on every live access, including opening a file after a
+path-based `getattr`.
+
+This does not change when tboardfs discovers new files or subdirectories.
+
+For example, to check known files and search for new inputs on each access:
+
+```bash
+tboardfs --source-check-seconds 0 --refresh-age-seconds 0 runs/experiment-1 mnt
+```
+
+In Python, pass `source_check_seconds` to `TensorBoardFS` or `MountedTensorBoardFS` to set the same interval.
 
 For regular files in one directory, a live refresh resolves the directory once and checks each file relative to it.
 
@@ -297,13 +317,14 @@ function if available.
 
 The same kernel check can confirm that a source path outside the excluded directories contains no symlinks.
 
-tboardfs does not reuse that result on later accesses.
+tboardfs does not carry that path authorization over to a later virtual-file open.
 
 Between directory scans, tboardfs reuses the names and expected fingerprints of indexed sibling files.
 
 For an eligible parent, tboardfs encodes its directory name and each event filename once per snapshot.
 
-It opens the parent again and compares each regular file with its indexed fingerprint.
+When the source check is due, tboardfs opens the parent again and compares each regular file with its indexed
+fingerprint.
 
 On supported Linux CPython builds, an optional C extension compares sibling fingerprints without creating a Python
 `stat_result` for each file.
@@ -314,13 +335,15 @@ Each check still opens the parent, compares the live sibling fingerprints, and c
 
 If the extension was not built, or Python reports file birth times, tboardfs uses the Python comparison.
 
-Before discovery is due, matching fingerprints let that access skip rebuilding the list of event files.
+Before discovery is due, tboardfs can reuse the known filenames instead of enumerating the directory again.
 
 For a cached binary or graph leaf, `getattr` can report the indexed size without checking its source path twice.
 
 This applies only when the same lookup verified that exact source as a regular file outside the excluded directories.
 
-The mount still checks known sidecars, but it skips sidecar processing for an event-only run.
+On a live mount, known sidecars still have their own status checks, independent of the event-file interval.
+
+Discovering new sidecars follows the local directory discovery interval.
 
 If a sibling check fails or detects a change, tboardfs refreshes the run in source order to preserve inherited metadata.
 
@@ -333,7 +356,11 @@ The next refresh resolves the directory name again.
 
 Local directory discovery finds new event files, subdirectories and sidecars without scanning idle runs.
 
-`--refresh-age-seconds inf` freezes a directory after its first listing or lookup inside it.
+`--refresh-age-seconds inf` freezes the indexed view of each directory after its first listing or lookup inside it.
+
+It disables later discovery and live refreshes for that directory, even with `--source-check-seconds 0`.
+
+The source-check option itself does not accept `inf`.
 
 Before tboardfs indexes a run, `stat` reports its parent's published time if it is nonzero.
 
@@ -343,11 +370,11 @@ If tboardfs cannot safely read that directory's metadata, `stat` reports time ze
 
 Listing the run discovers its contents, so its timestamp can change even if no process wrote to it.
 
-After indexing, `stat` reports the newest discovered content time and checks for changes in live mode.
+After indexing, `stat` reports the newest indexed content time and refreshes the live view when due.
 
 The mount caches up to 32,768 recently used event-backed file paths across all runs.
 
-A cache hit still checks the owning run for changes in live mode.
+A cache hit does not bypass a due refresh of the owning run.
 
 Consecutive lookups can reuse the last resolved file or its virtual parent directory.
 
@@ -359,7 +386,7 @@ For exports generated entirely from indexed data, the first render supplies the 
 
 While that path remains in the metadata cache, `stat` can reuse its size even after eviction of the rendered bytes.
 
-External sidecars retain their own status checks; their presence does not disable caching for event-backed exports.
+The presence of external sidecars does not disable caching for event-backed exports.
 
 Append complete frames, and replace the event file when rewriting history.
 
@@ -379,12 +406,27 @@ directory size.
 A replacement, a decrease in observed file size, a same-size metadata change or an invalid checkpoint requires a fresh
 index.
 
-A deleted or unreadable source drops out of the active view without invalidating unrelated runs.
+A deleted or unreadable event source drops out of the active view when the mount detects the change, without
+invalidating unrelated runs.
+
+A removed subdirectory can remain listed until discovery runs again.
+
+Previously indexed metadata and exports generated entirely from indexed data, such as scalar tables, can remain visible
+until the next source check, even if the event file has been deleted or is no longer readable.
 
 Changing an earlier frame *and* growing the same inode can leave old typed rows visible under the append-only
 assumption.
 
 If the filesystem reports identical metadata across a same-size rewrite, a status check alone cannot detect it.
+
+The event-file interval controls index freshness, not access or integrity checks.
+
+New opens of source-backed exports still check the source path and read permissions.
+
+A cached source-backed export still requires read authorization, even when returning cached bytes without rereading the
+frame.
+
+When reading indexed bytes from the source, small and large reads still verify the applicable frame or range CRCs.
 
 Opening a rendered export pins its bytes; opening a directly indexed binary pins the source descriptor.
 

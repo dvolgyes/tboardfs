@@ -53,7 +53,7 @@ def test_live_framing(cases: Path) -> None:
     valid = cases / (PREFIX + "adjacent-valid")
     incomplete = cases / (PREFIX + "valid-prefix-incomplete-tail")
     assert (cases / (PREFIX + "header-only-over-ceiling")).stat().st_size == 12
-    fs = TensorBoardFS(cases)
+    fs = TensorBoardFS(cases, source_check_seconds=0)
     rows = json.loads(fs.read(SCALAR, 65536, 0))
     assert [(r["step"], r["value"]) for r in rows] == [(1, 1.25), (1, 1.25), (2, 2.5)]
 

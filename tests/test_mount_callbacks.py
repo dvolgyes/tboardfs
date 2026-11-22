@@ -132,7 +132,7 @@ def test_native_stat_keeps_the_open_version_after_append(
 ) -> None:
     event = tmp_path / "events.out.tfevents"
     _append(event, 0, 1)
-    fs = MountedTensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = MountedTensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     path = LOSS.encode()
 
     def loop(ops: Any) -> int:

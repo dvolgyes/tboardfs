@@ -505,7 +505,9 @@ def test_mount_cold_parallel_then_reuses_and_resumes_serially(
     path.write_bytes(b"".join(frames))
     serial = TensorBoardFS(tmp_path)
     expected = _contents(serial)
-    mounted = TensorBoardFS(tmp_path, index_workers=2, refresh_age_seconds=0)
+    mounted = TensorBoardFS(
+        tmp_path, index_workers=2, refresh_age_seconds=0, source_check_seconds=0
+    )
     assert _contents(mounted) == expected
     assert len(attempted) == 1 and attempted[0] is not None
     original = mounted._state.runs[()].files[path]

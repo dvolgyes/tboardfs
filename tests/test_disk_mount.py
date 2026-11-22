@@ -123,13 +123,13 @@ def test_periodic_discovery_binds_new_upstream_metadata_sibling(
     source, _ = roots
     mountpoint = source.parent / "mount"
     mountpoint.mkdir()
-    now = 1000.0
-    monkeypatch.setattr(filesystem.time, "time", lambda: now)
+    now = 0.0
+    monkeypatch.setattr(filesystem, "_source_clock", lambda: now)
     dependent = _images(2, PNG)
     dependent.summary.value[0].ClearField("metadata")
     (source / "events.out.tfevents.2").write_bytes(_frame(dependent))
     (source / "events.out.tfevents.3").write_bytes(_loss(3, 3.0))
-    fs = TensorBoardFS(source, mountpoint=mountpoint, refresh_age_seconds=60)
+    fs = TensorBoardFS(source, mountpoint=mountpoint)
     fallback = "/tensors/img/000002_2.png"
     image = "/images/img/000002.png"
     assert fs.read(fallback, 4096, 0) == PNG
@@ -137,15 +137,16 @@ def test_periodic_discovery_binds_new_upstream_metadata_sibling(
 
     definition = source / "events.out.tfevents.1"
     definition.write_bytes(_frame(_images(1, PNG)))
-    now += 59
+    now = 149.0
     assert fs.read(fallback, 4096, 0) == PNG
-    now += 1
+    now = 150.0
     assert "img" in fs.readdir("/images")
     assert fs.read(image, 4096, 0) == PNG
     with pytest.raises(FileNotFoundError):
         fs.getattr(fallback)
 
     definition.unlink()
+    now = 270.0
     assert fs.read(fallback, 4096, 0) == PNG
     with pytest.raises(FileNotFoundError):
         fs.getattr(image)
@@ -160,7 +161,7 @@ def test_disk_mount_keeps_live_appends_and_refreshes_on_reopen(
     event = source / "events.out.tfevents.1"
     event.write_bytes(_loss(1, 1.0))
     _contents(TensorBoardFS(source, disk_index=True))
-    opened = TensorBoardFS(source, disk_index=True)
+    opened = TensorBoardFS(source, disk_index=True, source_check_seconds=0)
     before = _contents(opened)
     with event.open("ab") as handle:
         handle.write(_loss(2, 2.0))
@@ -191,7 +192,9 @@ def test_open_refreshes_scalar_after_getattr(
     virtual = "/scalars/loss.json"
     if disk_index:
         assert TensorBoardFS(source, disk_index=True).getattr(virtual)["st_size"] > 0
-    fs = TensorBoardFS(source, disk_index=disk_index, refresh_age_seconds=3600)
+    fs = TensorBoardFS(
+        source, disk_index=disk_index, refresh_age_seconds=3600, source_check_seconds=0
+    )
     assert fs.getattr(virtual)["st_size"] > 0
 
     expected = [(1, 1.0)] if sibling else []
@@ -229,7 +232,7 @@ def test_first_binary_read_after_restored_index_grows(
 
     with monkeypatch.context() as hit:
         hit.setattr(_EventIndexer, "parse_event_file", refuse_parse)
-        fs = TensorBoardFS(source, disk_index=True)
+        fs = TensorBoardFS(source, disk_index=True, source_check_seconds=0)
         assert fs.readdir(directory) == original
     with event.open("ab") as handle:
         handle.write(_frame(_images(2, PNG)))
@@ -332,6 +335,7 @@ def test_open_rejects_known_event_retargeted_into_disk_storage(
         mountpoint=source.parent / "mnt" if mounted else None,
         disk_index=True,
         refresh_age_seconds=3600,
+        source_check_seconds=0,
     )
     virtual = "/images/img/000002.png"
     assert fs.getattr(virtual)["st_size"] == len(PNG)
@@ -368,7 +372,11 @@ def test_known_siblings_follow_lexical_parent_replacement(
     for step, name in enumerate(names, start=1):
         (source / name).write_bytes(_loss(step, float(step)))
     fs = TensorBoardFS(
-        source, mountpoint=mountpoint, disk_index=True, refresh_age_seconds=3600
+        source,
+        mountpoint=mountpoint,
+        disk_index=True,
+        refresh_age_seconds=3600,
+        source_check_seconds=0,
     )
     virtual = "/scalars/loss.json"
 
@@ -406,7 +414,9 @@ def test_disk_index_without_mount_drops_invalid_event_link(
     data.write_bytes(_loss(1, 1.0))
     link = source / "events.out.tfevents.1"
     link.symlink_to(data.name)
-    fs = TensorBoardFS(source, disk_index=True, refresh_age_seconds=3600)
+    fs = TensorBoardFS(
+        source, disk_index=True, refresh_age_seconds=3600, source_check_seconds=0
+    )
     virtual = "/scalars/loss.json"
     assert fs.getattr(virtual)["st_size"] > 0
     link.unlink()

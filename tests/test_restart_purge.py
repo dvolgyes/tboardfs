@@ -191,7 +191,7 @@ def test_growing_resumed_run_equals_a_fresh_parse(tmp_path: Path, seed: int) -> 
     )
     (tmp_path / "events.out.tfevents.0").write_bytes(FIRST_RUN)
     event = tmp_path / "events.out.tfevents.1"
-    growing = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    growing = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     start = 0
     cuts = np.sort(rng.integers(1, len(second), size=4)).tolist()
     for cut in [*cuts, len(second)]:
@@ -258,7 +258,7 @@ def test_same_clock_histograms_remain_independent_after_append_and_restart(
 
     path = tmp_path / "events.out.tfevents.0"
     path.write_bytes(_version() + observations(0, 10))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
 
     def medians() -> list[float]:
         rows = json.loads(fs.read("/distributions/weights/000003.json", 1 << 20, 0))

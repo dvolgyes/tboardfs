@@ -82,7 +82,7 @@ def test_large_live_run_generations(tmp_path: Path) -> None:
     assert 2 <= count < 1_000_000
     source = tmp_path / EVENT_NAME
     ScaleCorpus.write(source, count)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     initial_names = [".", "..", *(f"{step:06d}.png" for step in range(count))]
     assert fs.readdir(IMAGES) == initial_names
     assert fs.readdir(IMAGES) == initial_names

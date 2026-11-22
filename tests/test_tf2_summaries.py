@@ -136,7 +136,7 @@ def test_omitted_metadata_across_append_and_rotation(tmp_path: Path) -> None:
     rotated = tmp_path / "events.out.tfevents.2"
     blob = b"GIF89a" + bytes(32)
     first.write_bytes(_frame(_images(1, blob)))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     assert fs.read("/videos/img/000001.gif", 100, 0) == blob
     for step, path in ((2, first), (3, rotated)):
         next_event = _images(step, blob + bytes([step]))

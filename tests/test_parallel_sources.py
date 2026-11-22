@@ -202,7 +202,9 @@ def test_live_siblings_share_a_guarded_walk_and_refresh_immediately(
     for step, path in enumerate(paths):
         path.write_bytes(_scalar_record(step))
     monkeypatch.setattr("tboardfs.mount_index._prepare_siblings", None)
-    fs = TensorBoardFS(run, mountpoint=mountpoint, refresh_age_seconds=3600)
+    fs = TensorBoardFS(
+        run, mountpoint=mountpoint, refresh_age_seconds=3600, source_check_seconds=0
+    )
     virtual = "/scalars/loss.json"
 
     def steps() -> list[int]:
@@ -263,7 +265,9 @@ def test_warmed_siblings_follow_rebound_parent_without_discovery(
             path = directory / f"events.out.tfevents.{index}"
             path.write_bytes(_scalar_record(first + index))
 
-    fs = TensorBoardFS(run, mountpoint=mountpoint, refresh_age_seconds=3600)
+    fs = TensorBoardFS(
+        run, mountpoint=mountpoint, refresh_age_seconds=3600, source_check_seconds=0
+    )
     virtual = "/scalars/loss.json"
 
     def steps() -> list[int]:

@@ -12,6 +12,7 @@ import pytest
 from test_concurrency import _run_threads
 
 from tboardfs import TensorBoardFS
+from tboardfs.constants import DEFAULT_SOURCE_CHECK_SECONDS
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.proto import compat_pb2
 
@@ -46,10 +47,15 @@ def _read_in_chunks(fs: TensorBoardFS, path: str, handle: int, chunk: int) -> by
     return b"".join(parts)
 
 
-def _growing_fs(tmp_path: Path) -> tuple[TensorBoardFS, Path]:
+def _growing_fs(
+    tmp_path: Path, *, source_check_seconds: float = 0
+) -> tuple[TensorBoardFS, Path]:
     event = tmp_path / "events.out.tfevents"
     _append(event, *range(3))
-    return TensorBoardFS(tmp_path, refresh_age_seconds=0), event
+    fs = TensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=source_check_seconds
+    )
+    return fs, event
 
 
 def test_handle_keeps_the_version_from_open(tmp_path: Path) -> None:
@@ -139,7 +145,7 @@ def test_open_rejects_directories_and_missing_files(
     tmp_path: Path, path: str, error: int
 ) -> None:
     """Only existing files can be opened."""
-    fs, _ = _growing_fs(tmp_path)
+    fs, _ = _growing_fs(tmp_path, source_check_seconds=DEFAULT_SOURCE_CHECK_SECONDS)
 
     with pytest.raises(OSError) as raised:
         fs.open(path, 0)

@@ -35,7 +35,7 @@ def test_raw_listing_lookup_and_snapshot(
     original = source.read_bytes()
     names = [_name(0), _name(len(first))]
     directory = f"/raw/{_EVENTS}"
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     mounted = MountedTensorBoardFS(tmp_path, refresh_age_seconds=0)
 
     def materialized(*args: object) -> NoReturn:

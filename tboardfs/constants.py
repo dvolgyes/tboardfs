@@ -17,6 +17,7 @@ DEFAULT_CACHE_SIZE_MB = 1024
 MAX_INDEX_BYTES = 512 << 20
 INDEX_DIGEST_BYTES = 16  # XXH3-128
 DEFAULT_DISCOVERY_SECONDS = 150.0
+DEFAULT_SOURCE_CHECK_SECONDS = 120.0
 LOG_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
     "<level>{level}</level> | <level>{message}</level>"

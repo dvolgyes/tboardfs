@@ -3,7 +3,6 @@
 import os
 import stat
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from test_incremental_parse import _files, _frame
@@ -56,7 +55,7 @@ def test_stat_of_cold_run_uses_the_parent_time_until_descent(tmp_path: Path) -> 
     os.utime(tmp_path, (500.0, 500.0))
     os.utime(tmp_path / "a", (550.0, 550.0))
     os.utime(tmp_path / "a" / "b", (575.0, 575.0))
-    fs = TensorBoardFS(tmp_path)
+    fs = TensorBoardFS(tmp_path, source_check_seconds=0)
 
     assert _times(fs, "/") == (500.0, 500.0, 500.0)
     assert "a" in fs.readdir("/")
@@ -76,7 +75,7 @@ def test_stat_separates_a_cold_run_from_the_colliding_virtual_dir(
 ) -> None:
     _scalar(tmp_path, 1000.0, "root")
     _scalar(tmp_path / "scalars", 2000.0, "child")
-    fs = TensorBoardFS(tmp_path)
+    fs = TensorBoardFS(tmp_path, source_check_seconds=0)
 
     assert _times(fs, "/scalars~2") == (1000.0, 1000.0, 1000.0)
     _scalar(tmp_path, 3000.0, "root")
@@ -170,9 +169,7 @@ def test_stat_validates_cold_topology_at_the_discovery_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clock = [1000.0]
-    monkeypatch.setattr(
-        tboardfs.filesystem, "time", SimpleNamespace(time=lambda: clock[0])
-    )
+    monkeypatch.setattr(tboardfs.filesystem, "_source_clock", lambda: clock[0])
     _scalar(tmp_path, 1000.0, "root")
     _scalar(tmp_path / "old", 2000.0, "loss")
     (tmp_path / "replaced").mkdir()
@@ -200,7 +197,7 @@ def test_stat_does_not_use_a_real_directory_placeholder_for_a_sidecar(
     _scalar(tmp_path, 1000.0, "root")
     plugins = tmp_path / "plugins"
     _scalar(plugins, 2000.0, "nested")
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     assert "plugins~2" in fs.readdir("/")
     assert _times(fs, "/plugins~2") == (1000.0, 1000.0, 1000.0)
 
@@ -220,7 +217,7 @@ def test_stat_does_not_use_a_real_directory_placeholder_for_a_sidecar(
 
 def test_a_directory_time_follows_new_data(tmp_path: Path) -> None:
     _scalar(tmp_path, 1000.0, "loss")
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     assert fs.getattr("/scalars")["st_mtime"] == 1000.0
     _scalar(tmp_path, 3000.0, "loss")
 

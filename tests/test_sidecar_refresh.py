@@ -3,7 +3,6 @@
 import errno
 import os
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from test_open_handles import _append
@@ -39,7 +38,7 @@ def test_warmed_run_discovers_and_refreshes_sidecar(
 ) -> None:
     """Discovery waits for a scan; known sidecars stay live under their run."""
     now = 1000.0
-    monkeypatch.setattr(filesystem, "time", SimpleNamespace(time=lambda: now))
+    monkeypatch.setattr(filesystem, "_source_clock", lambda: now)
     source = tmp_path / "run"
     source.mkdir()
     mountpoint = tmp_path / "mount"
@@ -148,7 +147,7 @@ def test_group_sidecars_change_owner_when_nested_run_appears(tmp_path: Path) -> 
     profile = group / "inner" / "profile"
     profile.mkdir(parents=True)
     (profile / "trace").write_bytes(b"trace")
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     fs.readdir("/group/inner")
     assert fs.read("/profile/trace", 20, 0) == b"trace"
 

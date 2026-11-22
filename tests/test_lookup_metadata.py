@@ -2,7 +2,8 @@
 
 import json
 import os
-from errno import ENOENT
+from contextlib import ExitStack
+from errno import EIO, ENOENT
 from pathlib import Path
 from unittest.mock import call, patch
 
@@ -12,7 +13,7 @@ from test_open_handles import LOSS, _append, _read_in_chunks
 from test_render_cache import EVENTS, _count_renders
 from test_tf_producer_cases import CORPUS
 
-from tboardfs import TensorBoardFS
+from tboardfs import TensorBoardFS, filesystem
 from tboardfs.proto import compat_pb2
 
 
@@ -30,7 +31,9 @@ def test_generated_size_without_render_byte_cache(
 ) -> None:
     event = tmp_path / EVENTS
     _append(event, 0)
-    fs = TensorBoardFS(tmp_path, cache_size_mb=0, refresh_age_seconds=0)
+    fs = TensorBoardFS(
+        tmp_path, cache_size_mb=0, refresh_age_seconds=0, source_check_seconds=0
+    )
     renders = _count_renders(monkeypatch)
 
     if open_first:
@@ -60,7 +63,9 @@ def test_generated_size_without_render_byte_cache(
 def test_stat_after_append_scans_the_run_once(tmp_path: Path) -> None:
     event = tmp_path / EVENTS
     _append(event, 0)
-    fs = TensorBoardFS(tmp_path, cache_size_mb=0, refresh_age_seconds=0)
+    fs = TensorBoardFS(
+        tmp_path, cache_size_mb=0, refresh_age_seconds=0, source_check_seconds=0
+    )
     before = fs.getattr(LOSS)["st_size"]
     _append(event, 1)
 
@@ -94,7 +99,7 @@ def test_name_map_leaf_disappears_on_direct_lookup(
 def test_warmed_neighboring_leaves_follow_append_and_discovery(tmp_path: Path) -> None:
     event = tmp_path / EVENTS
     _append(event, 0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     neighbor = "/scalars/loss.tsv"
     alternate = "scalars//./loss.json"
     handle = fs.open(LOSS, 0)
@@ -159,7 +164,11 @@ def test_warmed_binary_stat_rejects_retargeted_event(
     excluded = (mountpoint if blocked == "mount" else storage) / EVENTS
     excluded.write_bytes(frame)
     fs = TensorBoardFS(
-        source, mountpoint=mountpoint, disk_index=True, refresh_age_seconds=age
+        source,
+        mountpoint=mountpoint,
+        disk_index=True,
+        refresh_age_seconds=age,
+        source_check_seconds=0,
     )
     path = "/images/img/000001.png"
     assert fs.getattr(path)["st_size"] == len(png)
@@ -178,6 +187,99 @@ def test_warmed_binary_stat_rejects_retargeted_event(
         fs.release(path, handle)
 
 
+@pytest.mark.parametrize("blocked", ["mount", "storage"])
+def test_warm_source_leaves_recheck_access_before_source_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked: str
+) -> None:
+    now = 0.0
+    monkeypatch.setattr(filesystem, "_source_clock", lambda: now)
+    source = tmp_path / "source"
+    source.mkdir()
+    mountpoint = tmp_path / "mount"
+    mountpoint.mkdir()
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    storage = cache / "tboardfs" / "indexes-v1"
+    storage.mkdir(parents=True, mode=0o700)
+    event = source / EVENTS
+    png = (CORPUS / "plugins/assets/sprite.png").read_bytes()
+    frame = _image_frame(png, 1.0)
+    event.write_bytes(frame)
+    excluded = (mountpoint if blocked == "mount" else storage) / EVENTS
+    excluded.write_bytes(frame)
+    fs = TensorBoardFS(source, mountpoint=mountpoint, disk_index=True)
+    raw_dir = f"/raw/{EVENTS}"
+    (name,) = fs.readdir(raw_dir)[2:]
+    raw_path = f"{raw_dir}/{name}"
+    image_path = "/images/img/000001.png"
+
+    with ExitStack() as stack:
+        assert fs.read(raw_path, len(frame), 0) == frame
+        assert fs._renders.size_bytes >= len(frame)
+        handles = []
+        for path, expected in ((raw_path, frame), (image_path, png)):
+            assert fs.getattr(path)["st_size"] == len(expected)
+            assert fs.read(path, len(expected), 0) == expected
+            handle = fs.open(path, os.O_RDONLY)
+            stack.callback(fs.release, path, handle)
+            handles.append((path, expected, handle))
+
+        now = 119.999
+        event.unlink()
+        event.symlink_to(excluded)
+        for path, expected, handle in handles:
+            with pytest.raises(OSError) as open_error:
+                fs.open(path, os.O_RDONLY)
+            with pytest.raises(OSError) as read_error:
+                fs.read(path, len(expected), 0)
+            with pytest.raises(OSError) as stat_error:
+                fs.getattr(path)
+            assert (
+                stat_error.value.errno,
+                open_error.value.errno,
+                read_error.value.errno,
+            ) == (ENOENT, ENOENT, ENOENT)
+            assert fs.getattr(path, handle)["st_size"] == len(expected)
+            assert fs.read(path, len(expected), 0, handle) == expected
+
+
+@pytest.mark.parametrize(
+    ("change", "expected_errno"), [("chmod", EIO), ("unlink", ENOENT), ("fifo", EIO)]
+)
+def test_cached_raw_bytes_require_current_read_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str, expected_errno: int
+) -> None:
+    monkeypatch.setattr(filesystem, "_source_clock", lambda: 0.0)
+    event = tmp_path / EVENTS
+    frame = _image_frame((CORPUS / "plugins/assets/sprite.png").read_bytes(), 1.0)
+    event.write_bytes(frame)
+    fs = TensorBoardFS(tmp_path, mountpoint=tmp_path / "mount", disk_index=False)
+    raw_dir = f"/raw/{EVENTS}"
+    (name,) = fs.readdir(raw_dir)[2:]
+    path = f"{raw_dir}/{name}"
+
+    handle = fs.open(path, os.O_RDONLY)
+    try:
+        assert fs._renders.size_bytes >= len(frame)
+        if change == "chmod":
+            event.chmod(0)
+            if os.access(event, os.R_OK):
+                pytest.skip("process can read a mode-000 file")
+            assert fs.getattr(path)["st_size"] == len(frame)
+        else:
+            event.unlink()
+            if change == "fifo":
+                os.mkfifo(event)
+        with pytest.raises(OSError) as open_error:
+            fs.open(path, os.O_RDONLY)
+        with pytest.raises(OSError) as read_error:
+            fs.read(path, len(frame), 0)
+        assert open_error.value.errno == read_error.value.errno == expected_errno
+        assert fs.read(path, len(frame), 0, handle) == frame
+    finally:
+        fs.release(path, handle)
+
+
 def test_repeated_binary_stat_after_sibling_and_payload_changes(tmp_path: Path) -> None:
     event = tmp_path / "events.out.tfevents.café"
     png = (CORPUS / "plugins/assets/sprite.png").read_bytes()
@@ -185,7 +287,10 @@ def test_repeated_binary_stat_after_sibling_and_payload_changes(tmp_path: Path) 
     sibling = tmp_path / "events.out.tfevents.2"
     _append(sibling, 0)
     fs = TensorBoardFS(
-        tmp_path, mountpoint=tmp_path / "mount", refresh_age_seconds=3600
+        tmp_path,
+        mountpoint=tmp_path / "mount",
+        refresh_age_seconds=3600,
+        source_check_seconds=0,
     )
     path = "/images/img/000001.png"
     before = fs.getattr(path)

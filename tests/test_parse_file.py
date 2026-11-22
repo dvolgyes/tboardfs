@@ -548,7 +548,7 @@ def test_filesystem_incrementally_parses_appended_records(tmp_path: Path) -> Non
     """Refresh mode parses only newly appended complete records."""
     path = tmp_path / "events.out.tfevents"
     path.write_bytes(_record(_event(100.0, 1, [_simple_value("loss", 2.0)])))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
 
     assert len(json.loads(fs.read("/scalars/loss.json", 10000, 0))) == 1
     first_cache = fs._state.runs[()].files[path]
@@ -583,7 +583,7 @@ def test_filesystem_reads_records_appended_during_a_parse(
             yield record
 
     monkeypatch.setattr(tboardfs.indexer, "_iter_tfrecords", append_during_parse)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     assert len(json.loads(fs.read("/scalars/loss.json", 10000, 0))) == 1
     monkeypatch.setattr(tboardfs.indexer, "_iter_tfrecords", original)
 
@@ -986,7 +986,7 @@ def test_rewritten_anchor_rebuilds_all_rows(tmp_path: Path, grow: bool) -> None:
     new = _loss_record(3) + _loss_record(4)
     assert len(old) == len(new)
     path.write_bytes(old)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     assert len(json.loads(fs.read("/scalars/loss.json", 10000, 0))) == 2
     path.write_bytes(new + (_loss_record(5) if grow else b""))
     rows = json.loads(fs.read("/scalars/loss.json", 10000, 0))
@@ -1016,7 +1016,7 @@ def test_raw_handle_retains_original_frame_across_replacement(tmp_path: Path) ->
     path = tmp_path / "events.out.tfevents"
     before, after = _loss_record(1), _loss_record(2)
     path.write_bytes(before)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     name = f"/raw/{path.name}/{0:020d}.tfrecord"
     handle = fs.open(name, os.O_RDONLY)
     try:

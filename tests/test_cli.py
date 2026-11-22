@@ -1,13 +1,16 @@
+import json
 import logging
 import os
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from click.testing import CliRunner
+from test_open_handles import _append
 
-from tboardfs import cli
+from tboardfs import cli, filesystem
 from tboardfs.mounted import MountedTensorBoardFS
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -232,6 +235,56 @@ def test_mount_cli_sets_index_workers(
 
     assert result.exit_code == 0, result.output
     assert counts == [workers]
+
+
+@pytest.mark.parametrize(
+    ("seconds", "early_steps"),
+    [("2.5", [0]), ("0", [0, 1])],
+)
+def test_mount_cli_source_check_interval_controls_visible_steps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    seconds: str,
+    early_steps: list[int],
+) -> None:
+    """An append appears when the configured source check is due."""
+    source = tmp_path / "runs"
+    source.mkdir()
+    event = source / "events.out.tfevents"
+    _append(event, 0)
+    now = 0.0
+    monkeypatch.setattr(filesystem, "_source_clock", lambda: now)
+    path = "/scalars/loss.json"
+
+    def mount_runner(fs: MountedTensorBoardFS, *args: Any, **kwargs: Any) -> None:
+        nonlocal now
+
+        def read_steps() -> list[int]:
+            info = SimpleNamespace(flags=os.O_RDONLY, fh=0, direct_io=0)
+            fs.open(path, info)
+            try:
+                return [row["step"] for row in json.loads(fs.read(path, 4096, 0, info))]
+            finally:
+                fs.release(path, info)
+
+        assert "loss.json" in {name for name, _, _ in fs.readdir("/scalars")}
+        assert read_steps() == [0]
+
+        _append(event, 1)
+        now = 2.0
+        assert read_steps() == early_steps
+
+        now = 2.5
+        assert read_steps() == [0, 1]
+
+    monkeypatch.setattr(cli, "mount", mount_runner)
+    result = CliRunner().invoke(
+        cli.main,
+        [str(source), str(tmp_path / "mnt"), "--source-check-seconds", seconds],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0, result.output
 
 
 @pytest.mark.parametrize(

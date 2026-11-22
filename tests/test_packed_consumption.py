@@ -138,6 +138,7 @@ def test_late_duplicate_and_renamed_media_survive_refresh_on_open_handles(
             disk_index=disk_index,
             index_workers=1 if disk_index else 2,
             refresh_age_seconds=0,
+            source_check_seconds=0,
         )
         assert {path: fs.readdir(path) for path in directories} == listings
         _assert_media(fs, primary, winning, 40.0)

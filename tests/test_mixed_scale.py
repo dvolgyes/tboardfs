@@ -76,7 +76,9 @@ def test_mixed_log(tmp_path: Path) -> None:
     assert source.stat().st_size >= target
     raw_offset, frame = _check_framing(source, count)
 
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, cache_size_mb=0)
+    fs = TensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=0, cache_size_mb=0
+    )
     assert fs.readdir(IMAGES) == [
         ".",
         "..",

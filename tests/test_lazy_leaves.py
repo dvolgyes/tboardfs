@@ -55,7 +55,7 @@ def test_new_step_file_displaces_a_binary_directory_on_append(tmp_path: Path) ->
     source = tmp_path / "events.out.tfevents.images"
     tag = "series/000004.png/sub"
     source.write_bytes(_image("series", 1, 1, 10) + _image(tag, 3, 3, 30))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     prior = fs.virtual_tree()["children"]["images"]["children"]["series"]["children"]
     nested = "sub/000003.png"
     assert fs.read(
@@ -81,7 +81,7 @@ def test_deep_tag_can_be_listed_and_extended(tmp_path: Path) -> None:
     tag = "/".join(["x"] * 1300)
     source = tmp_path / "events.out.tfevents.deep"
     source.write_bytes(_image(tag, 5, 2, 17))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     assert fs.getattr(f"/images/{tag}")["st_mtime"] == 17
     assert fs.read(f"/images/{tag}/000005.png", 100, 0) == _ScaleCorpus.small_png(2)
     with source.open("ab") as stream:

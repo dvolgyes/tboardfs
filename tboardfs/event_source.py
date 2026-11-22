@@ -118,17 +118,23 @@ class EventSource:
 
     @classmethod
     def open(
-        cls, path: Path, *, mountpoint: Path | None = None, buffering: int = -1
+        cls,
+        path: Path,
+        *,
+        mountpoint: Path | None = None,
+        storage: Path | None = None,
+        buffering: int = -1,
     ) -> BinaryIO:
         """Open a checked regular file without allocating the scan buffer for small files."""
         flags = os.O_RDONLY | os.O_NONBLOCK
         expected = None
-        if mountpoint is None:
-            fd = os.open(path, flags)
-        else:
-            with cls._target(path, (str(mountpoint),)) as (_, parent, name, status):
+        blocked = tuple(str(root) for root in (mountpoint, storage) if root is not None)
+        if blocked:
+            with cls._target(path, blocked) as (_, parent, name, status):
                 expected = FileIdentity.of(cls._regular(path, status))
                 fd = os.open(name, flags | os.O_NOFOLLOW, dir_fd=parent)
+        else:
+            fd = os.open(path, flags)
         try:
             actual = cls._regular(path, os.fstat(fd))
             if expected is not None and expected != FileIdentity.of(actual):

@@ -13,6 +13,7 @@ import pytest
 from test_incremental_parse import _frame, _loss
 
 from tboardfs import TensorBoardFS, filesystem, parallel_index
+from tboardfs.constants import DEFAULT_SOURCE_CHECK_SECONDS
 from tboardfs.index_segment import Segment
 from tboardfs.index_transport import _PackedResult
 from tboardfs.indexer import _EventIndexer
@@ -65,13 +66,19 @@ def source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return event
 
 
-def _mount(source: Path, *, disk_index: bool = False) -> TensorBoardFS:
+def _mount(
+    source: Path,
+    *,
+    disk_index: bool = False,
+    source_check_seconds: float = DEFAULT_SOURCE_CHECK_SECONDS,
+) -> TensorBoardFS:
     return TensorBoardFS(
         source.parent,
         mountpoint=source.parent.parent / "mnt",
         disk_index=disk_index,
         index_workers=4,
         refresh_age_seconds=0,
+        source_check_seconds=source_check_seconds,
     )
 
 
@@ -219,7 +226,7 @@ def test_first_read_of_old_tensor_after_append(
 ) -> None:
     reads = _track_reads(monkeypatch)
     path = "/tensors/main/000001.npy"
-    fs = _mount(source)
+    fs = _mount(source, source_check_seconds=0)
     fs.readdir("/tensors/main")
     entry = next(entry for entry in _cache(fs, source).json_entries if entry.step == 1)
     assert isinstance(entry.tensor_source, TensorSource)
@@ -236,7 +243,7 @@ def test_first_read_of_old_tensor_after_append(
 def test_rewrite_after_lookup_invalidates_even_an_unchanged_extent(
     source: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fs = _mount(source)
+    fs = _mount(source, source_check_seconds=0)
     fs.readdir("/tensors/main")
     entry = next(entry for entry in _cache(fs, source).json_entries if entry.step == 1)
     extent = entry.tensor_source
@@ -277,7 +284,7 @@ def test_rewrite_after_lookup_invalidates_even_an_unchanged_extent(
 def test_open_handle_pins_rendered_tensor_across_source_replacement(
     source: Path,
 ) -> None:
-    fs = _mount(source)
+    fs = _mount(source, source_check_seconds=0)
     path = "/tensors/main/000001.npy"
     fs.readdir("/tensors/main")
     assert any(

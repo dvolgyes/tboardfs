@@ -10,6 +10,7 @@ from tboardfs.errors import fuse_error
 from tboardfs.extract import _IndexedBlobDecoder
 from tboardfs.indexed_frame import IndexedFrame
 from tboardfs.model import BinaryEntry
+from tboardfs.node_source import _NodeSource
 from tboardfs.render_node import render_node
 
 
@@ -20,8 +21,7 @@ def _render_miss(
     mountpoint: Path | None,
 ) -> bytes:
     """Try a guarded frame read before falling back to ordinary rendering."""
-    entry = node.get("entry")
-    source = node.get("source") if entry is None else entry.source_path
+    source = _NodeSource.path(node)
     if source is None:
         return render_node(node)
     data = _guarded_frame_bytes(node, source, plans, mountpoint)

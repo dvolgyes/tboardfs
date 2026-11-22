@@ -84,7 +84,7 @@ def test_incremental_refresh_equals_a_fresh_parse(tmp_path: Path, seed: int) -> 
     )
     cuts = np.sort(rng.integers(1, len(data), size=int(rng.integers(1, 5))))
     event = tmp_path / "events.out.tfevents.host"
-    growing = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    growing = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     start = 0
     for cut in [*cuts.tolist(), len(data)]:
         with event.open("ab") as handle:
@@ -100,7 +100,7 @@ def test_replaced_event_file_is_parsed_again(tmp_path: Path, new_steps: int) -> 
     """A new file at the same path never continues from the old offset."""
     event = tmp_path / "events.out.tfevents.host"
     event.write_bytes(b"".join(_loss(step, 1.0) for step in range(3)))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     fs.read("/scalars/loss.json", 1 << 20, 0)
     replacement = tmp_path / "replacement"
     replacement.write_bytes(b"".join(_loss(step, 2.0) for step in range(new_steps)))

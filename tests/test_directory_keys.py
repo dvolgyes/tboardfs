@@ -19,7 +19,12 @@ def test_warm_listing_reuses_sorted_keys_across_unrelated_refresh(
     for run in ("a", "b"):
         (tmp_path / run).mkdir()
         _append(tmp_path / run / EVENTS, 0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, scalar_formats=("json", "tsv"))
+    fs = TensorBoardFS(
+        tmp_path,
+        refresh_age_seconds=0,
+        source_check_seconds=0,
+        scalar_formats=("json", "tsv"),
+    )
     fs.virtual_tree()
     sorts = []
 

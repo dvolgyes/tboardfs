@@ -3,12 +3,13 @@
 import os
 import stat
 import time
-from dataclasses import dataclass, field
 from errno import EINVAL, EIO, EISDIR, ENOENT, ENOTDIR, EROFS
 from functools import lru_cache, partial
 from io import FileIO
+from math import inf
 from pathlib import Path
 from threading import RLock
+from time import monotonic as _source_clock
 from typing import Any, TypedDict, Unpack
 
 from loguru import logger
@@ -16,7 +17,6 @@ from loguru import logger
 from tboardfs._directory import (
     _GUARD_PLAN_MAX_PATH_CHARS,
     _guard_plan,
-    _GuardPlans,
     _plain_path,
 )
 from tboardfs._guarded_render import _render_miss
@@ -28,69 +28,22 @@ from tboardfs.constants import (
 from tboardfs.errors import fuse_error
 from tboardfs.file_attributes import _FileAttributes, _unrendered_size
 from tboardfs.file_times import FileTimes
-from tboardfs.leaf_cache import _CachedLeaf, _Location, _MountTree, _resolve_node
-from tboardfs.model import (
-    BinaryEntry,
-    EventFileCache,
-    GraphEntry,
-    RunCache,
-    SidecarEntry,
-)
+from tboardfs.leaf_cache import _CachedLeaf, _Location, _resolve_node
+from tboardfs.model import BinaryEntry, EventFileCache, GraphEntry, RunCache
 from tboardfs.mount_index import _IndexOptions, _RunData, _SiblingSnapshot
+from tboardfs.mount_state import _Directory, _FsState
+from tboardfs.node_source import _NodeSource
 from tboardfs.paths import _DirectoryNode, _Paths
 from tboardfs.render_cache import RenderCache, RenderKey
 from tboardfs.render_node import render_node
 from tboardfs.run_places import RunPlaces
 from tboardfs.run_tree import RunTree
 from tboardfs.sidecar_scan import SidecarScan
-from tboardfs.verified_span import _FrameValidations, _VerifiedSpan
+from tboardfs.verified_span import _VerifiedSpan
 
 _PARALLEL_MIN_BYTES = 8 << 20
 
 _GUARD_PLAN_LIMIT = 256
-
-
-@dataclass
-class _Directory:
-    """Local listing deadline, browseable children, and their sidecar ownership."""
-
-    scanned_at: float | None = None
-    siblings: _SiblingSnapshot | None = None
-    children: set[tuple[str, ...]] = field(default_factory=set)
-    owned: set[Path] = field(default_factory=set)
-    owner: tuple[str, ...] | None = None
-    pieces: dict[tuple[str, ...], tuple[SidecarEntry, ...]] = field(
-        default_factory=dict
-    )
-
-
-@dataclass
-class _FsState:
-    """Mutable TensorBoardFS cache state.
-
-    :ivar runs: run caches by virtual run path
-    :ivar directories: local discovery state by source directory
-    :ivar tree: mount-wide tree publication state
-    :ivar run_trees: run version and virtual tree by run path
-    :ivar next_version: next unused run data version
-    :ivar open_files: content and mtime kept for each open file handle
-    :ivar next_handle: number for the next open file handle
-    """
-
-    index: _IndexOptions
-    guard_plans: _GuardPlans | None
-    runs: dict[tuple[str, ...], RunCache] = field(default_factory=dict)
-    directories: dict[tuple[str, ...], _Directory] = field(default_factory=dict)
-    tree: _MountTree = field(default_factory=_MountTree)
-    run_trees: dict[tuple[str, ...], tuple[int, dict[str, Any]]] = field(
-        default_factory=dict
-    )
-    next_version: int = 1
-    frame_validations: _FrameValidations = field(default_factory=_FrameValidations)
-    open_files: dict[int, tuple[bytes | _VerifiedSpan, float]] = field(
-        default_factory=dict
-    )
-    next_handle: int = 1
 
 
 class _MountIndexKeywords(TypedDict, total=False):
@@ -99,6 +52,7 @@ class _MountIndexKeywords(TypedDict, total=False):
     index_workers: int
     disk_index: bool
     disk_index_size_mb: int
+    source_check_seconds: float
 
 
 class TensorBoardFS:
@@ -113,7 +67,8 @@ class TensorBoardFS:
 
     :ivar source: source log directory
     :ivar step_digits: zero-padding width for step filenames
-    :ivar refresh_age_seconds: minimum age before cache refresh
+    :ivar refresh_age_seconds: minimum interval between local directory scans
+    :ivar source_check_seconds: minimum interval between checks of known event files
     :ivar scalar_formats: enabled scalar export formats
     :ivar index_workers: maximum workers for a cold event-file index
     :ivar log_to_screen: whether operations log status messages
@@ -176,6 +131,11 @@ class TensorBoardFS:
         self._run_places = RunPlaces()
         self._state.directories[()] = _Directory()
         self._ensure_run(())
+
+    @property
+    def source_check_seconds(self) -> float:
+        """Return the interval between checks of a run's known event sources."""
+        return self._state.index.source_check_seconds
 
     @property
     def index_workers(self) -> int:
@@ -426,7 +386,7 @@ class TensorBoardFS:
     ) -> tuple[int, tuple[str, ...]]:
         depth, owner = self._run_places.mapped_owner(parts, len(parts))
         if directory_attrs and depth == len(parts) and depth:
-            now = time.time()
+            now = _source_clock()
             disk_parts = self._run_places.disk_parts
             for ancestor_depth in range(depth):
                 ancestor = disk_parts[parts[:ancestor_depth]]
@@ -529,6 +489,14 @@ class TensorBoardFS:
                 self._state.index.mountpoint,
             )
             self._renders.put(key, data)
+        else:
+            index = self._state.index
+            _NodeSource.require_readable(
+                node,
+                plans=self._state.guard_plans,
+                mountpoint=index.mountpoint,
+                storage=index.storage,
+            )
         if isinstance(node, _CachedLeaf) and node.size is None:
             with self._lock:
                 node.size = len(data)
@@ -602,38 +570,51 @@ class TensorBoardFS:
         run = self._ensure_run(parts)
         local = self._state.directories[parts]
         previous = local.scanned_at
-        if previous is not None and self.refresh_age_seconds == float("inf"):
+        if previous is not None and self.refresh_age_seconds == inf:
             return None
-        now = time.time()
+        now = _source_clock()
         scan = previous is None or now - previous >= self.refresh_age_seconds
-        siblings = local.siblings
-        if not scan and siblings is not None and siblings.matches():
+        reuse = local.reusable(now, self.source_check_seconds)
+        verified = local.match(now) if not scan and not reuse else None
+        if verified is not None:
+            run.refreshed_at = time.time()
+        if not scan and (reuse or verified is not None):
             if local.owner != parts or local.pieces or run.sidecars:
                 self._refresh_sidecars(run, None)
-            run.refreshed_at = now
-            return siblings.paths
+            return verified
         directory = self.source.joinpath(*parts)
         entries = None
         if scan:
             entries = self._scan_entries(directory)
             local.scanned_at = now
         files, entries = self._run_sources(run, directory, entries)
-        if self._refresh_run(run, files, entries):
-            self._log("finished parsing TensorBoard files")
+        if reuse and run.files.keys() == set(files):
+            self._refresh_sidecars(run, entries)
+        else:
+            if self._refresh_run(run, files, entries):
+                self._log("finished parsing TensorBoard files")
+            local.checked_at = now
         if entries is not None:
-            children = {
-                (*parts, name)
-                for name in self._child_names(directory, entries, local.owned)
-            }
-            old = local.children
-            if old != children:
-                local.children = children
-                for child in children - old:
-                    self._state.directories[child] = _Directory()
-                for removed in old - children:
-                    self._forget(removed)
-                self._invalidate_tree()
+            self._update_children(parts, directory, entries)
         return None
+
+    def _update_children(
+        self, parts: tuple[str, ...], directory: Path, entries: list[os.DirEntry[str]]
+    ) -> None:
+        local = self._state.directories[parts]
+        children = {
+            (*parts, name)
+            for name in self._child_names(directory, entries, local.owned)
+        }
+        old = local.children
+        if old == children:
+            return
+        local.children = children
+        for child in children - old:
+            self._state.directories[child] = _Directory()
+        for removed in old - children:
+            self._forget(removed)
+        self._invalidate_tree()
 
     def _scan_entries(self, directory: Path) -> list[os.DirEntry[str]]:
         if not self._allowed(directory):

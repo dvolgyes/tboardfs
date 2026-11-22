@@ -266,7 +266,9 @@ def main() -> None:
         source = root / EVENT_NAME
         shutil.copyfile(args.data, source)
         trial.cold_scalar(root, args.count)
-        fs = TensorBoardFS(root, refresh_age_seconds=0, cache_size_mb=0)
+        fs = TensorBoardFS(
+            root, refresh_age_seconds=0, source_check_seconds=0, cache_size_mb=0
+        )
         trial.images(fs, args.count, large_slice)
         if not args.narrow:
             trial.mixed(fs, source, args.count)

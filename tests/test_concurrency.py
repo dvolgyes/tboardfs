@@ -69,7 +69,7 @@ def test_state_updates_never_overlap(
 ) -> None:
     """Only one callback at a time refreshes the shared run state."""
     _append(tmp_path / "events.out.tfevents", 0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     original = tboardfs.filesystem._RunData.refresh_event_files
     active = [0]
     peak = [0]
@@ -104,7 +104,7 @@ def test_append_after_snapshot_shows_on_next_lookup(tmp_path: Path) -> None:
     """An explicit snapshot does not prevent later lookups from seeing new data."""
     path = tmp_path / "events.out.tfevents"
     _append(path, 0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     assert fs.virtual_tree()["children"]["scalars"]["type"] == "dir"
     _append(path, 1)
 
@@ -119,7 +119,7 @@ def test_readers_survive_concurrent_training_writes(tmp_path: Path) -> None:
     for run in runs:
         run.mkdir()
         _append(run / "events.out.tfevents.host", 0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     stop = threading.Event()
 
     def writer() -> None:

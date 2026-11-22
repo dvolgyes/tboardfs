@@ -29,6 +29,10 @@ def _mount(tmp_path: Path, monkeypatch: Any, *option: str) -> Result:
         (["--loglevel", "LOUD"], "LOUD"),
         (["--refresh-age-seconds", "-1"], "not in the range"),
         (["--refresh-age-seconds", "nan"], "not a number"),
+        (["--source-check-seconds", "-0.5"], "not in the range"),
+        (["--source-check-seconds", "-inf"], "not in the range"),
+        (["--source-check-seconds", "nan"], "not a number"),
+        (["--source-check-seconds", "inf"], "not finite"),
     ],
 )
 def test_mount_cli_refuses_bad_values(
@@ -100,3 +104,11 @@ def test_library_refuses_unsupported_formats(tmp_path: Path, formats: Any) -> No
         TensorBoardFS(tmp_path, scalar_formats=formats)
     with pytest.raises(ValueError, match="unsupported scalar format"):
         SingleEventTree(FIXTURE_EVENT, scalar_format=",".join(formats))
+
+
+@pytest.mark.parametrize("seconds", [-1.0, float("nan"), float("inf")])
+def test_library_refuses_unusable_source_intervals(
+    tmp_path: Path, seconds: float
+) -> None:
+    with pytest.raises(ValueError, match="source_check_seconds"):
+        TensorBoardFS(tmp_path, source_check_seconds=seconds)

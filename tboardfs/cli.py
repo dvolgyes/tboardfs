@@ -12,6 +12,7 @@ from tboardfs.cli_options import LOGLEVEL, SCALAR_FORMAT, STEP_DIGITS
 from tboardfs.constants import (
     DEFAULT_CACHE_SIZE_MB,
     DEFAULT_DISCOVERY_SECONDS,
+    DEFAULT_SOURCE_CHECK_SECONDS,
     LOG_FORMAT,
 )
 from tboardfs.mount_index import _DEFAULT_DISK_INDEX_SIZE_MB
@@ -29,7 +30,18 @@ from tboardfs.stdlib_logging import StdlibToLoguru
     default=DEFAULT_DISCOVERY_SECONDS,
     show_default=True,
     callback=lambda _ctx, _param, value: _number(value),
-    help="Interval for local discovery. Known event files are checked on access; inf freezes each directory after its first visit.",
+    help="Interval for local discovery; inf freezes each directory after its first visit.",
+)
+@click.option(
+    "--source-check-seconds",
+    type=click.FloatRange(min=0),
+    default=DEFAULT_SOURCE_CHECK_SECONDS,
+    show_default=True,
+    callback=lambda _ctx, _param, value: _number(value, finite=True),
+    help=(
+        "Finite interval for checking known event files in an accessed run; "
+        "0 checks on every live access."
+    ),
 )
 @SCALAR_FORMAT
 @click.option(
@@ -104,6 +116,7 @@ def main(
         mountpoint=mountpoint_path,
         step_digits=cast(int, params["step_digits"]),
         refresh_age_seconds=cast(float, params["refresh_age_seconds"]),
+        source_check_seconds=cast(float, params["source_check_seconds"]),
         scalar_formats=cast(str, params["scalar_format"]),
         log_to_screen=foreground,
         cache_size_mb=cast(int, params["cache_size_mb"]),
@@ -128,10 +141,12 @@ def main(
         ) from error
 
 
-def _number(value: float) -> float:
-    """Refuse NaN, which no range check refuses."""
+def _number(value: float, *, finite: bool = False) -> float:
+    """Refuse NaN and optionally infinity after Click's range check."""
     if math.isnan(value):
         raise click.BadParameter(f"{value} is not a number")
+    if finite and math.isinf(value):
+        raise click.BadParameter(f"{value} is not finite")
     return value
 
 

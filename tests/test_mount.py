@@ -85,6 +85,8 @@ def _start_mount(
             "--foreground",
             "--refresh-age-seconds",
             "0",
+            "--source-check-seconds",
+            "0",
         ],
         stderr=log_handle,
     )

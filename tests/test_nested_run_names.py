@@ -97,7 +97,7 @@ def test_a_renamed_run_shows_new_data(tmp_path: Path) -> None:
     _write_run(tmp_path / "exp", 1, value=1.0)
     _write_run(tmp_path / "exp" / "scalars", 1, value=2.0)
     _write_run(tmp_path / "exp" / "scalars" / "sub", 1, value=3.0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     renamed = "/exp/scalars~2/scalars/value.json"
     below = "/exp/scalars~2/sub/scalars/value.json"
     assert _values(fs, renamed) == [2.0]
@@ -116,7 +116,7 @@ def test_a_renamed_run_folder_is_logged_once(
     """A run that grows rebuilds the tree, but does not repeat the warning."""
     _write_run(tmp_path / "exp", 1, value=1.0)
     _write_run(tmp_path / "exp" / "scalars", 1, value=2.0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     fs.readdir("/exp", None)
     _write_run(tmp_path / "exp" / "scalars", 2, value=5.0)
 

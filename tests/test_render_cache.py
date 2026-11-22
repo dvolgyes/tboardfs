@@ -131,7 +131,7 @@ def test_filesystem_renders_again_when_the_run_grows(tmp_path: Path) -> None:
     """New records make the cached bytes of their run stale."""
     path = tmp_path / EVENTS
     _append(path, 0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     before = fs.read("/scalars/loss.json", 1 << 20, 0)
 
     _append(path, 1)
@@ -166,7 +166,7 @@ def test_removed_run_releases_cache_but_keeps_bytes_of_open_handle(
     for name in ("run_a", "run_b"):
         (tmp_path / name).mkdir()
         _append(tmp_path / name / EVENTS, 0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     path_a = "/run_a/scalars/loss.json"
     path_b = "/run_b/scalars/loss.json"
     other = fs.read(path_b, 1 << 20, 0)
@@ -191,7 +191,7 @@ def test_shrinking_event_file_releases_old_render_bytes(tmp_path: Path) -> None:
     _append(event, 0)
     size = event.stat().st_size
     _append(event, 1)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     path = "/scalars/loss.json"
     before = fs.read(path, 1 << 20, 0)
     assert fs._renders.size_bytes > 0
@@ -231,7 +231,7 @@ def test_render_finishing_after_run_change_does_not_repopulate_cache(
 ) -> None:
     event = tmp_path / EVENTS
     _append(event, 0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     path = "/scalars/loss.json"
     original = _guarded_render.render_node
     rendering = threading.Event()
@@ -292,7 +292,7 @@ def test_concurrent_readers_see_whole_versions_while_runs_grow(
     """Cached and fresh renders never mix versions under concurrent reads."""
     path = tmp_path / EVENTS
     _append(path, 0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     stop = threading.Event()
 
     def writer() -> None:

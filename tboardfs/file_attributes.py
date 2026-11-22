@@ -9,6 +9,7 @@ from typing import Any, NamedTuple
 from tboardfs.errors import fuse_error
 from tboardfs.leaf_cache import _CachedLeaf
 from tboardfs.model import BinaryEntry, GraphEntry, SidecarEntry
+from tboardfs.node_source import _NodeSource
 from tboardfs.open3d_asset import OPEN3D_PLUGIN, Open3DAsset
 
 
@@ -46,14 +47,11 @@ def _unrendered_size(
         return size
     kind = node["type"]
     if kind == "raw":
+        _NodeSource.require_allowed(node, allowed, checked_paths=checked_paths)
         return int(node["frame"].size)
     if kind in {"binary", "graph"}:
         stored: BinaryEntry | GraphEntry = node["entry"]
-        source = stored.source_path
-        if (checked_paths is None or source not in checked_paths) and not allowed(
-            source
-        ):
-            raise fuse_error(ENOENT)
+        _NodeSource.require_allowed(node, allowed, checked_paths=checked_paths)
         return stored.size
     if kind == "sidecar":
         entry: SidecarEntry = node["entry"]

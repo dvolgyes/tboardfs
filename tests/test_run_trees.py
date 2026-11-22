@@ -82,7 +82,9 @@ def test_growing_run_reuses_untouched_typed_subtree(tmp_path: Path) -> None:
     loss = "/run_a/scalars/loss.json"
     new_tag = "/run_a/scalars/new_tag.json"
     _append_records(run_a, _scalars(0, 100, **{"stable/metric": 42.0}))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, scalar_formats="json")
+    fs = TensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=0, scalar_formats="json"
+    )
     before = fs.virtual_tree()
     old_branch = _node(before, stable)
     old_loss = _node(before, loss)
@@ -129,7 +131,9 @@ def test_duplicate_step_can_lower_directory_times(tmp_path: Path) -> None:
     """A later record wins a step path, even when its wall time goes backward."""
     event = tmp_path / EVENTS
     event.write_bytes(_tensor(1, 20, "metric", 1) + _tensor(3, 100, "metric", 3))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, scalar_formats="json")
+    fs = TensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=0, scalar_formats="json"
+    )
     before = fs.virtual_tree()
     winning_path = "/tensors/metric/000003.json"
     assert fs.readdir("/images") == [".", ".."]
@@ -154,7 +158,9 @@ def test_new_file_directory_collision_renames_tags_across_tabs(tmp_path: Path) -
     event = tmp_path / EVENTS
     tag = "loss.json/nested"
     event.write_bytes(_scalars(1, 10, **{tag: 1.0}) + _tensor(1, 10, tag, 2))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, scalar_formats="json")
+    fs = TensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=0, scalar_formats="json"
+    )
     before = fs.virtual_tree()
     tensor = f"/tensors/{tag}/000001.json"
     original = fs.read(tensor, 4096, 0)
@@ -175,7 +181,9 @@ def test_append_to_earlier_file_preserves_duplicate_step_precedence(
     earlier = tmp_path / f"{EVENTS}.0"
     earlier.write_bytes(_tensor(1, 10, "metric", 1))
     (tmp_path / f"{EVENTS}.1").write_bytes(_tensor(1, 20, "metric", 2))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, scalar_formats="json")
+    fs = TensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=0, scalar_formats="json"
+    )
     path = "/tensors/metric/000001.json"
     winner = fs.read(path, 4096, 0)
     assert json.loads(winner)["values"] == [2.0, 2.0]
@@ -194,7 +202,9 @@ def test_restart_after_append_removes_previously_published_paths(
     """A session restart can remove tags and refresh inherited empty-tab times."""
     event = tmp_path / EVENTS
     event.write_bytes(_version() + _scalars(0, 10, kept=1.0))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, scalar_formats="json")
+    fs = TensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=0, scalar_formats="json"
+    )
     fs.virtual_tree()
     _append_records(event, _scalars(2, 100, removed=2.0))
     before = fs.virtual_tree()
@@ -213,7 +223,9 @@ def test_epoch_append_updates_previously_published_scalar_rows(tmp_path: Path) -
     """An epoch scalar is an aggregate dependency of other scalar exports."""
     event = tmp_path / EVENTS
     event.write_bytes(_scalars(1, 10, epoch=1.0) + _scalars(2, 20, loss=2.0))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, scalar_formats="json")
+    fs = TensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=0, scalar_formats="json"
+    )
     before = fs.virtual_tree()
     loss = "/scalars/loss.json"
     assert json.loads(fs.read(loss, 4096, 0))[0]["epoch"] == 1.0
@@ -236,7 +248,9 @@ def test_changed_epoch_sibling_updates_loss_without_changing_open_handle(
     (source / f"{EVENTS}.2").write_bytes(_scalars(2, 20, loss=2.0))
     mountpoint = tmp_path / "mount"
     mountpoint.mkdir()
-    fs = TensorBoardFS(source, mountpoint=mountpoint, refresh_age_seconds=3600)
+    fs = TensorBoardFS(
+        source, mountpoint=mountpoint, refresh_age_seconds=3600, source_check_seconds=0
+    )
     loss = "/scalars/loss.json"
     original = fs.read(loss, 4096, 0)
     assert json.loads(original)[0]["epoch"] == 1.0
@@ -257,7 +271,9 @@ def test_scalar_append_refreshes_an_existing_hparams_aggregate(tmp_path: Path) -
     """Metric values change even when no new HParams record was appended."""
     event = tmp_path / EVENTS
     event.write_bytes(_hparams_start(0.25, 0.0) + _scalars(1, 10, loss=1.0))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, scalar_formats="json")
+    fs = TensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=0, scalar_formats="json"
+    )
     before = fs.virtual_tree()
     path = "/hparams/hparams.json"
     assert json.loads(fs.read(path, 4096, 0))["metrics"] == {"loss": 1.0}
@@ -272,7 +288,7 @@ def test_scalar_append_refreshes_an_existing_hparams_aggregate(tmp_path: Path) -
 def test_run_versions_are_unique_and_change_with_the_run(tmp_path: Path) -> None:
     """Only a changed run gets a new version; a re-created run gets an unused one."""
     run_a, run_b = _two_runs(tmp_path)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     fs.virtual_tree()
     before = {parts: run.version for parts, run in fs._state.runs.items() if parts}
     seen = set(before.values())
@@ -300,7 +316,7 @@ def test_removed_nested_run_leaves_no_entries_in_its_parent_run(
     _append(tmp_path / "a" / EVENTS, 0)
     nested = tmp_path / "a" / "scalars" / EVENTS
     _append(nested, 0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     assert "images" in fs.readdir("/a/scalars~2")
 
     nested.unlink()
@@ -315,7 +331,9 @@ def test_flat_run_removals_refresh_listings_and_inherited_times(tmp_path: Path) 
     oldest = tmp_path / "run_c" / EVENTS
     oldest.parent.mkdir()
     _append(oldest, 0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, scalar_formats="json")
+    fs = TensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=0, scalar_formats="json"
+    )
     before = fs.virtual_tree()
     assert before["mtime"] == 120
 
@@ -356,7 +374,9 @@ def test_grouped_leaf_changes_preserve_placement_and_inherited_times(
     (tmp_path / "a/blank").mkdir()
     (tmp_path / "b/blank/leaf").mkdir(parents=True)
 
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, scalar_formats="json")
+    fs = TensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=0, scalar_formats="json"
+    )
     before = fs.virtual_tree()
     placement = fs._run_places.disk_parts
     old_names = _node(before, "/a").sorted_names()

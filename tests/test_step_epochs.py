@@ -106,7 +106,7 @@ def test_large_steps_sort_stably_after_epoch_carry_and_append(tmp_path: Path) ->
         + _scalar(first + 1, "epoch", 5)
         + _scalar(first, "loss", 3)
     )
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
 
     def rows() -> list[tuple[int, float, float]]:
         data = json.loads(fs.read("/scalars/loss.json", 1 << 20, 0))

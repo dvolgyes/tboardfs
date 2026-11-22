@@ -89,7 +89,7 @@ def test_a_file_directory_collision_is_logged_once_per_run(
 ) -> None:
     """An append does not repeat a tag's existing rename warning."""
     _write(tmp_path, _scalars(1, **{"loss": 1.0, "loss.json/x": 2.0}))
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
     first = [path for path in _files(fs) if path.startswith("/scalars/")]
     _write(tmp_path, _scalars(2, **{"loss": 3.0, "loss.json/x": 4.0}))
     second = [path for path in _files(fs) if path.startswith("/scalars/")]

@@ -1,5 +1,6 @@
 """Refresh the active run and reuse complete persisted event indexes."""
 
+import math
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from typing import Any
 from loguru import logger
 
 from tboardfs._directory import _PlainDirectory
+from tboardfs.constants import DEFAULT_SOURCE_CHECK_SECONDS
 from tboardfs.disk_index import DiskIndex, _IndexHit
 from tboardfs.event_source import EventSource
 from tboardfs.file_status import _HAS_BIRTH_TIME, FileIdentity
@@ -62,6 +64,7 @@ class _IndexOptions:
     parallel_min_bytes: int
     disk: DiskIndex | None = None
     storage: Path | None = None
+    source_check_seconds: float = DEFAULT_SOURCE_CHECK_SECONDS
 
     @classmethod
     def create(
@@ -73,8 +76,11 @@ class _IndexOptions:
         index_workers: int = 1,
         disk_index: bool = False,
         disk_index_size_mb: int = _DEFAULT_DISK_INDEX_SIZE_MB,
+        source_check_seconds: float = DEFAULT_SOURCE_CHECK_SECONDS,
     ) -> "_IndexOptions":
         """Build a passive service only when the caller opts into safe storage."""
+        if not math.isfinite(source_check_seconds) or source_check_seconds < 0:
+            raise ValueError("source_check_seconds must be finite and nonnegative")
         if index_workers < 1:
             raise ValueError("index_workers must be positive")
         if not isinstance(disk_index, bool):
@@ -83,10 +89,19 @@ class _IndexOptions:
             raise ValueError("disk_index_size_mb must be a positive integer")
         mounted_at = Path(mountpoint).resolve() if mountpoint is not None else None
         storage = _disk_index_directory(source, mounted_at) if disk_index else None
-        if storage is None:
-            return cls(mounted_at, index_workers, parallel_min_bytes)
-        disk = DiskIndex(storage, limit=disk_index_size_mb << 20, mountpoint=mounted_at)
-        return cls(mounted_at, index_workers, parallel_min_bytes, disk, storage)
+        disk = (
+            DiskIndex(storage, limit=disk_index_size_mb << 20, mountpoint=mounted_at)
+            if storage is not None
+            else None
+        )
+        return cls(
+            mounted_at,
+            index_workers,
+            parallel_min_bytes,
+            disk,
+            storage,
+            source_check_seconds,
+        )
 
     def directory_time(self, directory: Path) -> float:
         """Read a backing directory's timestamp without scanning its entries."""
