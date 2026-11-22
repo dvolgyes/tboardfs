@@ -1,8 +1,10 @@
 import os
 import stat
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from errno import EIO, EISDIR, ENOENT, ENOTDIR, EROFS
+from functools import lru_cache, partial
 from io import FileIO
 from pathlib import Path
 from threading import RLock
@@ -36,6 +38,31 @@ from tboardfs.sidecar_scan import SidecarScan
 from tboardfs.verified_span import _FrameValidations, _VerifiedSpan
 
 _PARALLEL_MIN_BYTES = 8 << 20
+
+_GUARD_PLAN_LIMIT = 256
+_GUARD_PLAN_MAX_PATH_CHARS = 1024
+_GUARD_PLAN_MAX_PREFIX_CHARS = 4096
+
+
+def _guard_plan(
+    blocked: frozenset[str], path: Path
+) -> tuple[tuple[str, ...], bool] | None:
+    """Plan bounded lexical probes before the first blocked prefix."""
+    parts = path.parts
+    if (
+        path.anchor != "/"
+        or len(parts) * len(str(path)) > _GUARD_PLAN_MAX_PREFIX_CHARS
+        or ".." in parts
+    ):
+        return None
+    prefixes: list[str] = []
+    prefix = ""
+    for part in parts[1:]:
+        prefix += "/" + part
+        if prefix in blocked:
+            return tuple(prefixes), False
+        prefixes.append(prefix)
+    return tuple(prefixes), True
 
 
 @dataclass
@@ -74,6 +101,7 @@ class _FsState:
     """
 
     index: _IndexOptions
+    guard_plans: Callable[[Path], tuple[tuple[str, ...], bool] | None] | None
     runs: dict[tuple[str, ...], RunCache] = field(default_factory=dict)
     directories: dict[tuple[str, ...], _Directory] = field(default_factory=dict)
     tree: _MountTree = field(default_factory=_MountTree)
@@ -156,7 +184,15 @@ class TensorBoardFS:
         index = _IndexOptions.create(
             self.source, mountpoint, _PARALLEL_MIN_BYTES, **index_options
         )
-        self._state = _FsState(index)
+        blocked = frozenset(
+            str(path) for path in (index.mountpoint, index.storage) if path is not None
+        )
+        self._state = _FsState(
+            index,
+            lru_cache(maxsize=_GUARD_PLAN_LIMIT)(partial(_guard_plan, blocked))
+            if blocked
+            else None,
+        )
         if index.disk is not None:
             self.source = self.source.absolute()
         self._lock = RLock()
@@ -519,12 +555,37 @@ class TensorBoardFS:
         return data
 
     def _allowed(self, path: Path) -> bool:
-        blocked = (self._state.index.mountpoint, self._state.index.storage)
-        if blocked == (None, None):
+        plans = self._state.guard_plans
+        if plans is None:
             return True
-        pending = list(reversed(path.absolute().parts[1:]))
-        current = Path("/")
-        links = 0
+        if len(str(path)) > _GUARD_PLAN_MAX_PATH_CHARS:
+            return self._allowed_resolved(path)
+        plan = plans(path)
+        if plan is not None:
+            prefixes, allowed_if_no_links = plan
+            for prefix in prefixes:
+                try:
+                    mode = os.lstat(prefix).st_mode
+                except (FileNotFoundError, NotADirectoryError):
+                    continue
+                except (OSError, ValueError):
+                    return False
+                if stat.S_ISLNK(mode):
+                    return self._allowed_resolved(path, first_link=Path(prefix))
+            return allowed_if_no_links
+        return self._allowed_resolved(path)
+
+    def _allowed_resolved(self, path: Path, *, first_link: Path | None = None) -> bool:
+        """Follow components from the root or resume at a detected symlink."""
+        blocked = (self._state.index.mountpoint, self._state.index.storage)
+        if first_link is None:
+            pending = list(reversed(path.absolute().parts[1:]))
+            current = Path("/")
+            links = 0
+        else:
+            pending = list(reversed(path.parts[len(first_link.parts) :]))
+            current = self._queue_link_target(first_link, pending)
+            links = 1
         while pending:
             part = pending.pop()
             if part == "..":
@@ -533,14 +594,26 @@ class TensorBoardFS:
             current /= part
             if current in blocked:
                 return False
-            if current.is_symlink():
+            try:
+                mode = os.lstat(current).st_mode
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            except (OSError, ValueError):
+                return False
+            if stat.S_ISLNK(mode):
                 links += 1
                 if links > 40:
                     return False
-                target = current.readlink()
-                current = Path("/") if target.is_absolute() else current.parent
-                pending.extend(reversed(target.parts[int(target.is_absolute()) :]))
+                current = self._queue_link_target(current, pending)
         return True
+
+    @staticmethod
+    def _queue_link_target(link: Path, pending: list[str]) -> Path:
+        """Prepend the current link target and return its starting directory."""
+        target = link.readlink()
+        absolute = target.is_absolute()
+        pending.extend(reversed(target.parts[int(absolute) :]))
+        return Path("/") if absolute else link.parent
 
     def _activate(self, parts: tuple[str, ...]) -> None:
         directory = self.source.joinpath(*parts)

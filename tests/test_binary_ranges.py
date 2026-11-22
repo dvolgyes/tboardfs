@@ -205,17 +205,68 @@ def test_release_cannot_close_a_descriptor_mid_read(
     assert raised.value.errno == EBADF
 
 
-def test_retargeted_source_to_mountpoint_cannot_open_a_span(tmp_path: Path) -> None:
+@pytest.mark.parametrize("ancestor", [False, True], ids=["file", "parent"])
+def test_retargeted_source_to_mountpoint_cannot_open_a_span(
+    tmp_path: Path, ancestor: bool
+) -> None:
     mountpoint = tmp_path / "mount"
     mountpoint.mkdir()
     source = tmp_path / "source"
     source.mkdir()
     fs, path, _ = _image_log(source, mountpoint=mountpoint)
-    target = path.rename(mountpoint / path.name)
-    path.symlink_to(target)
+    assert fs.getattr(NAME)["st_size"] > 0
+    link = source if ancestor else path
+    target = link.rename(mountpoint / link.name)
+    link.symlink_to(target, target_is_directory=ancestor)
     with pytest.raises(OSError) as raised:
         fs.open(NAME, os.O_RDONLY)
     assert raised.value.errno == ENOENT
+    link.unlink()
+    target.rename(link)
+    assert fs.getattr(NAME)["st_size"] > 0
+
+
+@pytest.mark.parametrize("depth", [0, 35, 105])
+def test_guard_follows_earlier_link_before_denying_lexical_prefix(
+    tmp_path: Path, depth: int
+) -> None:
+    parent = tmp_path / "parent"
+    mountpoint = parent / "mount"
+    mountpoint.mkdir(parents=True)
+    alternate = tmp_path / "alternate"
+    source = tmp_path / "source"
+    source.mkdir()
+    fs = TensorBoardFS(source, mountpoint=mountpoint)
+
+    suffix = (*("directory" for _ in range(depth)), "event")
+    candidate = mountpoint.joinpath(*suffix)
+    redirected = (alternate / mountpoint.name).joinpath(*suffix)
+    redirected.parent.mkdir(parents=True)
+    redirected.touch()
+    assert not fs._allowed(candidate)
+    original = parent.rename(tmp_path / "original")
+    parent.symlink_to(alternate.name, target_is_directory=True)
+    assert fs._allowed(candidate)
+    parent.unlink()
+    original.rename(parent)
+    assert not fs._allowed(candidate)
+
+
+def test_guard_limits_symlink_resolution(tmp_path: Path) -> None:
+    mountpoint = tmp_path / "mount"
+    mountpoint.mkdir()
+    source = tmp_path / "source"
+    source.mkdir()
+    fs = TensorBoardFS(source, mountpoint=mountpoint)
+    target = source / "event"
+    target.touch()
+    for index in range(41):
+        link = source / str(index)
+        link.symlink_to(target.name)
+        target = link
+
+    assert fs._allowed(source / "39")
+    assert not fs._allowed(source / "40")
 
 
 @pytest.mark.parametrize("meta", [False, True], ids=["graph_def", "meta_graph_def"])
