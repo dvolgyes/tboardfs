@@ -139,30 +139,43 @@ def _image_frame(png: bytes, wall_time: float) -> bytes:
 
 
 @pytest.mark.parametrize("age", [3600.0, float("inf")], ids=["live", "frozen"])
-def test_warmed_binary_stat_rejects_event_retargeted_into_mountpoint(
-    tmp_path: Path, age: float
+@pytest.mark.parametrize("blocked", ["mount", "storage"])
+def test_warmed_binary_stat_rejects_retargeted_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, age: float, blocked: str
 ) -> None:
     source = tmp_path / "source"
     source.mkdir()
     mountpoint = tmp_path / "mount"
     mountpoint.mkdir()
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    storage = cache / "tboardfs" / "indexes-v1"
+    storage.mkdir(parents=True, mode=0o700)
     event = source / EVENTS
     png = (CORPUS / "plugins/assets/sprite.png").read_bytes()
     frame = _image_frame(png, 1.0)
     event.write_bytes(frame)
     _append(source / "events.out.tfevents.sibling", 0)
-    excluded = mountpoint / EVENTS
+    excluded = (mountpoint if blocked == "mount" else storage) / EVENTS
     excluded.write_bytes(frame)
-    fs = TensorBoardFS(source, mountpoint=mountpoint, refresh_age_seconds=age)
+    fs = TensorBoardFS(
+        source, mountpoint=mountpoint, disk_index=True, refresh_age_seconds=age
+    )
     path = "/images/img/000001.png"
     assert fs.getattr(path)["st_size"] == len(png)
     assert fs.getattr(path)["st_size"] == len(png)
 
-    event.unlink()
-    event.symlink_to(excluded)
-    with pytest.raises(OSError) as raised:
-        fs.getattr(path)
-    assert raised.value.errno == ENOENT
+    handle = fs.open(path, os.O_RDONLY)
+    try:
+        event.unlink()
+        event.symlink_to(excluded)
+        with pytest.raises(OSError) as raised:
+            fs.getattr(path)
+        assert raised.value.errno == ENOENT
+        assert fs.getattr(path, handle)["st_size"] == len(png)
+        assert fs.read(path, len(png), 0, handle) == png
+    finally:
+        fs.release(path, handle)
 
 
 def test_repeated_binary_stat_after_sibling_and_payload_changes(tmp_path: Path) -> None:

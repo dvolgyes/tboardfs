@@ -21,9 +21,9 @@ from tboardfs.constants import (
     DEFAULT_SCALAR_FORMATS,
 )
 from tboardfs.errors import fuse_error
-from tboardfs.file_attributes import _FileAttributes
+from tboardfs.file_attributes import _FileAttributes, _unrendered_size
 from tboardfs.file_times import FileTimes
-from tboardfs.leaf_cache import _CachedLeaf, _MountTree, _resolve_node
+from tboardfs.leaf_cache import _CachedLeaf, _Location, _MountTree, _resolve_node
 from tboardfs.model import (
     BinaryEntry,
     EventFileCache,
@@ -32,7 +32,6 @@ from tboardfs.model import (
     SidecarEntry,
 )
 from tboardfs.mount_index import _IndexOptions, _RunData, _SiblingSnapshot
-from tboardfs.open3d_asset import OPEN3D_PLUGIN, Open3DAsset
 from tboardfs.paths import _DirectoryNode, _Paths
 from tboardfs.render_cache import RenderCache, RenderKey
 from tboardfs.render_node import render_node
@@ -206,11 +205,7 @@ class TensorBoardFS:
             return _FileAttributes(False, size, mtime, self.owner)
         if path is None:
             raise fuse_error(EINVAL)
-        node, key, mtime = self._getattr_node(path)
-        directory = node["type"] == "dir"
-        return _FileAttributes(
-            directory, 0 if directory else self._node_size(node, key), mtime, self.owner
-        )
+        return self._path_attributes(path)
 
     def readdir(self, path: str, *file_handles: object) -> list[str]:
         """Return virtual directory entries."""
@@ -328,28 +323,36 @@ class TensorBoardFS:
     def _lookup(self, path: str) -> dict[str, Any]:
         return self._locate(path)[0]
 
-    def _getattr_node(self, path: str) -> tuple[dict[str, Any], RenderKey, float]:
+    def _path_attributes(self, path: str) -> _FileAttributes:
         with self._lock:
-            node, key = self._locate_locked(path, directory_attrs=True)
+            (node, key), checked_paths = self._locate_locked(path, directory_attrs=True)
             mtime = _CachedLeaf.time_of(node)
-            if mtime:
-                return node, key, mtime
-            owner = self._run_places.disk_parts.get(key[1])
-            if owner is None or self._state.directories[owner].scanned_at is not None:
-                return node, key, mtime
-        return node, key, self._state.index.directory_time(self.source.joinpath(*owner))
+            owner = self._run_places.disk_parts.get(key[1]) if not mtime else None
+            if (
+                owner is not None
+                and self._state.directories[owner].scanned_at is not None
+            ):
+                owner = None
+        if owner is not None:
+            mtime = self._state.index.directory_time(self.source.joinpath(*owner))
+        directory = node["type"] == "dir"
+        size = (
+            0 if directory else self._node_size(node, key, checked_paths=checked_paths)
+        )
+        return _FileAttributes(directory, size, mtime, self.owner)
 
-    def _locate(self, path: str) -> tuple[dict[str, Any], RenderKey]:
+    def _locate(self, path: str) -> _Location:
         """Return the node at ``path`` and its generation-scoped render key.
 
         The key is read under the same lock as the node, so both match.
         """
         with self._lock:
-            return self._locate_locked(path, directory_attrs=False)
+            return self._locate_locked(path, directory_attrs=False)[0]
 
     def _locate_locked(
         self, path: str, *, directory_attrs: bool
-    ) -> tuple[dict[str, Any], RenderKey]:
+    ) -> tuple[_Location, frozenset[Path] | None]:
+        """Locate a node and return any paths checked by this unchanged lookup."""
         snapshot = self._state.tree
         leaves = snapshot.leaves
         parts, entry, parent = leaves.probe(path)
@@ -359,22 +362,22 @@ class TensorBoardFS:
         else:
             refreshed = parent.owner if parent is not None else None
         generation = snapshot.generation
-        if refreshed is not None:
-            self._activate(refreshed)
+        checked_paths = self._activate(refreshed) if refreshed is not None else None
         unchanged = generation == snapshot.generation
         if unchanged and entry is not None:
-            return entry[1]
+            return entry[1], checked_paths
         sibling = parent.leaf(parts[-1]) if unchanged and parent is not None else None
         if sibling is not None and refreshed is not None:
             scope = self._renders.scope(self._state.runs[refreshed].version)
-            return leaves.remember(path, refreshed, sibling, (scope, parts))
+            location = leaves.remember(path, refreshed, sibling, (scope, parts))
+            return location, checked_paths
         tree, owner = self._refresh_lookup(parts, refreshed, directory_attrs)
         node, children = _resolve_node(tree, parts, path)
         run = self._state.runs.get(owner)
         version = None if node["type"] == "name_map" or run is None else run.version
         key = self._renders.scope(version), parts
         if snapshot.root is tree and version is not None:
-            return leaves.remember(
+            location = leaves.remember(
                 path,
                 owner,
                 node,
@@ -382,7 +385,9 @@ class TensorBoardFS:
                 children=children,
                 disk_parts=self._run_places.disk_parts,
             )
-        return node, key
+        else:
+            location = node, key
+        return location, None
 
     def _refresh_lookup(
         self,
@@ -463,28 +468,15 @@ class TensorBoardFS:
         with self._lock:
             return self._state.open_files.get(handle)
 
-    def _node_size(self, node: dict[str, Any], key: RenderKey) -> int:
-        if isinstance(node, _CachedLeaf) and (size := node.size) is not None:
-            return size
-        if node["type"] == "raw":
-            return int(node["frame"].size)
-        if node["type"] in {"binary", "graph"}:
-            stored: BinaryEntry | GraphEntry = node["entry"]
-            if not self._allowed(stored.source_path):
-                raise fuse_error(ENOENT)
-            return stored.size
-        # A sidecar can be large, so its size comes from the disk.
-        if node["type"] == "sidecar":
-            entry: SidecarEntry = node["entry"]
-            if not self._allowed(entry.source_path):
-                raise fuse_error(ENOENT)
-            if entry.tab != OPEN3D_PLUGIN:
-                return entry.source_path.stat().st_size
-            asset = Open3DAsset.stat(entry.source_path)
-            if asset is None:
-                raise fuse_error(ENOENT)
-            return asset.size
-        return len(self._node_bytes(node, key))
+    def _node_size(
+        self,
+        node: dict[str, Any],
+        key: RenderKey,
+        *,
+        checked_paths: frozenset[Path] | None = None,
+    ) -> int:
+        size = _unrendered_size(node, self._allowed, checked_paths)
+        return size if size is not None else len(self._node_bytes(node, key))
 
     def _node_span(self, node: dict[str, Any]) -> _VerifiedSpan | None:
         if node["type"] not in {"binary", "graph"}:
@@ -600,19 +592,21 @@ class TensorBoardFS:
         pending.extend(reversed(target.parts[int(absolute) :]))
         return Path("/") if absolute else link.parent
 
-    def _activate(self, parts: tuple[str, ...]) -> None:
+    def _activate(self, parts: tuple[str, ...]) -> frozenset[Path] | None:
+        """Refresh a run and return the paths verified by a fresh sibling match."""
         run = self._ensure_run(parts)
         local = self._state.directories[parts]
         previous = local.scanned_at
         if previous is not None and self.refresh_age_seconds == float("inf"):
-            return
+            return None
         now = time.time()
         scan = previous is None or now - previous >= self.refresh_age_seconds
-        if not scan and local.siblings is not None and local.siblings.matches():
+        siblings = local.siblings
+        if not scan and siblings is not None and siblings.matches():
             if local.owner != parts or local.pieces or run.sidecars:
                 self._refresh_sidecars(run, None)
             run.refreshed_at = now
-            return
+            return siblings.paths
         directory = self.source.joinpath(*parts)
         entries = None
         if scan:
@@ -634,6 +628,7 @@ class TensorBoardFS:
                 for removed in old - children:
                     self._forget(removed)
                 self._invalidate_tree()
+        return None
 
     def _scan_entries(self, directory: Path) -> list[os.DirEntry[str]]:
         if not self._allowed(directory):

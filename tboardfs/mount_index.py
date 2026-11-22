@@ -128,6 +128,7 @@ class _SiblingSnapshot:
     parent: _PlainDirectory
     files: _SiblingFiles
     prepared: Callable[[], bool] | None
+    paths: frozenset[Path]
 
     @classmethod
     def capture(
@@ -152,7 +153,7 @@ class _SiblingSnapshot:
         prepared = (
             _prepare_siblings(directory.name, rows) if _prepare_siblings else None
         )
-        return cls(directory, rows, prepared)
+        return cls(directory, rows, prepared, frozenset(run.files))
 
     def matches(self) -> bool:
         """Check fresh no-follow status; defer any uncertain or changed source."""

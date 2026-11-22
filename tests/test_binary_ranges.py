@@ -207,7 +207,7 @@ def test_release_cannot_close_a_descriptor_mid_read(
 
 
 @pytest.mark.parametrize("ancestor", [False, True], ids=["file", "parent"])
-def test_retargeted_source_to_mountpoint_cannot_open_a_span(
+def test_retargeted_source_to_mountpoint_cannot_stat_or_open(
     tmp_path: Path, ancestor: bool
 ) -> None:
     mountpoint = tmp_path / "mount"
@@ -219,6 +219,9 @@ def test_retargeted_source_to_mountpoint_cannot_open_a_span(
     link = source if ancestor else path
     target = link.rename(mountpoint / link.name)
     link.symlink_to(target, target_is_directory=ancestor)
+    with pytest.raises(OSError) as raised:
+        fs.getattr(NAME)
+    assert raised.value.errno == ENOENT
     with pytest.raises(OSError) as raised:
         fs.open(NAME, os.O_RDONLY)
     assert raised.value.errno == ENOENT
@@ -259,12 +262,20 @@ def test_discovery_filters_fresh_links_to_protected_roots(
     (storage / "run" / event.name).write_bytes(event.read_bytes())
 
     fs = TensorBoardFS(source, mountpoint=mountpoint, disk_index=True)
-    (source / "allowed").symlink_to(event.parent, target_is_directory=True)
+    alias = source / "allowed"
+    alias.symlink_to(event.parent, target_is_directory=True)
     (source / "mount-link").symlink_to(mountpoint, target_is_directory=True)
     (source / "storage-link").symlink_to(storage / "run", target_is_directory=True)
 
     assert fs.readdir("/")[2:] == ["allowed"]
+    assert fs.getattr("/allowed" + NAME)["st_size"] == len(blob)
     assert fs.read("/allowed" + NAME, len(blob), 0) == blob
+
+    alias.unlink()
+    alias.symlink_to(storage / "run", target_is_directory=True)
+    with pytest.raises(OSError) as raised:
+        fs.getattr("/allowed" + NAME)
+    assert raised.value.errno == ENOENT
 
 
 @pytest.mark.parametrize("depth", [0, 35, 105])

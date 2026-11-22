@@ -301,6 +301,10 @@ If the extension was not built, or Python reports file birth times, tboardfs use
 
 Before discovery is due, matching fingerprints let that access skip rebuilding the list of event files.
 
+For a cached binary or graph leaf, `getattr` can report the indexed size without checking its source path twice.
+
+This applies only when the same lookup verified that exact source as a regular file outside the excluded directories.
+
 The mount still checks known sidecars, but it skips sidecar processing for an event-only run.
 
 If a sibling check fails or detects a change, tboardfs refreshes the run in source order to preserve inherited metadata.

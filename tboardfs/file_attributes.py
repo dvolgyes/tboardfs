@@ -1,7 +1,15 @@
 """Represent the complete stat attributes of a virtual file or directory."""
 
 import stat
-from typing import NamedTuple
+from collections.abc import Callable
+from errno import ENOENT
+from pathlib import Path
+from typing import Any, NamedTuple
+
+from tboardfs.errors import fuse_error
+from tboardfs.leaf_cache import _CachedLeaf
+from tboardfs.model import BinaryEntry, GraphEntry, SidecarEntry
+from tboardfs.open3d_asset import OPEN3D_PLUGIN, Open3DAsset
 
 
 class _FileAttributes(NamedTuple):
@@ -26,3 +34,35 @@ class _FileAttributes(NamedTuple):
             "st_uid": uid,
             "st_gid": gid,
         }
+
+
+def _unrendered_size(
+    node: dict[str, Any],
+    allowed: Callable[[Path], bool],
+    checked_paths: frozenset[Path] | None,
+) -> int | None:
+    """Return the size without rendering, reusing source checks only for index entries."""
+    if isinstance(node, _CachedLeaf) and (size := node.size) is not None:
+        return size
+    kind = node["type"]
+    if kind == "raw":
+        return int(node["frame"].size)
+    if kind in {"binary", "graph"}:
+        stored: BinaryEntry | GraphEntry = node["entry"]
+        source = stored.source_path
+        if (checked_paths is None or source not in checked_paths) and not allowed(
+            source
+        ):
+            raise fuse_error(ENOENT)
+        return stored.size
+    if kind == "sidecar":
+        entry: SidecarEntry = node["entry"]
+        if not allowed(entry.source_path):
+            raise fuse_error(ENOENT)
+        if entry.tab != OPEN3D_PLUGIN:
+            return entry.source_path.stat().st_size
+        asset = Open3DAsset.stat(entry.source_path)
+        if asset is None:
+            raise fuse_error(ENOENT)
+        return asset.size
+    return None
