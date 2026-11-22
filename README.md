@@ -261,7 +261,11 @@ Opening a virtual file on a live run checks the known event files again, even af
 
 For regular files in one directory, a live refresh resolves the directory once and checks each file relative to it.
 
-This avoids repeated directory lookups without adding a delay before tboardfs sees an append.
+On Linux, when libc provides `openat2` and the kernel accepts it, tboardfs can open an ordinary absolute directory path
+in one system call without following symlinks.
+
+For paths that need symlink resolution or cannot use `openat2`, tboardfs keeps the guarded component-by-component
+lookup.
 
 If that directory is renamed during the check, tboardfs still checks its regular files through the open directory.
 

@@ -1,14 +1,18 @@
 """Reject source replacements without following a path into the mount."""
 
+import ctypes
 import json
 import os
+import subprocess
+import sys
 from errno import EACCES, EINVAL, ENOENT
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 from test_incremental_parse import _frame
 
-from tboardfs import TensorBoardFS, parallel_index
+from tboardfs import TensorBoardFS, _directory, parallel_index
 from tboardfs.event_source import EventSource
 from tboardfs.paths import _Paths
 from tboardfs.proto import compat_pb2
@@ -129,6 +133,64 @@ def _scalar_record(step: int) -> bytes:
     return _frame(event)
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux openat2")
+def test_deep_sibling_status_under_descriptor_limit(tmp_path: Path) -> None:
+    """A deep ordinary parent does not need a descriptor for every ancestor."""
+
+    class OpenHow(ctypes.Structure):
+        _fields_ = [
+            ("flags", ctypes.c_uint64),
+            ("mode", ctypes.c_uint64),
+            ("resolve", ctypes.c_uint64),
+        ]
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    openat2 = getattr(libc, "openat2", None)
+    if openat2 is None:
+        pytest.skip("libc does not export openat2")
+    openat2.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.POINTER(OpenHow),
+        ctypes.c_size_t,
+    )
+    openat2.restype = ctypes.c_int
+    how = OpenHow(os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC, 0, 0x04)
+    fd = openat2(-100, b".", ctypes.byref(how), ctypes.sizeof(how))
+    if fd < 0:
+        pytest.skip(f"openat2 unavailable: {os.strerror(ctypes.get_errno())}")
+    os.close(fd)
+
+    run = tmp_path.resolve().joinpath(*(["level"] * 64))
+    run.mkdir(parents=True)
+    for index in (1, 2):
+        (run / f"events.out.tfevents.{index}").write_bytes(bytes(index))
+
+    script = dedent("""
+        import resource
+        import sys
+        from pathlib import Path
+
+        from tboardfs.event_source import EventSource
+
+        run, mount, storage = map(Path, sys.argv[1:])
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        limit = 32 if soft == resource.RLIM_INFINITY else min(soft, 32)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (limit, hard))
+        with EventSource._sibling_stat(run, mountpoint=mount, storage=storage) as stat:
+            for index in (1, 2):
+                path = run / f"events.out.tfevents.{index}"
+                assert stat(path) == path.stat()
+        """)
+    result = subprocess.run(
+        [sys.executable, "-c", script, run, tmp_path / "mount", tmp_path / "storage"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_live_siblings_share_a_guarded_walk_and_refresh_immediately(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -157,9 +219,11 @@ def test_live_siblings_share_a_guarded_walk_and_refresh_immediately(
             ancestor_opens += 1
         return original_open(path, flags, dir_fd=dir_fd)
 
-    monkeypatch.setattr(os, "open", count_open)
-    assert steps() == list(range(24))
-    assert 0 < ancestor_opens < len(paths) // 2
+    with monkeypatch.context() as patch:
+        patch.setattr(_directory, "_OPEN_DIRECTORY", None)
+        patch.setattr(os, "open", count_open)
+        assert steps() == list(range(24))
+        assert 0 < ancestor_opens < len(paths) // 2
 
     with paths[-1].open("ab") as stream:
         stream.write(_scalar_record(30))
@@ -246,11 +310,56 @@ def test_sibling_status_resolves_aliases_again_after_retargeting(
         stat(alias / "source")
 
 
+@pytest.mark.parametrize("root_name", ["mount", "storage"])
+def test_sibling_status_rejects_lexical_protected_ancestor(
+    tmp_path: Path, root_name: str
+) -> None:
+    root = tmp_path.resolve()
+    mount = root / "mount"
+    storage = root / "storage"
+    mount.mkdir()
+    storage.mkdir()
+    protected = root / root_name
+    nested = protected / "subdir"
+    nested.mkdir()
+    hidden = "events.out.tfevents.hidden"
+    for directory in (protected, nested):
+        (directory / hidden).touch()
+        with (
+            EventSource._sibling_stat(
+                directory, mountpoint=mount, storage=storage
+            ) as stat,
+            pytest.raises(FileNotFoundError),
+        ):
+            stat(directory / hidden)
+    run = root / f"{root_name}-run"
+    run.mkdir()
+    source = run / "events.out.tfevents.source"
+    source.write_bytes(b"safe")
+
+    with EventSource._sibling_stat(run, mountpoint=mount, storage=storage) as stat:
+        assert stat(source) == source.stat()
+        with pytest.raises(FileNotFoundError):
+            stat(protected / hidden)
+    with (
+        EventSource._sibling_stat(root, mountpoint=mount, storage=storage) as stat,
+        pytest.raises(FileNotFoundError),
+    ):
+        stat(protected)
+
+    lexical_run = protected / ".." / run.name
+    context = EventSource._sibling_stat(lexical_run, mountpoint=mount, storage=storage)
+    with context as stat, pytest.raises(FileNotFoundError):
+        stat(lexical_run / source.name)
+
+
 def test_sibling_status_falls_back_when_parent_cannot_be_opened(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
     run = tmp_path / "run"
-    run.mkdir()
+    run.symlink_to(target, target_is_directory=True)
     source = run / "source"
     source.touch()
     mountpoint = tmp_path / "mount"
