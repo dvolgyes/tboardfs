@@ -921,6 +921,27 @@ It discards the file contents and exits nonzero if traversal or reading fails.
 
 Use a stable directory tree during each measurement.
 
+### Compact corpora for read comparisons
+
+For shorter repeated FUSE measurements, make a separate event-file prefix for each workflow and reuse it for all
+revisions:
+
+```bash
+mkdir -p "$work/mixed/log/run" "$work/lightning/log/lightning-4g"
+scripts/extract_tfrecord_prefix.py --source "$mixed_event" \
+    --output "$work/mixed/log/run/$(basename "$mixed_event")"
+scripts/extract_tfrecord_prefix.py --source "$lightning_event" \
+    --output "$work/lightning/log/lightning-4g/$(basename "$lightning_event")"
+```
+
+- The extractor checks both CRC32C fields for each copied TFRecord and stops before the first frame that would exceed
+  the 40 MiB cap (`--max-bytes` changes it).
+- With a cap at or beyond EOF, it rejects an incomplete or corrupt tail.
+- It publishes the completed output atomically without overwriting any existing path.
+- The mixed prefix retains captured producer formats and repeated bulk records; the Lightning prefix retains training
+  and validation, JPEG and PNG images, the model graph, and hyperparameters.
+- A prefix can end within a training iteration and does not represent the full run's scale or later-step distribution.
+
 ## Generate Test Data
 
 The test suite reads `tests/data/producer-cases/` and `test-logs/` without installing the writers.
