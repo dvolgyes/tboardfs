@@ -659,11 +659,12 @@ class TensorBoardFS:
         directory: Path,
         entries: list[os.DirEntry[str]] | None,
     ) -> tuple[list[Path], list[os.DirEntry[str]] | None]:
+        """Prefilter private storage only when refresh uses native stat without a mount."""
         if entries is None:
-            files = list(run.files)
-            if self._state.index.storage is not None:
-                files = [path for path in files if self._allowed(path)]
-            return files, None
+            index = self._state.index
+            if index.mountpoint is None and index.storage is not None:
+                return [path for path in run.files if self._allowed(path)], None
+            return list(run.files), None
         files = _Paths.event_files(
             directory, entries, mountpoint=self._state.index.mountpoint
         )

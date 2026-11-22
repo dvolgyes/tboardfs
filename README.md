@@ -255,6 +255,10 @@ access time.
 
 Unchanged sources need no reopen for indexing.
 
+On a FUSE mount with `--disk-index`, the status check excludes the private index without a separate path walk.
+
+Opening a virtual file on a live run checks the known event files again, even after a path-based `getattr`.
+
 For regular files in one directory, a live refresh resolves the directory once and checks each file relative to it.
 
 This avoids repeated directory lookups without adding a delay before tboardfs sees an append.

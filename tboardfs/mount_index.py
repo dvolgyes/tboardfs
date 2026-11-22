@@ -107,7 +107,11 @@ class _RunData:
     ) -> tuple[bool, EventFileCache | None]:
         """Report a change and the base index if exactly one source resumed."""
         parent = files[0].parent if len(files) > 1 and run.files and not force else None
-        with EventSource._sibling_stat(parent, mountpoint=options.mountpoint) as stat:
+        with EventSource._sibling_stat(
+            parent,
+            mountpoint=options.mountpoint,
+            storage=options.storage if options.mountpoint is not None else None,
+        ) as stat:
             return _RunData._refresh_sources(
                 run, files, force=force, log=log, options=options, stat=stat
             )
@@ -135,10 +139,10 @@ class _RunData:
             )
             try:
                 if (
-                    reparse
-                    or old is None
+                    old is None
                     or FileIdentity.fingerprint(stat(source_path))
                     != old.progress.checked_status
+                    or reparse
                 ):
                     current = _RunData._update_source(
                         source_path,

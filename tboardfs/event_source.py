@@ -18,11 +18,18 @@ class EventSource:
     """Read event sources from outside the mount, including through symlinks."""
 
     @classmethod
-    def stat(cls, path: Path, *, mountpoint: Path | None = None) -> os.stat_result:
-        """Read the current regular-file status without opening it for data."""
-        if mountpoint is None:
+    def stat(
+        cls,
+        path: Path,
+        *,
+        mountpoint: Path | None = None,
+        storage: Path | None = None,
+    ) -> os.stat_result:
+        """Read regular-file status without entering the mount or private index."""
+        if mountpoint is None and storage is None:
             return cls._regular(path, path.stat())
-        with cls._target(path, (str(mountpoint),)) as (_, _, _, status):
+        blocked = tuple(str(root) for root in (mountpoint, storage) if root is not None)
+        with cls._target(path, blocked) as (_, _, _, status):
             return cls._regular(path, status)
 
     @classmethod
@@ -46,27 +53,31 @@ class EventSource:
     @classmethod
     @contextmanager
     def _sibling_stat(
-        cls, parent: Path | None, *, mountpoint: Path | None
+        cls,
+        parent: Path | None,
+        *,
+        mountpoint: Path | None,
+        storage: Path | None = None,
     ) -> Iterator[Callable[[Path], os.stat_result]]:
         """Check regular siblings through one guarded parent for this operation."""
-        if mountpoint is None:
+        if mountpoint is None and storage is None:
             yield cls.stat
             return
-        fallback = partial(cls.stat, mountpoint=mountpoint)
+        fallback = partial(cls.stat, mountpoint=mountpoint, storage=storage)
         if parent is None:
             yield fallback
             return
-        mount_path = os.fspath(mountpoint)
+        roots = tuple(root for root in (mountpoint, storage) if root is not None)
         with ExitStack() as stack:
             try:
                 resolved, fd, _, _ = stack.enter_context(
-                    cls._target(parent, (mount_path,), directory=True)
+                    cls._target(parent, tuple(map(str, roots)), directory=True)
                 )
             except OSError:
                 yield fallback
                 return
-            blocked = (
-                mountpoint.name if resolved == os.fspath(mountpoint.parent) else None
+            blocked = tuple(
+                root.name for root in roots if resolved == os.fspath(root.parent)
             )
             parent_path = os.fspath(parent)
             sibling_prefix = (
@@ -79,7 +90,7 @@ class EventSource:
         cls,
         sibling_prefix: str,
         fd: int,
-        blocked: str | None,
+        blocked: tuple[str, ...],
         fallback: Callable[[Path], os.stat_result],
         path: Path,
     ) -> os.stat_result:
@@ -89,7 +100,8 @@ class EventSource:
         if (
             text.startswith(sibling_prefix)
             and "/" not in name
-            and name not in ("", ".", "..", blocked)
+            and name not in ("", ".", "..")
+            and name not in blocked
         ):
             status = os.stat(name, dir_fd=fd, follow_symlinks=False)
             if not S_ISLNK(status.st_mode):

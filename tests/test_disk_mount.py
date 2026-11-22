@@ -1,6 +1,8 @@
 """Persistent mount indexes preserve the result of a fresh serial parse."""
 
+import json
 import os
+from errno import ENOENT
 from pathlib import Path
 
 import pytest
@@ -140,6 +142,44 @@ def test_disk_mount_keeps_live_appends_and_refreshes_on_reopen(
     assert live == _contents(TensorBoardFS(source))
 
 
+@pytest.mark.parametrize("disk_index", [False, True], ids=["memory", "disk"])
+@pytest.mark.parametrize("sibling", [False, True], ids=["single", "siblings"])
+@pytest.mark.parametrize("append", [False, True], ids=["replace", "append"])
+def test_open_refreshes_scalar_after_getattr(
+    roots: tuple[Path, Path], disk_index: bool, sibling: bool, append: bool
+) -> None:
+    source, _ = roots
+    event = source / "events.out.tfevents.2"
+    event.write_bytes(_loss(2, 2.0))
+    if sibling:
+        (source / "events.out.tfevents.1").write_bytes(_loss(1, 1.0))
+    virtual = "/scalars/loss.json"
+    if disk_index:
+        assert TensorBoardFS(source, disk_index=True).getattr(virtual)["st_size"] > 0
+    fs = TensorBoardFS(source, disk_index=disk_index, refresh_age_seconds=3600)
+    assert fs.getattr(virtual)["st_size"] > 0
+
+    expected = [(1, 1.0)] if sibling else []
+    if append:
+        with event.open("ab") as stream:
+            stream.write(_loss(3, 3.0))
+        expected.extend([(2, 2.0), (3, 3.0)])
+    else:
+        status = event.stat()
+        replacement = source / "replacement"
+        assert replacement.write_bytes(_loss(2, 9.0)) == status.st_size
+        os.utime(replacement, ns=(status.st_atime_ns, status.st_mtime_ns))
+        replacement.replace(event)
+        expected.append((2, 9.0))
+
+    handle = fs.open(virtual, os.O_RDONLY)
+    try:
+        rows = json.loads(fs.read(virtual, 4096, 0, handle))
+        assert [(row["step"], row["value"]) for row in rows] == expected
+    finally:
+        fs.release(virtual, handle)
+
+
 def test_first_binary_read_after_restored_index_grows(
     roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -237,6 +277,65 @@ def test_disk_mount_does_not_select_an_event_link_into_storage(
     expected = _contents(TensorBoardFS(source))
     (source / "events.out.tfevents.2").symlink_to(stored)
     assert _contents(TensorBoardFS(source, disk_index=True)) == expected
+
+
+@pytest.mark.parametrize("mounted", [False, True], ids=["storage-only", "mounted"])
+@pytest.mark.parametrize("inherited", [False, True], ids=["single", "reparse"])
+def test_open_rejects_known_event_retargeted_into_disk_storage(
+    roots: tuple[Path, Path], inherited: bool, mounted: bool
+) -> None:
+    source, storage = roots
+    event = source / "events.out.tfevents.2"
+    image = _images(2, PNG)
+    definition = source / "events.out.tfevents.1"
+    if inherited:
+        definition.write_bytes(_frame(_images(1, PNG)))
+        image.summary.value[0].ClearField("metadata")
+    event.write_bytes(_frame(image))
+    fs = TensorBoardFS(
+        source,
+        mountpoint=source.parent / "mnt" if mounted else None,
+        disk_index=True,
+        refresh_age_seconds=3600,
+    )
+    virtual = "/images/img/000002.png"
+    assert fs.getattr(virtual)["st_size"] == len(PNG)
+
+    stored = storage / "tboardfs" / "indexes-v1" / event.name
+    stored.write_bytes(_frame(_images(2, PNG)) + _loss(99, 99.0))
+    if inherited:
+        replacement = source / "replacement"
+        replacement.write_bytes(_loss(1, 1.0))
+        replacement.replace(definition)
+    event.unlink()
+    event.symlink_to(stored)
+
+    with pytest.raises(OSError) as raised:
+        fs.open(virtual, os.O_RDONLY)
+    assert raised.value.errno == ENOENT
+    if inherited:
+        rows = json.loads(fs.read("/scalars/loss.json", 4096, 0))
+        assert [(row["step"], row["value"]) for row in rows] == [(1, 1.0)]
+    else:
+        with pytest.raises(FileNotFoundError):
+            fs.getattr("/scalars/loss.json")
+
+
+def test_disk_index_without_mount_drops_invalid_event_link(
+    roots: tuple[Path, Path],
+) -> None:
+    source, _ = roots
+    data = source / "data"
+    data.write_bytes(_loss(1, 1.0))
+    link = source / "events.out.tfevents.1"
+    link.symlink_to(data.name)
+    fs = TensorBoardFS(source, disk_index=True, refresh_age_seconds=3600)
+    virtual = "/scalars/loss.json"
+    assert fs.getattr(virtual)["st_size"] > 0
+    link.unlink()
+    os.symlink(f"{data.name}/", link)
+    with pytest.raises(FileNotFoundError):
+        fs.open(virtual, os.O_RDONLY)
 
 
 def test_disk_mount_does_not_persist_an_incomplete_prefix(
