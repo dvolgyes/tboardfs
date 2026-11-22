@@ -264,6 +264,10 @@ For regular files in one directory, a live refresh resolves the directory once a
 On Linux, when libc provides `openat2` and the kernel accepts it, tboardfs can open an ordinary absolute directory path
 in one system call without following symlinks.
 
+The same kernel check can confirm that a source path outside the excluded directories contains no symlinks.
+
+tboardfs does not reuse that result on later accesses.
+
 Between directory scans, tboardfs reuses the names and expected fingerprints of indexed sibling files.
 
 It opens the parent again and compares each regular file with its indexed fingerprint.

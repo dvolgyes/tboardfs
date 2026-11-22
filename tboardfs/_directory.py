@@ -42,26 +42,48 @@ class _OpenHow(ctypes.Structure):
         ("resolve", ctypes.c_uint64),
     ]
 
+    @classmethod
+    def bind(cls, *, directory: bool) -> Callable[[bytes], int] | None:
+        """Bind a no-follow path lookup with the requested directory constraint."""
+        if sys.platform != "linux" or not hasattr(os, "O_PATH"):
+            return None
+        call = getattr(ctypes.CDLL(None), "openat2", None)
+        if call is None:
+            return None
+        call.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.POINTER(cls),
+            ctypes.c_size_t,
+        )
+        call.restype = ctypes.c_int
+        flags = os.O_PATH | os.O_CLOEXEC
+        if directory:
+            flags |= os.O_DIRECTORY
+        how = cls(flags, 0, _RESOLVE_NO_SYMLINKS)
+        pointer, size = ctypes.pointer(how), ctypes.sizeof(how)
+        return lambda path: call(_AT_FDCWD, path, pointer, size)
 
-def _bind_open() -> Callable[[bytes], int] | None:
-    if sys.platform != "linux" or not hasattr(os, "O_PATH"):
-        return None
-    call = getattr(ctypes.CDLL(None), "openat2", None)
-    if call is None:
-        return None
-    call.argtypes = (
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.POINTER(_OpenHow),
-        ctypes.c_size_t,
-    )
-    call.restype = ctypes.c_int
-    how = _OpenHow(os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC, 0, _RESOLVE_NO_SYMLINKS)
-    pointer, size = ctypes.pointer(how), ctypes.sizeof(how)
-    return lambda path: call(_AT_FDCWD, path, pointer, size)
+
+_OPEN_DIRECTORY = _OpenHow.bind(directory=True)
+_OPEN_PATH = _OpenHow.bind(directory=False)
 
 
-_OPEN_DIRECTORY = _bind_open()
+def _plain_path(path: Path) -> bool:
+    """Confirm a lexically permitted path exists without traversing a symlink."""
+    if _OPEN_PATH is None:
+        return False
+    try:
+        name = os.fsencode(path)
+    except UnicodeEncodeError:
+        return False
+    if b"\0" in name:
+        return False
+    fd = _OPEN_PATH(name)
+    if fd < 0:
+        return False
+    os.close(fd)
+    return True
 
 
 def open_plain_directory(path: Path, blocked: tuple[str, ...]) -> int | None:

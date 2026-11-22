@@ -12,7 +12,7 @@ from typing import Any, TypedDict, Unpack
 
 from loguru import logger
 
-from tboardfs._directory import _guard_plan
+from tboardfs._directory import _guard_plan, _plain_path
 from tboardfs.constants import (
     DEFAULT_CACHE_SIZE_MB,
     DEFAULT_DISCOVERY_SECONDS,
@@ -543,6 +543,8 @@ class TensorBoardFS:
         plan = plans(path)
         if plan is not None:
             prefixes, allowed_if_no_links = plan
+            if allowed_if_no_links and _plain_path(path):
+                return True
             for prefix in prefixes:
                 try:
                     mode = os.lstat(prefix).st_mode

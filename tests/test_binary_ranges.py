@@ -12,7 +12,7 @@ from test_incremental_parse import _frame
 
 from scripts.scale_corpus import EVENT_NAME, SIBLING
 from scripts.scale_corpus import _ScaleCorpus as ScaleCorpus
-from tboardfs import TensorBoardFS
+from tboardfs import TensorBoardFS, _directory
 from tboardfs.file_status import FileIdentity
 from tboardfs.frame_ref import FrameRef
 from tboardfs.indexed_frame import IndexedFrame
@@ -224,6 +224,46 @@ def test_retargeted_source_to_mountpoint_cannot_open_a_span(
     link.unlink()
     target.rename(link)
     assert fs.getattr(NAME)["st_size"] > 0
+
+
+def test_guard_does_not_truncate_an_invalid_source_path(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    source = root / "source"
+    source.mkdir()
+    event = source / EVENT_NAME
+    event.touch()
+    fs = TensorBoardFS(source, mountpoint=root / "mount")
+
+    assert fs._allowed(event)
+    assert not fs._allowed(event.with_name(event.name + "\0suffix"))
+
+
+@pytest.mark.parametrize("disable_native", [False, True], ids=["default", "fallback"])
+def test_discovery_filters_fresh_links_to_protected_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, disable_native: bool
+) -> None:
+    if disable_native:
+        monkeypatch.setattr(_directory, "_OPEN_PATH", None)
+    root = tmp_path.resolve()
+    source = root / "source"
+    source.mkdir()
+    cache = root / "cache"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    mountpoint = root / "mount"
+    storage = cache / "tboardfs" / "indexes-v1"
+    for target in (root / "external", mountpoint, storage / "run"):
+        target.mkdir(parents=True)
+    _, event, blob = _image_log(root / "external")
+    (mountpoint / event.name).write_bytes(event.read_bytes())
+    (storage / "run" / event.name).write_bytes(event.read_bytes())
+
+    fs = TensorBoardFS(source, mountpoint=mountpoint, disk_index=True)
+    (source / "allowed").symlink_to(event.parent, target_is_directory=True)
+    (source / "mount-link").symlink_to(mountpoint, target_is_directory=True)
+    (source / "storage-link").symlink_to(storage / "run", target_is_directory=True)
+
+    assert fs.readdir("/")[2:] == ["allowed"]
+    assert fs.read("/allowed" + NAME, len(blob), 0) == blob
 
 
 @pytest.mark.parametrize("depth", [0, 35, 105])
