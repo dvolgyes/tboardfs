@@ -275,8 +275,10 @@ Opening a virtual file on a live run checks the known event files again, even af
 
 For regular files in one directory, a live refresh resolves the directory once and checks each file relative to it.
 
-On Linux, when libc provides `openat2` and the kernel accepts it, tboardfs can open an ordinary absolute directory path
-in one system call without following symlinks.
+On Linux, tboardfs can open an ordinary absolute directory in one `openat2` system call without following symlinks.
+
+The optional C extension calls the kernel directly when built with `openat2` headers; otherwise tboardfs uses the libc
+function if available.
 
 The same kernel check can confirm that a source path outside the excluded directories contains no symlinks.
 

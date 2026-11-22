@@ -10,6 +10,17 @@
 #error "The optional sibling stat accelerator requires supported Linux CPython headers"
 #endif
 
+#ifdef __has_include
+#if __has_include(<linux/openat2.h>) && __has_include(<sys/syscall.h>)
+#include <linux/openat2.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#if defined(SYS_openat2) && defined(RESOLVE_NO_SYMLINKS) && defined(O_PATH)
+#define TBOARDFS_HAVE_OPENAT2 1
+#endif
+#endif
+#endif
+
 static int
 long_long_at(PyObject *tuple, Py_ssize_t index, long long *value)
 {
@@ -96,9 +107,62 @@ matches(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
     Py_RETURN_TRUE;
 }
 
+#ifdef TBOARDFS_HAVE_OPENAT2
+static int
+guarded_open(PyObject *name, int directory)
+{
+    if (!PyBytes_CheckExact(name)) {
+        return -1;
+    }
+    const char *path = PyBytes_AS_STRING(name);
+    Py_ssize_t len = PyBytes_GET_SIZE(name);
+    if (!len || path[0] != '/' || memchr(path, '\0', len)) {
+        return -1;
+    }
+
+    const struct open_how how = {
+        .flags = O_PATH | O_CLOEXEC | (directory ? O_DIRECTORY : 0),
+        .resolve = RESOLVE_NO_SYMLINKS,
+    };
+    int fd;
+    Py_BEGIN_ALLOW_THREADS
+    fd = (int)syscall(SYS_openat2, AT_FDCWD, path, &how, sizeof(how));
+    if (fd >= 0 && !directory) {
+        close(fd);
+    }
+    Py_END_ALLOW_THREADS
+    return fd;
+}
+
+static PyObject *
+open_directory(PyObject *self, PyObject *name)
+{
+    (void)self;
+    int fd = guarded_open(name, 1);
+    PyObject *result = PyLong_FromLong(fd);
+    if (result == NULL && fd >= 0) {
+        Py_BEGIN_ALLOW_THREADS
+        close(fd);
+        Py_END_ALLOW_THREADS
+    }
+    return result;
+}
+
+static PyObject *
+plain_path(PyObject *self, PyObject *name)
+{
+    (void)self;
+    return PyBool_FromLong(guarded_open(name, 0) >= 0);
+}
+#endif
+
 static PyMethodDef methods[] = {
     {"matches", _PyCFunction_CAST(matches), METH_FASTCALL,
      "Compare live regular-file fingerprints through a caller-owned guarded directory fd."},
+#ifdef TBOARDFS_HAVE_OPENAT2
+    {"open_directory", open_directory, METH_O, NULL},
+    {"plain_path", plain_path, METH_O, NULL},
+#endif
     {NULL, NULL, 0, NULL},
 };
 

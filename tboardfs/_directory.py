@@ -5,6 +5,8 @@ import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib import import_module
+from importlib.util import find_spec
 from pathlib import Path
 from typing import ClassVar, Self
 
@@ -45,9 +47,16 @@ class _OpenHow(ctypes.Structure):
 
     @classmethod
     def bind(cls, *, directory: bool) -> Callable[[bytes], int] | None:
-        """Bind a no-follow path lookup with the requested directory constraint."""
+        """Bind either a fresh directory fd lookup or an ordinary path probe."""
         if sys.platform != "linux" or not hasattr(os, "O_PATH"):
             return None
+        if find_spec("tboardfs._sibling_stat") is not None:
+            native = import_module("tboardfs._sibling_stat")
+            probe: Callable[[bytes], int] | None = getattr(
+                native, "open_directory" if directory else "plain_path", None
+            )
+            if probe is not None:
+                return probe
         call = getattr(ctypes.CDLL(None), "openat2", None)
         if call is None:
             return None
@@ -63,7 +72,18 @@ class _OpenHow(ctypes.Structure):
             flags |= os.O_DIRECTORY
         how = cls(flags, 0, _RESOLVE_NO_SYMLINKS)
         pointer, size = ctypes.pointer(how), ctypes.sizeof(how)
-        return lambda path: call(_AT_FDCWD, path, pointer, size)
+
+        if directory:
+            return lambda path: call(_AT_FDCWD, path, pointer, size)
+        return lambda path: cls.close_probe(call(_AT_FDCWD, path, pointer, size))
+
+    @staticmethod
+    def close_probe(fd: int) -> bool:
+        """Release a successful libc path probe before reporting its result."""
+        if fd < 0:
+            return False
+        os.close(fd)
+        return True
 
 
 _OPEN_DIRECTORY = _OpenHow.bind(directory=True)
@@ -80,11 +100,7 @@ def _plain_path(path: Path) -> bool:
         return False
     if b"\0" in name:
         return False
-    fd = _OPEN_PATH(name)
-    if fd < 0:
-        return False
-    os.close(fd)
-    return True
+    return bool(_OPEN_PATH(name))
 
 
 @dataclass(frozen=True, slots=True)
