@@ -15,7 +15,7 @@ def _mount(tmp_path: Path, monkeypatch: Any, *option: str) -> Result:
     (tmp_path / "runs").mkdir()
     (tmp_path / "mnt").mkdir()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli, "MountBinding", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cli, "mount", lambda *args, **kwargs: None)
     return CliRunner().invoke(cli.main, ["runs", "mnt", *option])
 
 

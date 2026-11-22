@@ -22,8 +22,11 @@ class MountBinding(mfusepy.FUSE):  # type: ignore[misc]
         *args: object,
         **kwargs: object,
     ) -> None:
-        self._native_stat = lru_cache(maxsize=256)(self._encode_stat)
+        self._prepare_stat()
         super().__init__(operations, mountpoint, *args, **kwargs)
+
+    def _prepare_stat(self) -> None:
+        self._native_stat = lru_cache(maxsize=256)(self._encode_stat)
 
     @staticmethod
     def _encode_stat(attrs: _FileAttributes, use_ns: bool) -> mfusepy.c_stat:

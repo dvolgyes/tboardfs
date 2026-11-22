@@ -67,13 +67,18 @@ uvx --from tboardfs tboardfs-file list SOURCE
 
 Source builds on Linux CPython can compile an optional accelerator for live status checks.
 
+On x86-64 Linux with GIL-enabled CPython, libfuse 2.9 and mfusepy 3.1.1, a second optional extension lets FUSE workers
+reuse Python thread state without caching attributes or changing source validation.
+
+Other builds, including libfuse 3 mounts, use the ordinary mfusepy callbacks.
+
 To build a pure Python wheel, use `TBOARDFS_PURE_PYTHON=1 uv build --wheel`.
 
 Set `TBOARDFS_PURE_PYTHON=1` for a strict editable install on a machine without a C compiler.
 
-If the installed extension cannot load, tboardfs reports the import error rather than hiding the installation problem.
+If an installed extension cannot load, tboardfs reports the import error rather than hiding the installation problem.
 
-Reinstall from a pure Python wheel to use the Python comparison instead.
+Reinstall from a pure Python wheel to use the portable implementation.
 
 ## Filesystem Mode
 

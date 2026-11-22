@@ -250,7 +250,7 @@ def test_cli_disk_index_is_opt_in(
         assert fs.read("/scalars/loss.json", 4096, 0) == expected
 
     expected = TensorBoardFS(source).read("/scalars/loss.json", 4096, 0)
-    monkeypatch.setattr(cli, "MountBinding", read_loss)
+    monkeypatch.setattr(cli, "mount", read_loss)
     args = [str(source), str(source.parent / "mnt"), "--disk-index-size-mb", "1"]
     result = CliRunner().invoke(cli.main, args + (["--disk-index"] if enabled else []))
     assert result.exit_code == 0, result.output

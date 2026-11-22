@@ -7,13 +7,13 @@ from typing import cast
 import click
 from loguru import logger
 
+from tboardfs._mount_session import mount
 from tboardfs.cli_options import LOGLEVEL, SCALAR_FORMAT, STEP_DIGITS
 from tboardfs.constants import (
     DEFAULT_CACHE_SIZE_MB,
     DEFAULT_DISCOVERY_SECONDS,
     LOG_FORMAT,
 )
-from tboardfs.mount_binding import MountBinding
 from tboardfs.mount_index import _DEFAULT_DISK_INDEX_SIZE_MB
 from tboardfs.mounted import MountedTensorBoardFS
 from tboardfs.stdlib_logging import StdlibToLoguru
@@ -113,7 +113,7 @@ def main(
         disk_index_size_mb=cast(int, params["disk_index_size_mb"]),
     )
     try:
-        MountBinding(
+        mount(
             filesystem,
             str(mountpoint_path),
             foreground=foreground,
