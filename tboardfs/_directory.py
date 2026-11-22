@@ -1,4 +1,4 @@
-"""Pin a symlink-free Linux directory in one lookup when libc supports it."""
+"""Resolve guarded source directories without following symlinks into blocked roots."""
 
 import ctypes
 import os
@@ -9,6 +9,28 @@ from typing import ClassVar
 
 _AT_FDCWD = -100
 _RESOLVE_NO_SYMLINKS = 0x04
+_GUARD_PLAN_MAX_PREFIX_CHARS = 4096
+
+
+def _guard_plan(
+    blocked: frozenset[str], path: Path
+) -> tuple[tuple[str, ...], bool] | None:
+    """Plan bounded lexical probes before the first blocked prefix."""
+    parts = path.parts
+    if (
+        path.anchor != "/"
+        or len(parts) * len(str(path)) > _GUARD_PLAN_MAX_PREFIX_CHARS
+        or ".." in parts
+    ):
+        return None
+    prefixes: list[str] = []
+    prefix = ""
+    for part in parts[1:]:
+        prefix += "/" + part
+        if prefix in blocked:
+            return tuple(prefixes), False
+        prefixes.append(prefix)
+    return tuple(prefixes), True
 
 
 class _OpenHow(ctypes.Structure):

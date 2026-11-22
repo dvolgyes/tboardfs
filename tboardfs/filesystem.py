@@ -12,6 +12,7 @@ from typing import Any, TypedDict, Unpack
 
 from loguru import logger
 
+from tboardfs._directory import _guard_plan
 from tboardfs.constants import (
     DEFAULT_CACHE_SIZE_MB,
     DEFAULT_DISCOVERY_SECONDS,
@@ -27,7 +28,7 @@ from tboardfs.model import (
     RunCache,
     SidecarEntry,
 )
-from tboardfs.mount_index import _IndexOptions, _RunData
+from tboardfs.mount_index import _IndexOptions, _RunData, _SiblingSnapshot
 from tboardfs.open3d_asset import OPEN3D_PLUGIN, Open3DAsset
 from tboardfs.paths import _DirectoryNode, _Paths
 from tboardfs.render_cache import RenderCache, RenderKey
@@ -41,28 +42,6 @@ _PARALLEL_MIN_BYTES = 8 << 20
 
 _GUARD_PLAN_LIMIT = 256
 _GUARD_PLAN_MAX_PATH_CHARS = 1024
-_GUARD_PLAN_MAX_PREFIX_CHARS = 4096
-
-
-def _guard_plan(
-    blocked: frozenset[str], path: Path
-) -> tuple[tuple[str, ...], bool] | None:
-    """Plan bounded lexical probes before the first blocked prefix."""
-    parts = path.parts
-    if (
-        path.anchor != "/"
-        or len(parts) * len(str(path)) > _GUARD_PLAN_MAX_PREFIX_CHARS
-        or ".." in parts
-    ):
-        return None
-    prefixes: list[str] = []
-    prefix = ""
-    for part in parts[1:]:
-        prefix += "/" + part
-        if prefix in blocked:
-            return tuple(prefixes), False
-        prefixes.append(prefix)
-    return tuple(prefixes), True
 
 
 @dataclass
@@ -70,6 +49,7 @@ class _Directory:
     """Local listing deadline, browseable children, and their sidecar ownership."""
 
     scanned_at: float | None = None
+    siblings: _SiblingSnapshot | None = None
     children: set[tuple[str, ...]] = field(default_factory=set)
     owned: set[Path] = field(default_factory=set)
     owner: tuple[str, ...] | None = None
@@ -738,14 +718,27 @@ class TensorBoardFS:
     ) -> bool:
         """Check known files on access; discover new files only with a fresh listing."""
         now = time.time()
-        log_parse = logger.info if self.log_to_screen else None
-        changed, base = _RunData.refresh_event_files(
-            run,
-            files,
-            force=force,
-            log=log_parse,
-            options=self._state.index,
+        local = self._state.directories[run.run_parts]
+        unchanged = (
+            entries is None
+            and not force
+            and local.siblings is not None
+            and local.siblings.matches()
         )
+        changed = False
+        base = None
+        if not unchanged:
+            local.siblings = None
+            options = self._state.index
+            changed, base = _RunData.refresh_event_files(
+                run,
+                files,
+                force=force,
+                log=logger.info if self.log_to_screen else None,
+                options=options,
+            )
+            if changed or entries is not None:
+                local.siblings = _SiblingSnapshot.capture(run, options)
         self._refresh_sidecars(run, entries)
         run.refreshed_at = now
         if changed:

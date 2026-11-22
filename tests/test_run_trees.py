@@ -225,6 +225,34 @@ def test_epoch_append_updates_previously_published_scalar_rows(tmp_path: Path) -
     assert json.loads(render_node(_node(before, loss)))[0]["epoch"] == 1.0
 
 
+def test_changed_epoch_sibling_updates_loss_without_changing_open_handle(
+    tmp_path: Path,
+) -> None:
+    """A known sibling updates an export whose own source has not changed."""
+    source = tmp_path / "run"
+    source.mkdir()
+    epochs = source / f"{EVENTS}.1"
+    epochs.write_bytes(_scalars(1, 10, epoch=1.0))
+    (source / f"{EVENTS}.2").write_bytes(_scalars(2, 20, loss=2.0))
+    mountpoint = tmp_path / "mount"
+    mountpoint.mkdir()
+    fs = TensorBoardFS(source, mountpoint=mountpoint, refresh_age_seconds=3600)
+    loss = "/scalars/loss.json"
+    original = fs.read(loss, 4096, 0)
+    assert json.loads(original)[0]["epoch"] == 1.0
+    handle = fs.open(loss, 0)
+    try:
+        _append_records(epochs, _scalars(2, 30, epoch=2.0))
+        updated = json.loads(fs.read(loss, 4096, 0))
+        assert [(row["step"], row["value"], row["epoch"]) for row in updated] == [
+            (2, 2.0, 2.0)
+        ]
+        assert fs.read(loss, 4096, 0, handle) == original
+        assert fs.getattr(loss, handle)["st_size"] == len(original)
+    finally:
+        fs.release(loss, handle)
+
+
 def test_scalar_append_refreshes_an_existing_hparams_aggregate(tmp_path: Path) -> None:
     """Metric values change even when no new HParams record was appended."""
     event = tmp_path / EVENTS

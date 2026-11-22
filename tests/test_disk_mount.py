@@ -116,6 +116,41 @@ def test_disk_mount_uses_current_sorted_inherited_metadata(
     assert after == _contents(TensorBoardFS(source))
 
 
+def test_periodic_discovery_binds_new_upstream_metadata_sibling(
+    roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Discovery reparses a known downstream event and watches the new sibling."""
+    source, _ = roots
+    mountpoint = source.parent / "mount"
+    mountpoint.mkdir()
+    now = 1000.0
+    monkeypatch.setattr(filesystem.time, "time", lambda: now)
+    dependent = _images(2, PNG)
+    dependent.summary.value[0].ClearField("metadata")
+    (source / "events.out.tfevents.2").write_bytes(_frame(dependent))
+    (source / "events.out.tfevents.3").write_bytes(_loss(3, 3.0))
+    fs = TensorBoardFS(source, mountpoint=mountpoint, refresh_age_seconds=60)
+    fallback = "/tensors/img/000002_2.png"
+    image = "/images/img/000002.png"
+    assert fs.read(fallback, 4096, 0) == PNG
+    assert fs.read(fallback, 4096, 0) == PNG
+
+    definition = source / "events.out.tfevents.1"
+    definition.write_bytes(_frame(_images(1, PNG)))
+    now += 59
+    assert fs.read(fallback, 4096, 0) == PNG
+    now += 1
+    assert "img" in fs.readdir("/images")
+    assert fs.read(image, 4096, 0) == PNG
+    with pytest.raises(FileNotFoundError):
+        fs.getattr(fallback)
+
+    definition.unlink()
+    assert fs.read(fallback, 4096, 0) == PNG
+    with pytest.raises(FileNotFoundError):
+        fs.getattr(image)
+
+
 def test_disk_mount_keeps_live_appends_and_refreshes_on_reopen(
     roots: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -319,6 +354,48 @@ def test_open_rejects_known_event_retargeted_into_disk_storage(
     else:
         with pytest.raises(FileNotFoundError):
             fs.getattr("/scalars/loss.json")
+
+
+@pytest.mark.parametrize("target", ["directory", "eligible-link", "mount", "storage"])
+def test_known_siblings_follow_lexical_parent_replacement(
+    roots: tuple[Path, Path], target: str
+) -> None:
+    """Known names are checked under the current parent, not the old directory."""
+    source, storage = roots
+    mountpoint = source.parent / "mount"
+    mountpoint.mkdir()
+    names = ("events.out.tfevents.1", "events.out.tfevents.2")
+    for step, name in enumerate(names, start=1):
+        (source / name).write_bytes(_loss(step, float(step)))
+    fs = TensorBoardFS(
+        source, mountpoint=mountpoint, disk_index=True, refresh_age_seconds=3600
+    )
+    virtual = "/scalars/loss.json"
+
+    def steps() -> list[int]:
+        return [row["step"] for row in json.loads(fs.read(virtual, 4096, 0))]
+
+    assert steps() == [1, 2]
+    assert steps() == [1, 2]
+    source.rename(source.with_name("old-run"))
+    if target == "mount":
+        replacement = mountpoint
+    elif target == "storage":
+        replacement = storage / "tboardfs" / "indexes-v1" / "run"
+        replacement.mkdir(parents=True)
+    else:
+        replacement = source if target == "directory" else source.with_name("new-run")
+        replacement.mkdir()
+    for step, name in enumerate(names, start=3):
+        (replacement / name).write_bytes(_loss(step, float(step)))
+    if replacement != source:
+        source.symlink_to(replacement, target_is_directory=True)
+
+    if target in {"mount", "storage"}:
+        with pytest.raises(FileNotFoundError):
+            fs.read(virtual, 4096, 0)
+    else:
+        assert steps() == [3, 4]
 
 
 def test_disk_index_without_mount_drops_invalid_event_link(

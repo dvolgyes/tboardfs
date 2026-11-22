@@ -42,13 +42,27 @@ def test_removed_sidecar_is_no_longer_listed(tmp_path: Path) -> None:
 
 
 def test_changed_sidecar_shows_its_new_mtime(tmp_path: Path) -> None:
-    """A rewritten sidecar reports the mtime of the file on disk."""
-    fs, projector = _fs_with_projector(tmp_path)
-    fs.getattr("/projector/projector_config.pbtxt")
+    """An unchanged set of event siblings must not suppress sidecar restat."""
+    source = tmp_path / "run"
+    source.mkdir()
+    mountpoint = tmp_path / "mount"
+    mountpoint.mkdir()
+    _append(source / f"{EVENTS}.1", 0)
+    _append(source / f"{EVENTS}.2", 1)
+    projector = source / "projector_config.pbtxt"
+    projector.write_bytes(b"config")
+    fs = TensorBoardFS(source, mountpoint=mountpoint, refresh_age_seconds=3600)
+    virtual = "/projector/projector_config.pbtxt"
+    assert fs.read(virtual, 100, 0) == b"config"
+    assert fs.getattr(virtual)["st_size"] == len(b"config")
 
+    projector.write_bytes(b"updated config")
     os.utime(projector, (1_000_000.0, 1_000_000.0))
 
-    assert fs.getattr("/projector/projector_config.pbtxt")["st_mtime"] == 1_000_000.0
+    attrs = fs.getattr(virtual)
+    assert attrs["st_mtime"] == 1_000_000.0
+    assert attrs["st_size"] == len(b"updated config")
+    assert fs.read(virtual, 100, 0) == b"updated config"
 
 
 def test_unchanged_sidecars_keep_the_run_version(tmp_path: Path) -> None:

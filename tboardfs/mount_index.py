@@ -5,10 +5,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
+from stat import S_ISREG
 from typing import Any
 
 from loguru import logger
 
+from tboardfs._directory import open_plain_directory
 from tboardfs.disk_index import DiskIndex, _IndexHit
 from tboardfs.event_source import EventSource
 from tboardfs.file_status import FileIdentity
@@ -91,6 +93,52 @@ class _IndexOptions:
             return {}
         cold = [path for path in paths if path not in run.files]
         return self.disk.candidates(cold, self.workers) if cold else {}
+
+
+@dataclass(frozen=True, slots=True)
+class _SiblingSnapshot:
+    """Compare the last indexed siblings without reconstructing the update plan."""
+
+    parent: Path
+    blocked: tuple[str, ...]
+    files: tuple[tuple[str, tuple[int | None, ...]], ...]
+
+    @classmethod
+    def capture(
+        cls, run: RunCache, options: _IndexOptions
+    ) -> "_SiblingSnapshot | None":
+        """Keep checked fingerprints only for immediate siblings of one guarded parent."""
+        if options.mountpoint is None or len(run.files) < 2:
+            return None
+        parent = next(iter(run.files)).parent
+        roots = (options.mountpoint, options.storage)
+        files = []
+        for path, cache in run.files.items():
+            if path.parent != parent or path in roots or path.name in ("", ".", ".."):
+                return None
+            files.append((path.name, cache.progress.checked_status))
+        return cls(
+            parent, tuple(str(root) for root in roots if root is not None), tuple(files)
+        )
+
+    def matches(self) -> bool:
+        """Check fresh no-follow status; defer any uncertain or changed source."""
+        fd = open_plain_directory(self.parent, self.blocked)
+        if fd is None:
+            return False
+        try:
+            for name, expected in self.files:
+                status = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                if (
+                    not S_ISREG(status.st_mode)
+                    or FileIdentity.fingerprint(status) != expected
+                ):
+                    return False
+        except OSError:
+            return False
+        finally:
+            os.close(fd)
+        return True
 
 
 class _RunData:
