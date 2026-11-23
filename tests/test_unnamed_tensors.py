@@ -4,12 +4,17 @@ import io
 from pathlib import Path
 
 import numpy as np
-from test_incremental_parse import _files, _frame
+from test_incremental_parse import _files as _all_files
+from test_incremental_parse import _frame
 
 from tboardfs import TensorBoardFS
 from tboardfs.proto import compat_pb2
 
 DT_FLOAT = 1
+
+
+def _files(fs: TensorBoardFS) -> list[str]:
+    return [path for path in _all_files(fs) if path != "/llms.txt"]
 
 
 def _log(tmp_path: Path, values: list[float], shape: list[int]) -> TensorBoardFS:

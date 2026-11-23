@@ -3,8 +3,9 @@
 import json
 from ctypes import memset, pointer, sizeof
 from errno import ENOENT, ENOTDIR
+from importlib.resources import files
 from pathlib import Path
-from stat import S_IFDIR, S_IFMT, S_IFREG
+from stat import S_IFDIR, S_IFMT, S_IFREG, S_ISREG
 from types import SimpleNamespace
 
 import mfusepy
@@ -159,3 +160,47 @@ def test_directory_hints_report_virtual_types_and_keep_listing_errors(
         with pytest.raises(OSError) as raised:
             list(fs.readdir(path, 0))
         assert raised.value.errno == code
+
+
+def test_mount_root_exposes_llms_guide_as_a_regular_file(tmp_path: Path) -> None:
+    fs, _ = _mounted(tmp_path)
+    expected = files("tboardfs").joinpath("llms.txt").read_bytes()
+    info = SimpleNamespace(flags=0, fh=0, direct_io=0)
+
+    assert ("llms.txt", S_IFREG, 0) in fs.readdir("/", 0)
+    assert S_ISREG(fs.getattr("/llms.txt")["st_mode"])
+    assert fs.open("/llms.txt", info) == 0
+    assert fs.read("/llms.txt", len(expected), 0, info) == expected
+    fs.release("/llms.txt", info)
+
+
+def test_root_run_name_cannot_hide_llms_guide(tmp_path: Path) -> None:
+    source = tmp_path / "logs"
+    event = source / "llms.txt" / "events.out.tfevents"
+    event.parent.mkdir(parents=True)
+    _append(event, 0)
+    fs = MountedTensorBoardFS(source, refresh_age_seconds=0, source_check_seconds=0)
+
+    assert ("llms.txt", S_IFREG, 0) in fs.readdir("/", 0)
+    assert ("llms.txt~2", S_IFDIR, 0) in fs.readdir("/", 0)
+    path = f"/llms.txt~2{LOSS}"
+    assert len(json.loads(fs.read(path, 1 << 20, 0))) == 1
+
+    _append(event, 2)
+
+    assert len(json.loads(fs.read(path, 1 << 20, 0))) == 2
+    assert ("llms.txt", S_IFREG, 0) in fs.readdir("/", 0)
+
+
+def test_llms_guide_survives_incremental_run_updates(tmp_path: Path) -> None:
+    source = tmp_path / "logs"
+    event = source / "experiment" / "events.out.tfevents"
+    event.parent.mkdir(parents=True)
+    _append(event, 0)
+    fs = MountedTensorBoardFS(source, refresh_age_seconds=0, source_check_seconds=0)
+    path = f"/experiment{LOSS}"
+
+    assert len(json.loads(fs.read(path, 1 << 20, 0))) == 1
+    _append(event, 2)
+    assert len(json.loads(fs.read(path, 1 << 20, 0))) == 2
+    assert ("llms.txt", S_IFREG, 0) in fs.readdir("/", 0)

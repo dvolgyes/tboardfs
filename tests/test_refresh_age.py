@@ -34,11 +34,11 @@ def test_known_data_refreshes_before_new_runs_are_discovered(
 
     clock[0] += 59
     assert fs.getattr("/a/scalars/loss.json")["st_size"] > size
-    assert fs.readdir("/")[2:] == ["a"]
+    assert fs.readdir("/")[2:] == ["a", "llms.txt"]
 
     clock[0] += 1
     assert fs.getattr("/a/scalars/loss.json")["st_size"] > size
-    assert fs.readdir("/")[2:] == ["a", "b"]
+    assert fs.readdir("/")[2:] == ["a", "b", "llms.txt"]
     assert fs.getattr("/b/scalars/loss.json")["st_size"] > 0
 
     _scalar(tmp_path / "b", 2)
@@ -86,7 +86,7 @@ def test_infinite_interval_freezes_each_directory_after_first_access(
     now = 1000.0
 
     assert fs.read("/run/scalars/loss.json", 4096, 0) == before
-    assert fs.readdir("/")[2:] == ["run"]
+    assert fs.readdir("/")[2:] == ["llms.txt", "run"]
 
 
 def test_default_source_deadline_is_not_slid_by_reads_or_discovery(

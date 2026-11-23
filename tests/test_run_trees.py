@@ -349,7 +349,7 @@ def test_flat_run_removals_refresh_listings_and_inherited_times(tmp_path: Path) 
     next_newest.unlink()
     next_newest.parent.rmdir()
 
-    assert fs.readdir("/") == [".", "..", "run_a", "run_c"]
+    assert fs.readdir("/") == [".", "..", "llms.txt", "run_a", "run_c"]
     with pytest.raises(OSError) as missing_dir:
         fs.readdir("/run_b")
     assert missing_dir.value.errno == ENOENT
@@ -381,7 +381,7 @@ def test_grouped_leaf_changes_preserve_placement_and_inherited_times(
     placement = fs._run_places.disk_parts
     old_names = _node(before, "/a").sorted_names()
     assert old_names == ("blank", "newest")
-    assert fs.readdir("/") == [".", "..", "a", "b", "z"]
+    assert fs.readdir("/") == [".", "..", "a", "b", "llms.txt", "z"]
 
     _append_records(newest, _tensor(1, 60, "metric", 2))
     fs.readdir("/a/newest")

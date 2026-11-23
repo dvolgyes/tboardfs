@@ -105,6 +105,14 @@ def _steps(run: Path, kind: str) -> list[int]:
         return [int(step) for step in archive["step"]]
 
 
+def test_mount_root_exposes_guide(mounted: tuple[Path, Path]) -> None:
+    _, run = mounted
+    guide = run.parent / "llms.txt"
+    assert guide.is_file()
+    expected = (Path(__file__).parents[1] / "tboardfs" / "llms.txt").read_bytes()
+    assert guide.read_bytes() == expected
+
+
 def test_reads_right_after_a_change_are_complete(
     mounted: tuple[Path, Path],
 ) -> None:
@@ -244,7 +252,11 @@ def test_scandir_lists_names_in_lexical_order_after_append(
     append(999999, ("z", "middle/child"))
     scalars = run / "scalars"
     images = run / "images" / "steps"
-    assert listing(run.parent) == [("a_run", True), ("run_a", True)]
+    assert listing(run.parent) == [
+        ("a_run", True),
+        ("llms.txt", False),
+        ("run_a", True),
+    ]
     assert listing(run / "raw") == [(earlier_source.name, True), (event.name, True)]
     before = [
         ("loss.json", False),

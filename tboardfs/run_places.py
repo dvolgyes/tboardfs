@@ -50,16 +50,20 @@ class RunPlaces:
         return depth, owner
 
     def build(
-        self, run_trees: Mapping[tuple[str, ...], dict[str, Any]]
+        self,
+        run_trees: Mapping[tuple[str, ...], dict[str, Any]],
+        *,
+        root_files: Mapping[str, dict[str, Any]],
     ) -> dict[str, Any]:
-        """Return the virtual tree of all runs.
+        """Return the virtual tree of all runs and fixed root files.
 
         Args:
-            run_trees: the directory tree of each run, by run path; they are
-                not changed.
+            run_trees: each run tree, keyed by source run path, not changed.
+            root_files: regular files to expose directly at the mount root.
         """
         root = _DirectoryNode()
         maps: dict[tuple[str, ...], dict[str, str]] = {}
+        root["children"].update(root_files)
         dirs: dict[tuple[str, ...], dict[str, Any]] = {(): root}
         paths: dict[tuple[str, ...], tuple[str, ...]] = {(): ()}
         renamed: dict[tuple[str, ...], tuple[str, ...]] = {}
@@ -84,11 +88,14 @@ class RunPlaces:
                 if name != component:
                     renamed[prefix] = paths[prefix]
             if not share:
-                dirs[run_parts]["children"] = (
+                placed_children = (
                     children.copy()
                     if isinstance(children, RunListing)
                     else dict(children)
                 )
+                if not run_parts:
+                    placed_children.update(root["children"])
+                dirs[run_parts]["children"] = placed_children
         for parts, names in maps.items():
             if names:
                 children = dirs[parts]["children"]
@@ -96,7 +103,8 @@ class RunPlaces:
                 children[NAME_MAP] = {"type": "name_map", "data": existing | names}
         self.log(renamed)
         self.disk_parts = {path: prefix for prefix, path in paths.items()}
-        self.flat = len(root["children"]) + 1 == len(self.disk_parts) and all(
+        root_dirs = sum(node["type"] == "dir" for node in root["children"].values())
+        self.flat = root_dirs + 1 == len(self.disk_parts) and all(
             not path or (len(path) == 1 and path == parts)
             for path, parts in self.disk_parts.items()
         )
@@ -156,20 +164,28 @@ class RunPlaces:
         for (name,), run in changes.items():
             if run is not None and run["children"]:
                 children[name] = run
-            elif (previous := children[name]) is not None and previous["children"]:
+            elif (
+                (previous := children[name]) is not None
+                and previous["type"] == "dir"
+                and previous["children"]
+            ):
                 children[name] = None
 
         newest = max(
             (
                 child["mtime"]
                 for child in children.values()
-                if child is not None and child["children"]
+                if child is not None and child["type"] == "dir" and child["children"]
             ),
             default=0.0,
         )
         empty = None
         for name, child in children.items():
-            if child is None or (not child["children"] and child["mtime"] != newest):
+            if child is None or (
+                child["type"] == "dir"
+                and not child["children"]
+                and child["mtime"] != newest
+            ):
                 if empty is None:
                     empty = _DirectoryNode()
                     empty["mtime"] = newest

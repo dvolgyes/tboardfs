@@ -329,7 +329,7 @@ def test_single_file_tree_matches_filesystem_for_one_event_file(tmp_path: Path) 
     fs = TensorBoardFS(tmp_path, step_digits=3)
     tree = SingleEventTree(source, step_digits=3)
 
-    fs_paths = _filesystem_file_paths(fs, "/")
+    fs_paths = [path for path in _filesystem_file_paths(fs, "/") if path != "/llms.txt"]
     tree_paths = tree.list_file_paths(view="both")
 
     assert fs_paths == tree_paths

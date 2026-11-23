@@ -5,6 +5,7 @@ import stat
 import time
 from errno import EINVAL, EIO, EISDIR, ENOENT, ENOTDIR, EROFS
 from functools import lru_cache, partial
+from importlib.resources import files as package_files
 from io import FileIO
 from math import inf
 from pathlib import Path
@@ -80,6 +81,7 @@ class TensorBoardFS:
         folders with a suffix so each is logged once
     """
 
+    _llms_text: bytes
     source: Path
     step_digits: int
     refresh_age_seconds: float
@@ -105,6 +107,7 @@ class TensorBoardFS:
         **index_options: Unpack[_MountIndexKeywords],
     ) -> None:
         self.source = Path(source)
+        self._llms_text = package_files("tboardfs").joinpath("llms.txt").read_bytes()
         self.step_digits = step_digits
         self.refresh_age_seconds = refresh_age_seconds
         self.scalar_formats = (
@@ -400,7 +403,14 @@ class TensorBoardFS:
             {
                 parts: self._visible_run(parts) or {"type": "dir", "children": {}}
                 for parts in self._state.directories
-            }
+            },
+            root_files={
+                "llms.txt": {
+                    "type": "bytes",
+                    "data": self._llms_text,
+                    "mtime": 0.0,
+                }
+            },
         )
         # The run trees have their times, so only the run folders get them.
         FileTimes.stamp_dirs(tree)

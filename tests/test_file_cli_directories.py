@@ -101,4 +101,6 @@ def test_run_named_raw_does_not_change_view(tmp_path: Path) -> None:
     prefix = next(p for p in typed_paths if p.endswith("/scalars/loss.json")).rsplit(
         "/scalars/", 1
     )[0]
-    assert runner.invoke(main, ["list", str(logs), prefix]).stdout == typed.stdout
+    assert runner.invoke(main, ["list", str(logs), prefix]).stdout.splitlines() == [
+        path for path in typed.stdout.splitlines() if path != "/llms.txt"
+    ]

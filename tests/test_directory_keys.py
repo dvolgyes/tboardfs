@@ -50,7 +50,7 @@ def test_warm_listing_follows_discovery_and_collision_renames(tmp_path: Path) ->
     (tmp_path / "scalars").mkdir()
     _append(tmp_path / "scalars" / EVENTS, 0)
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
-    assert fs.readdir("/") == [".", "..", "scalars"]
+    assert fs.readdir("/") == [".", "..", "llms.txt", "scalars"]
     assert "images" in fs.readdir("/scalars")
 
     _append(tmp_path / EVENTS, 1)

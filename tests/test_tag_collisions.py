@@ -155,7 +155,7 @@ def test_a_file_conflict_in_one_run_does_not_hide_other_runs(
     _write(tmp_path / "good", _scalars(1, value=3.0))
     fs = TensorBoardFS(tmp_path)
 
-    assert fs.readdir("/", None)[-2:] == ["bad", "good"]
+    assert fs.readdir("/", None)[2:] == ["bad", "good", "llms.txt"]
     assert [row["value"] for row in _json(fs, "/good/scalars/value.json")] == [3.0]
     assert "/bad/tensors/b/000001.json~2/x/000001.json" in _files(fs)
     assert len([message for message in warnings if "'bad'" in message]) == 1

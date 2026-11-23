@@ -7,7 +7,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 from loguru import logger
-from test_incremental_parse import _files, _frame
+from test_incremental_parse import _files as _all_files
+from test_incremental_parse import _frame
 from test_tf_producer_cases import _events
 
 from tboardfs import TensorBoardFS
@@ -18,6 +19,10 @@ ROOT = Path(__file__).resolve().parent.parent
 DT_FLOAT, DT_DOUBLE, DT_STRING = 1, 2, 7
 PNG = b"\x89PNG\r\n\x1a\n"
 RAW = "/raw/events.out.tfevents.host/00000000000000000000.tfrecord"
+
+
+def _files(fs: TensorBoardFS) -> list[str]:
+    return [path for path in _all_files(fs) if path != "/llms.txt"]
 
 
 def _value(event: compat_pb2.Event, tag: str, plugin: str, shape: list[int]) -> object:

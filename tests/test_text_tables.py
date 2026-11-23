@@ -105,7 +105,9 @@ def test_strings_that_do_not_fill_the_shape_have_no_text_file(tmp_path: Path) ->
     fs = _text(tmp_path, [3], "a", "b")
     record = json.loads(_read(fs, "/text/notes/000004.json"))
 
-    assert not [path for path in _files(fs) if path.endswith(".txt")]
+    assert not [
+        path for path in _files(fs) if path != "/llms.txt" and path.endswith(".txt")
+    ]
     assert record["tensor"]["string_val"] == ["a", "b"]
 
 

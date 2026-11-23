@@ -41,4 +41,7 @@ def test_debugger_streams_are_not_discovered_as_training_events() -> None:
     assert fs.readdir("/raw")[2:] == [event.name]
     frames = sorted(_files(fs, "/raw"))
     assert b"".join(fs.read(p, 4096, 0) for p in frames) == event.read_bytes()
-    assert all(p.startswith(("/scalars/", "/raw/", "/projector/")) for p in _files(fs))
+    assert all(
+        p == "/llms.txt" or p.startswith(("/scalars/", "/raw/", "/projector/"))
+        for p in _files(fs)
+    )

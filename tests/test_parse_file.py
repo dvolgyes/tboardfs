@@ -448,7 +448,7 @@ def test_filesystem_lists_fixed_tabs_for_empty_source(tmp_path: Path) -> None:
 
     listing = fs.readdir("/")
 
-    assert sorted(listing) == sorted([".", "..", *FIXED_TABS])
+    assert sorted(listing) == sorted([".", "..", "llms.txt", *FIXED_TABS])
 
 
 def test_filesystem_exposes_nested_scalar_formats(tmp_path: Path) -> None:

@@ -104,9 +104,9 @@ def test_root_and_active_run_do_not_read_idle_subtrees(
     listed = _spy_listings(monkeypatch)
     opened = _spy_opens(monkeypatch)
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
-    assert fs.readdir("/")[2:] == names
+    assert fs.readdir("/")[2:] == ["llms.txt", *names]
     assert listed == [tmp_path]
-    assert opened == []
+    assert opened == [Path(__file__).parents[1] / "tboardfs" / "llms.txt"]
 
     assert fs.read("/run00/profile/trace", 16, 0) == b"trace"
     _append(idle[-1], 1)

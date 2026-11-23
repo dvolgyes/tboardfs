@@ -143,7 +143,11 @@ def test_a_tensor_with_an_impossible_shape_has_no_file(
     )
 
     assert "/scalars/loss.json" in files
-    assert not [path for path in files if path.endswith((".npy", ".txt"))]
+    assert not [
+        path
+        for path in files
+        if path != "/llms.txt" and path.endswith((".npy", ".txt"))
+    ]
 
 
 def test_a_value_that_fails_does_not_hide_later_values(tmp_path: Path) -> None:

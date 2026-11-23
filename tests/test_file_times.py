@@ -155,8 +155,12 @@ def test_listing_then_stat_does_not_open_or_scan_cold_runs(
     assert _times(fs, "/") == (500.0, 500.0, 500.0)
     assert listed == []
     names = fs.readdir("/")[2:]
-    assert names == [f"run{i:02}" for i in range(32)]
-    assert all(stat.S_ISDIR(fs.getattr(f"/{name}")["st_mode"]) for name in names)
+    assert names == ["llms.txt", *[f"run{i:02}" for i in range(32)]]
+    assert all(
+        stat.S_ISDIR(fs.getattr(f"/{name}")["st_mode"])
+        for name in names
+        if name != "llms.txt"
+    )
     assert listed == [tmp_path]
     assert opened == []
 

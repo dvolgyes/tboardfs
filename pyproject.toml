@@ -51,7 +51,7 @@ include = ["tboardfs", "tboardfs.*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-tboardfs = ["py.typed", "_sibling_stat.c"]
+tboardfs = ["py.typed", "_sibling_stat.c", "llms.txt"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

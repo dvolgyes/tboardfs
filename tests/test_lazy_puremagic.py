@@ -55,6 +55,7 @@ assert 'puremagic' in sys.modules, 'SVG classification did not load puremagic'
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
         f"/raw/{source.name}/00000000000000000000.tfrecord",
+        "/llms.txt",
         "/scalars/loss.json",
         "/images/drawing/001.svg",
     ]

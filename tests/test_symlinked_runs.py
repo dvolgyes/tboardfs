@@ -25,7 +25,7 @@ def test_a_linked_run_shows_under_the_link_name(tmp_path: Path) -> None:
 
     fs = TensorBoardFS(tmp_path / "logs")
 
-    assert fs.readdir("/")[2:] == ["link"]
+    assert fs.readdir("/")[2:] == ["link", "llms.txt"]
     assert "/link/scalars/loss.json" in _files(fs)
 
 
@@ -76,7 +76,7 @@ def test_two_links_to_one_run_give_one_run(tmp_path: Path) -> None:
         tmp_path / "logs" / "a" / EVENTS
     ]
     fs = TensorBoardFS(tmp_path / "logs")
-    assert fs.readdir("/")[2:] == ["a"]
+    assert fs.readdir("/")[2:] == ["a", "llms.txt"]
     assert fs.read("/a/scalars/loss.json", 1 << 20, 0)
 
 
@@ -116,6 +116,6 @@ def test_a_link_into_the_mount_is_not_traversed(tmp_path: Path) -> None:
     (source / "good" / "plugins").symlink_to(mount)
     fs = TensorBoardFS(source, mountpoint=mount)
 
-    assert fs.readdir("/")[2:] == ["good"]
+    assert fs.readdir("/")[2:] == ["good", "llms.txt"]
     assert fs.readdir("/good/profile")[2:] == []
     assert "bad" not in fs.virtual_tree()["children"]
