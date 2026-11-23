@@ -12,7 +12,8 @@ if __name__ == "__main__":
     extensions = []
     options: dict[str, Any] = {}
     native_build = (
-        sys.platform == "linux"
+        os.environ.get("TBOARDFS_NATIVE") == "1"
+        and sys.platform == "linux"
         and sys.implementation.name == "cpython"
         and os.environ.get("TBOARDFS_PURE_PYTHON") != "1"
     )

@@ -34,6 +34,8 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
+        env:
+          TBOARDFS_NATIVE: "1"
         run: uv sync --locked --dev
 
       - name: Run tests
@@ -41,9 +43,9 @@ jobs:
 
       - name: Read a real event file from the installed wheel
         run: |
-          uv build --wheel --out-dir "$RUNNER_TEMP/wheels"
+          uv build --out-dir "$RUNNER_TEMP/wheels"
           uv venv --python 3.12 "$RUNNER_TEMP/wheel-env"
-          uv pip install --python "$RUNNER_TEMP/wheel-env/bin/python" "$RUNNER_TEMP"/wheels/tboardfs-*.whl
+          uv pip install --python "$RUNNER_TEMP/wheel-env/bin/python" "$RUNNER_TEMP"/wheels/tboardfs-*-py3-none-any.whl
           export PATH="$RUNNER_TEMP/wheel-env/bin:$PATH"
           cd "$RUNNER_TEMP"
           source_file=$(find "$GITHUB_WORKSPACE/test-logs/tensorboard" -maxdepth 1 -type f -name 'events.out.tfevents*' -print -quit)
