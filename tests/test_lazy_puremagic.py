@@ -4,16 +4,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 from test_parse_file import _record
 
 from tboardfs.proto import compat_pb2
 
 
-def test_magic_loads_only_when_the_cli_needs_mime(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_puremagic_loads_only_when_the_cli_classifies_payloads(
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.delenv("MAGIC", raising=False)
     scalar_dir = tmp_path / "scalars"
     scalar_dir.mkdir()
     scalar = compat_pb2.Event(step=1)
@@ -36,16 +34,16 @@ import sys
 
 import tboardfs
 
-assert 'magic' not in sys.modules, 'package import loaded magic'
+assert 'puremagic' not in sys.modules, 'package import loaded puremagic'
 from tboardfs.file_cli import main
 
 svg, scalars = sys.argv[1:]
 main(['--framing-only', 'list', svg], standalone_mode=False)
-assert 'magic' not in sys.modules, 'raw listing loaded magic'
+assert 'puremagic' not in sys.modules, 'raw listing loaded puremagic'
 main(['list', '--scalar-format', 'json', scalars], standalone_mode=False)
-assert 'magic' not in sys.modules, 'scalar indexing loaded magic'
+assert 'puremagic' not in sys.modules, 'scalar indexing loaded puremagic'
 main(['list', '--step-digits', '3', svg], standalone_mode=False)
-assert 'magic' in sys.modules, 'SVG classification did not load magic'
+assert 'puremagic' in sys.modules, 'SVG classification did not load puremagic'
 """
     result = subprocess.run(
         [sys.executable, "-c", script, str(source), str(scalar_dir)],

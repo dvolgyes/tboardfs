@@ -661,6 +661,15 @@ wheels = [
 ]
 
 [[package]]
+name = "puremagic"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a7/8d/4d60110e23f445e2dc106340f9bd5f422bb6c540f4fb21086d3ee44b52ab/puremagic-2.3.0.tar.gz", hash = "sha256:b54e4a69dd37c50bacc879380f132382ab4e9a935529628c8975abcc73e10640", size = 1214491, upload-time = "2026-11-16T04:55:04.12Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/40/72fcaa2f4b850da0207c111be7d2748a57a1c8e8ab149fdc1618323a0b87/puremagic-2.3.0-py3-none-any.whl", hash = "sha256:15ce035fe4c3f23e884a105d07448a5a81dd2e297985bdb636928ddf89bb3fe7", size = 73366, upload-time = "2026-11-16T04:55:02.784Z" },
+]
+
+[[package]]
 name = "pycparser"
 version = "3.12"
 source = { registry = "https://pypi.org/simple" }
@@ -858,15 +867,6 @@ wheels = [
 ]
 
 [[package]]
-name = "python-magic"
-version = "0.4.27"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/da/db/0b3e28ac047452d079d375ec6798bf76a036a08182dbb39ed38116a49130/python-magic-0.4.27.tar.gz", hash = "sha256:c1ba14b08e4a5f5c31a302b7721239695b2f0f058d125bd5ce1ee36b9d9d3c3b", size = 14677, upload-time = "2022-06-07T20:16:59.508Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/73/9f872cb81fc5c3bb48f7227872c28975f998f3e7c2b1c16e95e6432bbb90/python_magic-0.4.27-py2.py3-none-any.whl", hash = "sha256:c212960ad306f700aa0d01e5d7a325d20548ff97eb9920dcd29513174f0294d3", size = 13840, upload-time = "2022-06-07T20:16:57.763Z" },
-]
-
-[[package]]
 name = "requests"
 version = "2.34.2"
 source = { registry = "https://pypi.org/simple" }
@@ -917,7 +917,7 @@ dependencies = [
     { name = "orjson" },
     { name = "pandas" },
     { name = "protobuf" },
-    { name = "python-magic" },
+    { name = "puremagic" },
     { name = "xxhash" },
 ]
 
@@ -942,7 +942,7 @@ requires-dist = [
     { name = "orjson", specifier = ">=3.13.0,<4.0" },
     { name = "pandas", specifier = ">=3.1.1,<4.0" },
     { name = "protobuf", specifier = ">=7.36.2,<8.0" },
-    { name = "python-magic", specifier = ">=0.4.27,<1.0" },
+    { name = "puremagic", specifier = ">=2.3.0,<3.0" },
     { name = "xxhash", specifier = ">=4.1.0,<5.0" },
 ]
 

@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
-import magic
+import puremagic
 import pytest
 from click.testing import CliRunner
 from test_parse_file import _record
@@ -503,10 +503,10 @@ def test_raw_selection_and_publication_policies(tmp_path: Path) -> None:
     assert not list(out.rglob(".tboardfs-*.tmp"))
 
 
-def test_framing_only_commands_skip_magic(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_framing_only_commands_skip_signature_classification(
+    tmp_path: Path,
 ) -> None:
-    """Keep raw frames independent of custom classifications and typed diagnostics."""
+    """Keep raw frames independent of typed classification and diagnostics."""
     audio = BytesIO()
     with wave.open(audio, "wb") as wav:
         wav.setparams((1, 1, 8000, 0, "NONE", "not compressed"))
@@ -526,15 +526,10 @@ def test_framing_only_commands_skip_magic(
     raw = f"/raw/{source.name}"
     paths = [f"{raw}/{offset:020d}.tfrecord" for offset in (0, len(frames[0]))]
 
-    rules = tmp_path / "magic"
-    rules.write_text(
-        "44 string TEST custom WAVE test audio\n!:mime audio/flac\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("MAGIC", str(rules))
-    monkeypatch.setattr(magic, "_instances", {})
     runner = CliRunner()
-    with patch.object(magic, "from_buffer", wraps=magic.from_buffer) as detect:
+    with patch.object(
+        puremagic, "magic_string", wraps=puremagic.magic_string
+    ) as detect:
         for args in ([], ["--view", "raw"], ["/raw"], [raw]):
             result = runner.invoke(main, ["--framing-only", "list", str(source), *args])
             assert result.exit_code == 0, result.output
@@ -569,11 +564,11 @@ def test_framing_only_commands_skip_magic(
         assert "skipping malformed record" in checked.stderr
         assert "custom_scalars record broken-layout at step 1" in checked.stderr
 
-        typed = "/audio/clip/000001.flac"
+        typed = "/audio/clip/000001.wav"
         result = runner.invoke(main, ["list", str(source), "--view", "both"])
         assert result.exit_code == 0, result.output
         assert result.stdout.splitlines() == [typed, *paths]
-        detect.assert_called_with(blob, mime=True)
+        detect.assert_called_with(blob)
         result = runner.invoke(main, ["get", str(source), typed, "-o", "-"])
         assert result.exit_code == 0, result.output
         assert result.stdout_bytes == blob

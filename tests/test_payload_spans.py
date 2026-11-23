@@ -10,7 +10,7 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
-import magic
+import puremagic
 import pytest
 from google.protobuf.message import DecodeError
 
@@ -283,7 +283,9 @@ def test_noncanonical_images_cache_exact_filetype_results(tmp_path: Path) -> Non
     blob = _ScaleCorpus.small_png(0) + b"trailing"
     event.summary.value.add(tag="image").image.encoded_image_string = blob
     path.write_bytes(_record(event.SerializeToString()) * 20)
-    with patch.object(magic, "from_buffer", wraps=magic.from_buffer) as detect:
+    with patch.object(
+        puremagic, "magic_string", wraps=puremagic.magic_string
+    ) as detect:
         entries = parse_file(path)["binary_entries"]
     assert len(entries) == 20
     assert all(entry.extension == "png" for entry in entries)
@@ -292,9 +294,7 @@ def test_noncanonical_images_cache_exact_filetype_results(tmp_path: Path) -> Non
     assert all(call.args[0] == blob for call in detect.call_args_list)
 
 
-def test_large_audio_memo_respects_late_magic_rules(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_large_audio_memo_classifies_complete_clips_once(tmp_path: Path) -> None:
     """Only complete, adjacent duplicates share a classification within one parse."""
 
     def wav(tail: bytes) -> bytes:
@@ -306,21 +306,12 @@ def test_large_audio_memo_respects_late_magic_rules(
         return buffer.getvalue()
 
     ordinary = wav(bytes(4))
-    custom = wav(b"TEST")
-    late_offset = len(custom) - 4
+    changed = wav(b"TEST")
+    late_offset = len(changed) - 4
     assert (
-        len(ordinary) == len(custom) and ordinary[:late_offset] == custom[:late_offset]
+        len(ordinary) == len(changed)
+        and ordinary[:late_offset] == changed[:late_offset]
     )
-
-    def set_rules(extension: str) -> None:
-        rules = tmp_path / f"magic-{extension}"
-        rules.write_text(
-            f"{late_offset} string TEST custom WAVE test audio\n"
-            f"!:mime audio/{extension}\n",
-            encoding="utf-8",
-        )
-        monkeypatch.setenv("MAGIC", str(rules))
-        monkeypatch.setattr(magic, "_instances", {})
 
     def write_events(path: Path, *clips: bytes) -> None:
         frames = []
@@ -338,39 +329,38 @@ def test_large_audio_memo_respects_late_magic_rules(
             frames.append(_record(event.SerializeToString()))
         path.write_bytes(b"".join(frames))
 
-    set_rules("flac")
     path = tmp_path / "events.out.tfevents.audio"
-    write_events(path, ordinary, custom, custom)
-    with patch.object(magic, "from_buffer", wraps=magic.from_buffer) as detect:
+    write_events(path, ordinary, changed, changed)
+    with patch.object(
+        puremagic, "magic_string", wraps=puremagic.magic_string
+    ) as detect:
         entries = parse_file(path)["binary_entries"]
-    assert [call.args[0] for call in detect.call_args_list if call.kwargs["mime"]] == [
-        ordinary,
-        custom,
-    ]
+    assert [call.args[0] for call in detect.call_args_list] == [ordinary, changed]
     assert [(e.kind, e.tag, e.step, e.extension, e.value_ordinal) for e in entries] == [
         ("audio", "clip", 1, "wav", 0),
-        ("audio", "clip", 2, "flac", 0),
-        ("audio", "clip", 3, "flac", 1),
+        ("audio", "clip", 2, "wav", 0),
+        ("audio", "clip", 3, "wav", 1),
     ]
     assert len({entry.frame.payload_offset for entry in entries}) == 3
     assert [extract_binary_blob(entry) for entry in entries] == [
         ordinary,
-        custom,
-        custom,
+        changed,
+        changed,
     ]
     assert TensorBoardFS(tmp_path).readdir("/audio/clip")[2:] == [
         "000001.wav",
-        "000002.flac",
-        "000003.flac",
+        "000002.wav",
+        "000003.wav",
     ]
 
-    set_rules("aiff")
     fresh = tmp_path / "events.out.tfevents.fresh"
-    write_events(fresh, custom)
-    with patch.object(magic, "from_buffer", wraps=magic.from_buffer) as detect:
+    write_events(fresh, changed)
+    with patch.object(
+        puremagic, "magic_string", wraps=puremagic.magic_string
+    ) as detect:
         (entry,) = parse_file(fresh)["binary_entries"]
-    detect.assert_called_once_with(custom, mime=True)
-    assert entry.extension == "aiff"
+    detect.assert_called_once_with(changed)
+    assert entry.extension == "wav"
 
 
 def test_filetype_cache_distinguishes_a_changed_tail(tmp_path: Path) -> None:
@@ -388,7 +378,7 @@ def test_filetype_cache_distinguishes_a_changed_tail(tmp_path: Path) -> None:
     assert bad.extension != "arrow"
 
 
-def test_distinct_small_pngs_skip_libmagic(tmp_path: Path) -> None:
+def test_distinct_small_pngs_skip_puremagic(tmp_path: Path) -> None:
     path = tmp_path / "events.out.tfevents"
     frames = []
     for step in range(256):
@@ -398,14 +388,16 @@ def test_distinct_small_pngs_skip_libmagic(tmp_path: Path) -> None:
         ).image.encoded_image_string = _ScaleCorpus.small_png(step)
         frames.append(_record(event.SerializeToString()))
     path.write_bytes(b"".join(frames))
-    with patch.object(magic, "from_buffer", wraps=magic.from_buffer) as detect:
+    with patch.object(
+        puremagic, "magic_string", wraps=puremagic.magic_string
+    ) as detect:
         entries = parse_file(path)["binary_entries"]
     assert len(entries) == 256
     assert all(entry.extension == "png" for entry in entries)
     detect.assert_not_called()
 
 
-def test_larger_multi_chunk_png_skips_libmagic() -> None:
+def test_larger_multi_chunk_png_skips_puremagic() -> None:
     png = _ScaleCorpus._png(128, 96, (b"\0" + bytes(range(128)) * 3) * 96)
     data = png[41:-16]
     midpoint = len(data) // 2
@@ -415,7 +407,9 @@ def test_larger_multi_chunk_png_skips_libmagic() -> None:
         + _ScaleCorpus._chunk(b"IDAT", data[midpoint:])
         + png[-12:]
     )
-    with patch.object(magic, "from_buffer", wraps=magic.from_buffer) as detect:
+    with patch.object(
+        puremagic, "magic_string", wraps=puremagic.magic_string
+    ) as detect:
         assert detect_extension(png) == "png"
     detect.assert_not_called()
 
@@ -423,7 +417,9 @@ def test_larger_multi_chunk_png_skips_libmagic() -> None:
 def test_png_trailer_must_end_the_first_image() -> None:
     png = _ScaleCorpus.small_png(1)
     for blob in (png[:-1], png + b"trailing" + png[-12:]):
-        with patch.object(magic, "from_buffer", wraps=magic.from_buffer) as detect:
+        with patch.object(
+            puremagic, "magic_string", wraps=puremagic.magic_string
+        ) as detect:
             assert detect_extension(blob) == "png"
         assert detect.call_args is not None and detect.call_args.args[0] == blob
 

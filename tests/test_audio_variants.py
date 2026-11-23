@@ -5,8 +5,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-import magic
 import numpy as np
+import puremagic
 import pytest
 from test_tf_producer_cases import _events
 
@@ -47,8 +47,12 @@ def test_audio_exports(
     assert fs.read(f"/audio/{tag}/000001.{suffix}", len(blob) + 1, 0) == blob
 
 
-def test_m4a_brand_avoids_mime_without_overriding_image_brands(audio: dict) -> None:
-    with patch.object(magic, "from_buffer", wraps=magic.from_buffer) as detect:
+def test_m4a_brand_avoids_signature_matching_without_overriding_image_brands(
+    audio: dict,
+) -> None:
+    with patch.object(
+        puremagic, "magic_string", wraps=puremagic.magic_string
+    ) as detect:
         for tag in ("aac-m4a", "alac-m4a"):
             clip = audio[tag].encoded_audio_string
             assert detect_extension(clip) == "m4a"

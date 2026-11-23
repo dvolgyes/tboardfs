@@ -7,6 +7,7 @@ import pytest
 from test_tf_producer_cases import CORPUS, _events
 
 from tboardfs import TensorBoardFS
+from tboardfs.classify import detect_extension
 from tboardfs.media_containers import media_extension
 
 _CASES = "media-containers"
@@ -92,3 +93,16 @@ def test_transport_packet_strides() -> None:
     packets = [ts[i : i + 188] for i in range(0, 5 * 188, 188)]
     assert media_extension(b"".join(b"\0" * 4 + packet for packet in packets)) == "ts"
     assert media_extension(b"".join(packet + b"\0" * 16 for packet in packets)) == "ts"
+
+
+def test_incomplete_container_headers_remain_binary() -> None:
+    asf = bytearray(30)
+    asf[:16] = bytes.fromhex("3026b2758e66cf11a6d900aa0062ce6c")
+    asf[16:24] = (30).to_bytes(8, "little")
+    asf[24:28] = (1).to_bytes(4, "little")
+    avi = b"RIFF" + (1 << 20).to_bytes(4, "little") + b"AVI " + bytes(32)
+    aac = b"\xff\xf1\xff\xff\xff\xff\xfc"
+
+    for blob in (avi, bytes(asf), aac):
+        assert media_extension(blob) is None
+        assert detect_extension(blob) == "bin"

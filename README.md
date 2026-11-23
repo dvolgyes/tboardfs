@@ -19,14 +19,18 @@ TFRecord frames, including records with no typed representation. Neither view ne
 
 ```console
 $ tboardfs runs mnt
+
 $ ls mnt
 experiment-1  experiment-2
+
 $ ls mnt/experiment-1/scalars/train
 accuracy.json  accuracy.npz  accuracy.tsv  loss.json  loss.npz  loss.tsv
+
 $ head -3 mnt/experiment-1/scalars/train/loss.tsv
 epoch	step	wall_time	relative_time	value
 0.0	1	1700000001.0	0.0	1.5
 1.0	2	1700000002.0	1.0	0.75
+
 ```
 
 tboardfs reads the logs of TensorFlow 1 and 2, Keras, PyTorch (`torch.utils.tensorboard`), PyTorch Lightning,
@@ -40,32 +44,24 @@ There are two ways to use it:
 
 ## Installation
 
-tboardfs needs Python 3.12 or later, and these system libraries:
+tboardfs needs Python 3.12 or later.
 
-- Mounting requires FUSE, permission to use `/dev/fuse` on Linux, and a working `fusermount` or `fusermount3`. Use
-  `tboardfs-file` where mount privileges are unavailable.
-- libmagic, which finds the file type of images, audio and other stored files.
+Mounting requires FUSE, permission to use `/dev/fuse` on Linux, and a working `fusermount` or `fusermount3`. Use
+`tboardfs-file` where mount privileges are unavailable.
 
-On Debian or Ubuntu, for example:
-
-```bash
-sudo apt install fuse3 libmagic1
-```
-
-Install tboardfs from PyPI:
+On Debian or Ubuntu, install FUSE:
 
 ```bash
-pip install tboardfs
+sudo apt install fuse3
 ```
 
-Or run it without an installation:
+The Python package uses puremagic's bundled signature database. It does not require the system `libmagic` library.
+
+Run tboardfs directly with uv:
 
 ```bash
 uvx tboardfs SOURCE MOUNTPOINT
-uvx --from tboardfs tboardfs-file list SOURCE
 ```
-
-Source builds on Linux CPython can compile an optional accelerator for live status checks.
 
 On x86-64 Linux with GIL-enabled CPython, libfuse 2.9 and mfusepy 3.1.1, a second optional extension lets FUSE workers
 reuse Python thread state and copy encoded stat data directly into libfuse's reply buffer.
@@ -237,7 +233,7 @@ saved prefix.
 
 An unreadable source is never served from the cache.
 
-Restart the mount process after upgrading libmagic or changing its rule files.
+Restart the mount process after upgrading tboardfs.
 
 **Storage:** The default is `$XDG_CACHE_HOME/tboardfs/indexes-v1`, or `~/.cache/tboardfs/indexes-v1` when no absolute
 XDG cache directory is configured.
@@ -464,11 +460,9 @@ Metadata inherited from an earlier value with the same tag still applies.
 
 During each scan, tboardfs remembers the last audio clip larger than 4 KiB and no larger than 1 MiB.
 
-It reuses the detected extension only if the complete clip matches, so a custom libmagic rule can still distinguish
-clips with identical headers.
-
-The classifier loads libmagic only for payloads that need its rules, or before mounting with the disk index enabled to
-fingerprint those rules.
+It reuses the detected extension only if the complete clip matches. The classifier uses puremagic's bundled signature
+database without a filename hint, so it does not run deep scans. Container checks run before signature matching when a
+format needs stricter validation.
 
 A valid `M4A ` major brand does not need a MIME lookup; the existing HEIF-family image brand checks take precedence.
 
@@ -550,7 +544,7 @@ All three commands accept `--scalar-format` and `--step-digits`, with the same m
 explicit raw prefix and `get` with an explicit raw path can select a frame directly.
 
 For a single event file, `tboardfs-file --framing-only list SOURCE` lists raw frames without decoding summaries or
-calling libmagic.
+calling the payload classifier.
 
 `--framing-only` also works with `get` and `copy-all` and implies the raw view.
 
@@ -1395,7 +1389,6 @@ scripts/compare_file_types.py tests/data/producer-cases/audio-variants/events.ou
 
 It prints one JSON object per indexed binary item except graphs, whose extensions are set by the plugin schema.
 `tboardfs` is the export extension; `puremagic` lists candidate extensions in rank order without using a filename hint.
-The script does not change the event file or add `puremagic` to the project dependencies.
 
 The dtype matrix follows the
 [2.21.0 wire enum](https://github.com/tensorflow/tensorboard/blob/2.21.0/tensorboard/compat/proto/types.proto), not just

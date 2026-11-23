@@ -90,14 +90,6 @@ class _MediaHeaders:
         return control == 0x30 and blob[start + 4] <= 182
 
     @staticmethod
-    def caf(blob: bytes) -> bool:
-        """Require the mandatory stream description and basic audio attributes."""
-        if len(blob) < 52 or not blob.startswith(_CAF_HEADER):
-            return False
-        rate, encoding, channels = unpack_from(">d4s12xI", blob, 20)
-        return bool(isfinite(rate) and rate > 0 and encoding != b"\0" * 4 and channels)
-
-    @staticmethod
     def transport_stream(blob: bytes) -> bool:
         """Confirm five packet headers at the TS, M2TS, or parity-packet stride."""
         for stride, offset in ((188, 0), (192, 4), (204, 0)):
@@ -108,9 +100,55 @@ class _MediaHeaders:
                 return True
         return False
 
+    @staticmethod
+    def caf(blob: bytes) -> bool:
+        """Require the mandatory stream description and basic audio attributes."""
+        if len(blob) < 52 or not blob.startswith(_CAF_HEADER):
+            return False
+        rate, encoding, channels = unpack_from(">d4s12xI", blob, 20)
+        return bool(isfinite(rate) and rate > 0 and encoding != b"\0" * 4 and channels)
+
+    @staticmethod
+    def avi(blob: bytes) -> bool:
+        """Require a bounded RIFF AVI form."""
+        size = int.from_bytes(blob[4:8], "little")
+        return (
+            len(blob) >= 12
+            and blob.startswith(b"RIFF")
+            and blob[8:12] == b"AVI "
+            and 4 <= size <= len(blob) - 8
+        )
+
+    @staticmethod
+    def asf(blob: bytes) -> bool:
+        """Require a complete ASF header object."""
+        return (
+            len(blob) >= 30
+            and blob[:16] == bytes.fromhex("3026b2758e66cf11a6d900aa0062ce6c")
+            and 30 <= int.from_bytes(blob[16:24], "little") <= len(blob)
+            and blob[28:30] == b"\x01\x02"
+        )
+
+    @staticmethod
+    def aac_adts(blob: bytes) -> bool:
+        """Require one complete ADTS frame header and payload."""
+        if len(blob) < 7 or blob[0] != 0xFF or blob[1] & 0xF6 != 0xF0:
+            return False
+        if blob[2] >> 2 & 0x0F == 0x0F:
+            return False
+        frame_size = ((blob[3] & 3) << 11) | (blob[4] << 3) | (blob[5] >> 5)
+        header_size = 7 if blob[1] & 1 else 9
+        return header_size <= frame_size <= len(blob)
+
 
 def media_extension(blob: bytes) -> str | None:
     """Return an extension for a recognized ambiguous media container."""
+    if blob.startswith(b"RIFF") and _MediaHeaders.avi(blob):
+        return "avi"
+    if blob.startswith(b"\x30\x26\xb2\x75") and _MediaHeaders.asf(blob):
+        return "asf"
+    if blob.startswith(b"\xff") and _MediaHeaders.aac_adts(blob):
+        return "aac"
     if blob.startswith(b"qoif") and _MediaHeaders.qoi(blob):
         return "qoi"
     if blob.startswith(_HDR_SIGNATURES) and _MediaHeaders.radiance(blob):

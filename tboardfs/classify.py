@@ -1,20 +1,42 @@
 import re
 import struct
+from importlib import import_module
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 from zlib import crc32
 
 import numpy as np
 
 from tboardfs.constants import DT_STRING, DT_UINT8, LARGE_TENSOR_THRESHOLD, PLUGIN_TAB
 from tboardfs.data_formats import _Mesh, data_extension
-from tboardfs.index_magic import MagicHost
 from tboardfs.media_containers import media_extension
 from tboardfs.model import Scalar
 from tboardfs.native_files import _Framing, native_extension
 from tboardfs.tensor import _MAX_NUMPY_DIMS, tensor_to_array
 from tboardfs.zip_types import zip_extension
 
+_UNTRUSTED_SIGNATURE_EXTENSIONS = frozenset(
+    {
+        "aac",
+        "arrow",
+        "asf",
+        "avi",
+        "glb",
+        "h5",
+        "jp2",
+        "j2k",
+        "mpg",
+        "npy",
+        "parquet",
+        "pdf",
+        "ply",
+        "sndr",
+        "tiff",
+        "wma",
+        "wmv",
+        "xxx",
+    }
+)
 _LABEL = re.compile(rb"[\w .-]*")
 _SCALAR_FIELDS = MappingProxyType(
     {
@@ -68,9 +90,11 @@ def detect_extension(blob: bytes | None) -> str:
     extension = _Classifier.container_extension(blob)
     if extension is not None:
         return extension
-    extension = _Classifier.extension_from_magic(blob)
+    extension = _Classifier.extension_from_puremagic(blob)
     if extension is not None:
         return extension
+    if _Classifier.text_extension(blob):
+        return "txt"
     extension = _Classifier.extension_from_signature(blob)
     if extension is not None:
         return extension
@@ -232,7 +256,7 @@ class _Classifier:
 
     @staticmethod
     def container_extension(blob: bytes) -> str | None:
-        """Resolve containers whose MIME labels can be ambiguous across magic databases."""
+        """Resolve containers with overlapping format signatures."""
         if blob.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x06\x06")):
             return zip_extension(blob)
         if blob.startswith((b"RF64", b"BW64")):
@@ -253,7 +277,89 @@ class _Classifier:
             if extension is None and blob[8:12] == b"M4A ":
                 return "m4a"
             return extension
+        if blob[:4] in (b"II*\0", b"MM\0*"):
+            return _Classifier.tiff_extension(blob)
+        if blob[:4] in (b"II+\0", b"MM\0+"):
+            return _Classifier.tiff_extension(blob)
+        if blob.startswith(b"\x00\x00\x00\x0cjP  \r\n\x87\n"):
+            return "jp2"
+        if blob.startswith(b"\xff\x4f\xff\x51"):
+            return _Classifier.jpeg2000_codestream(blob)
         return native_extension(blob) or media_extension(blob) or data_extension(blob)
+
+    @staticmethod
+    def tiff_extension(blob: bytes) -> str | None:
+        """Validate the first TIFF image file directory using bounded framing."""
+        endian: Literal["little", "big"]
+        if blob[:2] == b"II":
+            endian = "little"
+        elif blob[:2] == b"MM":
+            endian = "big"
+        else:
+            return None
+        version = int.from_bytes(blob[2:4], endian)
+        if version == 42 and len(blob) >= 8:
+            offset = int.from_bytes(blob[4:8], endian)
+            if offset < 8 or offset + 2 > len(blob):
+                return None
+            count = int.from_bytes(blob[offset : offset + 2], endian)
+            end = offset + 2 + count * 12 + 4
+            return "tiff" if count and end <= len(blob) else None
+        if (
+            version != 43
+            or len(blob) < 16
+            or blob[4:6] != (8).to_bytes(2, endian)
+            or blob[6:8] != b"\0\0"
+        ):
+            return None
+        offset = int.from_bytes(blob[8:16], endian)
+        if offset < 16 or offset + 8 > len(blob):
+            return None
+        count = int.from_bytes(blob[offset : offset + 8], endian)
+        end = offset + 8 + count * 20 + 8
+        return "tiff" if count and end <= len(blob) else None
+
+    @staticmethod
+    def jpeg2000_codestream(blob: bytes) -> str | None:
+        """Check JPEG 2000 image dimensions and the complete SIZ marker."""
+        if len(blob) < 42:
+            return None
+        size = int.from_bytes(blob[4:6], "big")
+        components = int.from_bytes(blob[40:42], "big")
+        if size != 38 + 3 * components or 4 + size > len(blob):
+            return None
+        width = int.from_bytes(blob[8:12], "big")
+        height = int.from_bytes(blob[12:16], "big")
+        x_origin = int.from_bytes(blob[16:20], "big")
+        y_origin = int.from_bytes(blob[20:24], "big")
+        x_tile = int.from_bytes(blob[24:28], "big")
+        y_tile = int.from_bytes(blob[28:32], "big")
+        x_tile_origin = int.from_bytes(blob[32:36], "big")
+        y_tile_origin = int.from_bytes(blob[36:40], "big")
+        return (
+            "j2k"
+            if components
+            and width > x_origin
+            and height > y_origin
+            and x_tile > 0
+            and y_tile > 0
+            and x_tile_origin <= x_origin
+            and y_tile_origin <= y_origin
+            else None
+        )
+
+    @staticmethod
+    def text_extension(blob: bytes) -> bool:
+        """Recognize complete UTF-8 text without control bytes or NULs."""
+        if any(
+            byte == 127 or (byte < 32 and byte not in (9, 10, 12, 13)) for byte in blob
+        ):
+            return False
+        try:
+            blob.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+        return True
 
     @staticmethod
     def wave64_extension(blob: bytes) -> str:
@@ -321,11 +427,12 @@ class _Classifier:
         return {2: "mp2", 1: "mp3"}.get((header[1] >> 1) & 3)
 
     @staticmethod
-    def extension_from_magic(blob: bytes) -> str | None:
-        """Map known libmagic MIME types and descriptions to stable filename extensions."""
-        mime = MagicHost.classify(blob, mime=True).lower()
-        if mime == "audio/mpeg" and (layer := _Classifier.mpeg_layer(blob)):
-            return layer
+    def extension_from_puremagic(blob: bytes) -> str | None:
+        """Map puremagic's signature matches to stable filename extensions."""
+        matcher = import_module("tboardfs._magic_signatures")
+        matches = matcher.magic_matches(blob)
+        if matches is None:
+            return None
         mime_extensions = {
             "application/json": "json",
             "audio/aac": "aac",
@@ -344,7 +451,6 @@ class _Classifier:
             "image/bmp": "bmp",
             "image/x-ms-bmp": "bmp",
             "image/gif": "gif",
-            "image/jpeg": "jpg",
             "image/jp2": "jp2",
             "image/x-jp2-codestream": "j2k",
             "image/jxl": "jxl",
@@ -366,34 +472,36 @@ class _Classifier:
             "video/x-matroska": "mkv",
             "video/x-msvideo": "avi",
         }
-        if mime in mime_extensions:
-            return mime_extensions[mime]
-        return _Classifier.extension_from_magic_description(
-            MagicHost.classify(blob).lower()
-        )
-
-    @staticmethod
-    def extension_from_magic_description(description: str) -> str | None:
-        """Map reliable libmagic descriptions when MIME is too generic."""
-        description_extensions = (
-            ("json text", "json"),
-            ("png image", "png"),
-            ("jpeg image", "jpg"),
-            ("gif image", "gif"),
-            ("wave audio", "wav"),
-            ("ogg data", "ogg"),
-            ("web/p image", "webp"),
-            ("webm", "webm"),
-            ("mp4 base media", "mp4"),
-            ("quicktime", "mov"),
-            ("mpeg adts, aac", "aac"),
-            ("mpeg adts, layer ii,", "mp2"),
-            ("mpeg adts, layer iii", "mp3"),
-            ("flac audio", "flac"),
-        )
-        for needle, extension in description_extensions:
-            if needle in description:
+        aliases = {"jpeg": "jpg", "jpe": "jpg", "tif": "tiff"}
+        for match in matches:
+            if (
+                blob.startswith(b"RIFF")
+                and match.offset == 0
+                and match.byte_match == b"RIFF"
+            ):
+                continue
+            mime = (match.mime_type or "").lower()
+            if mime == "audio/mpeg":
+                if layer := _Classifier.mpeg_layer(blob):
+                    return layer
+                continue
+            if extension := mime_extensions.get(mime):
+                if extension in _UNTRUSTED_SIGNATURE_EXTENSIONS:
+                    continue
                 return extension
+            extensions = match.extension
+            if not extensions:
+                continue
+            if isinstance(extensions, str):
+                extensions = [extensions]
+            for value in extensions:
+                extension = value.removeprefix(".").lower()
+                if extension in aliases:
+                    extension = aliases[extension]
+                if extension in _UNTRUSTED_SIGNATURE_EXTENSIONS:
+                    continue
+                if extension.isascii() and extension.isalnum() and len(extension) <= 16:
+                    return extension
         return None
 
     @staticmethod

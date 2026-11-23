@@ -1,4 +1,4 @@
-"""Identify parser and host classifier behavior for the durable index."""
+"""Identify parser, classifier, and replay behavior for the durable index."""
 
 import json
 import os
@@ -6,11 +6,13 @@ import stat
 import sys
 import zlib
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass
 from importlib import import_module
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import PackageNotFoundError, distribution, version
 from pathlib import Path
-from typing import cast
+from types import ModuleType
+from typing import Any, cast
 
 import google.protobuf
 import numpy as np
@@ -18,7 +20,6 @@ import xxhash
 from google.protobuf.descriptor import FileDescriptor
 from google.protobuf.internal import api_implementation
 
-from tboardfs.index_magic import OBSERVATION_ERRORS, MagicHost
 from tboardfs.open3d_schema import _FILE as _OPEN3D_SCHEMA
 from tboardfs.proto import (
     compat_pb2,
@@ -28,8 +29,28 @@ from tboardfs.proto import (
     mesh_plugin_data_pb2,
 )
 
-_SCHEMA = 4
-_MAX_RULE_BYTES = 128 << 20
+_SCHEMA = 5
+_MAX_DATA_BYTES = 128 << 20
+
+
+def _signature_records(
+    matches: Iterable[Any],
+) -> tuple[tuple[object, ...], ...]:
+    """Return stable tuples for the active byte signature records."""
+    return tuple(
+        (
+            record.byte_match.hex(),
+            record.offset,
+            record.extension,
+            record.mime_type,
+            record.name,
+        )
+        for record in matches
+    )
+
+
+def _magic_data_path() -> Path:
+    return Path(str(distribution("puremagic").locate_file("puremagic/magic_data.json")))
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,30 +58,39 @@ class IndexPolicy:
     """Identify parser, classifier, and replay behavior; bump the schema when it changes."""
 
     id: str
-    _host: MagicHost
 
     @classmethod
     def capture(cls, *, mountpoint: Path | None = None) -> "IndexPolicy | None":
-        """Fingerprint before mounting; restart the process after host rule upgrades."""
-        import_module("magic")
+        """Fingerprint loaded classifier data and decoder behavior before mounting."""
         try:
-            host = MagicHost.observe()
-            if not host.files_unchanged():
-                return None
-            if mountpoint is not None and any(
-                cls._crosses_mount(path, mountpoint) for path, _ in host.files
+            path = _magic_data_path()
+            before = path.stat()
+            signature = cls._signature(before)
+            if (
+                not path.is_absolute()
+                or not stat.S_ISREG(before.st_mode)
+                or before.st_size > _MAX_DATA_BYTES
             ):
                 return None
-            digest = cls._digest(host)
-            if host.files_unchanged():
-                return cls(digest, host)
-        except (*OBSERVATION_ERRORS, PackageNotFoundError):
+            if mountpoint is not None and cls._crosses_mount(path, mountpoint):
+                return None
+            module = import_module("puremagic.main")
+            classifier = cls._classifier_revision(module)
+            if signature != cls._signature(path.stat()):
+                return None
+            payload = (
+                cls._decoder_revision(),
+                cls._descriptor_revision(),
+                classifier,
+            )
+            encoded = json.dumps(payload, separators=(",", ":")).encode("ascii")
+            return cls(xxhash.xxh3_128_hexdigest(encoded))
+        except (OSError, ValueError, PackageNotFoundError):
             return None
-        return None
 
     def unchanged(self) -> bool:
-        """Check process compatibility without host I/O on a live mount."""
-        return self._host.unchanged()
+        """Report that puremagic has no runtime classifier settings."""
+        return True
 
     @staticmethod
     def _crosses_mount(path: Path, mountpoint: Path) -> bool:
@@ -96,53 +126,32 @@ class IndexPolicy:
                 current = Path("/")
                 parts = parts[1:]
             pending.extendleft(reversed(parts))
-        raise ValueError("libmagic rule path traversal exceeds the probe bound")
-
-    @classmethod
-    def _digest(cls, host: MagicHost) -> str:
-        """Fingerprint rule contents and decoder behavior with a bounded read budget."""
-        remaining = _MAX_RULE_BYTES
-        rules = []
-        for path, signature in host.files:
-            marker = "missing"
-            if signature:
-                marker = "directory"
-                if stat.S_ISREG(signature[2]):
-                    marker, remaining = cls._file_digest(path, signature, remaining)
-            rules.append((str(path), marker))
-        payload = (
-            cls._decoder_revision(),
-            cls._descriptor_revision(),
-            host.environment,
-            rules,
-        )
-        encoded = json.dumps(payload, separators=(",", ":")).encode("ascii")
-        fingerprint: str = xxhash.xxh3_128_hexdigest(encoded)
-        return fingerprint
+        raise ValueError("classifier data path traversal exceeds the probe bound")
 
     @staticmethod
-    def _file_digest(
-        path: Path, signature: tuple[int, ...], remaining: int
-    ) -> tuple[str, int]:
-        """Hash a regular file, rejecting changes and late substitutions."""
-        size = signature[3]
-        if size > remaining:
-            raise ValueError("libmagic rule inputs exceed the hashing budget")
-        flags = os.O_RDONLY | os.O_NONBLOCK
-        with os.fdopen(os.open(path, flags), "rb") as stream:
-            if MagicHost.signature(os.fstat(stream.fileno())) != signature:
-                raise ValueError("libmagic input changed before hashing")
-            digest = xxhash.xxh3_128()
-            length = 0
-            while chunk := stream.read(min(1 << 20, size + 1 - length)):
-                digest.update(chunk)
-                length += len(chunk)
-            if (
-                length != size
-                or MagicHost.signature(os.fstat(stream.fileno())) != signature
-            ):
-                raise ValueError("libmagic input changed while hashing")
-        return digest.hexdigest(), remaining - size
+    def _signature(status: os.stat_result) -> tuple[int, ...]:
+        return (
+            status.st_dev,
+            status.st_ino,
+            status.st_mode,
+            status.st_size,
+            status.st_mtime_ns,
+            status.st_ctime_ns,
+        )
+
+    @staticmethod
+    def _classifier_revision(module: ModuleType) -> str:
+        """Fingerprint the signature records used by byte-only classification."""
+        signatures = (
+            _signature_records(module.magic_header_array),
+            _signature_records(module.magic_footer_array),
+            tuple(
+                (key.hex(), _signature_records(matches))
+                for key, matches in sorted(module.multi_part_dict.items())
+            ),
+        )
+        encoded = json.dumps(signatures, separators=(",", ":")).encode("ascii")
+        return cast(str, xxhash.xxh3_128_hexdigest(encoded))
 
     @staticmethod
     def _decoder_revision() -> tuple[object, ...]:
@@ -156,8 +165,7 @@ class IndexPolicy:
             np.__version__,
             google.protobuf.__version__,
             api_implementation.Type(),
-            version("python-magic"),
-            import_module("magic").version(),
+            version("puremagic"),
             zlib.ZLIB_RUNTIME_VERSION,
         )
 

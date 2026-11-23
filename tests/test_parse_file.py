@@ -193,8 +193,8 @@ def test_parse_file_indexes_binary_record_payload_with_last_wins(
     assert path.read_bytes()[offset : offset + size] == second
 
 
-def test_detect_extension_uses_magic_for_native_formats() -> None:
-    """Magic detection returns native extensions and leaves unknown blobs binary."""
+def test_detect_extension_uses_puremagic_for_native_formats() -> None:
+    """Signature detection returns native extensions and leaves unknown blobs binary."""
     png = base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAF"
         "AQH/KS2zWQAAAABJRU5ErkJggg=="
@@ -239,7 +239,7 @@ def test_export_table_json_spells_infinities_and_nulls_nan() -> None:
     ]
 
 
-def test_filesystem_exposes_magic_detected_tensor_blob_extension(
+def test_filesystem_exposes_detected_tensor_blob_extension(
     tmp_path: Path,
 ) -> None:
     """Filesystem paths use detected native extensions for tensor blobs."""
