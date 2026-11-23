@@ -53,6 +53,9 @@ namespaces = false
 [tool.setuptools.package-data]
 tboardfs = ["py.typed", "_sibling_stat.c"]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [dependency-groups]
 dev = [
     "coverage>=7.14.1,<8.0",
