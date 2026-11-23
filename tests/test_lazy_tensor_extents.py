@@ -203,7 +203,7 @@ def test_cold_tree_defers_reads_and_preserves_typed_files(
 ) -> None:
     starts = _track_ranges(source, monkeypatch)
     reads = _track_reads(monkeypatch)
-    serial = TensorBoardFS(source.parent)
+    serial = TensorBoardFS(source.parent, index_workers=1)
     fs = _mount(source)
     _assert_cold_listing(fs, serial, starts)
 

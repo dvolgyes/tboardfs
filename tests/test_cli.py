@@ -218,12 +218,12 @@ def test_mount_cli_refuses_invalid_index_workers(
 
 
 @pytest.mark.parametrize(
-    ("option", "workers"), [([], 1), (["-j", "2"], 2), (["--index-workers", "3"], 3)]
+    ("option", "workers"), [([], 4), (["-j", "2"], 2), (["--index-workers", "3"], 3)]
 )
 def test_mount_cli_sets_index_workers(
     tmp_path: Path, monkeypatch: Any, option: list[str], workers: int
 ) -> None:
-    """The mount is serial by default and accepts both opt-in spellings."""
+    """The mount defaults to four workers and accepts both option spellings."""
     source = tmp_path / "runs"
     source.mkdir()
     counts: list[int] = []
@@ -235,6 +235,10 @@ def test_mount_cli_sets_index_workers(
 
     assert result.exit_code == 0, result.output
     assert counts == [workers]
+
+
+def test_filesystem_defaults_to_four_index_workers(tmp_path: Path) -> None:
+    assert filesystem.TensorBoardFS(tmp_path).index_workers == 4
 
 
 @pytest.mark.parametrize(

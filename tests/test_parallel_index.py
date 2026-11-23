@@ -503,7 +503,7 @@ def test_mount_cold_parallel_then_reuses_and_resumes_serially(
 
     monkeypatch.setattr(cold, "parallel_index", record_cold)
     path.write_bytes(b"".join(frames))
-    serial = TensorBoardFS(tmp_path)
+    serial = TensorBoardFS(tmp_path, index_workers=1)
     expected = _contents(serial)
     mounted = TensorBoardFS(
         tmp_path, index_workers=2, refresh_age_seconds=0, source_check_seconds=0
@@ -523,7 +523,7 @@ def test_mount_cold_parallel_then_reuses_and_resumes_serially(
     assert mounted._state.runs[()].files[path] is original
     with path.open("ab") as handle:
         handle.write(_loss(_STEP + 3, 9.0))
-    assert _contents(mounted) == _contents(TensorBoardFS(tmp_path))
+    assert _contents(mounted) == _contents(TensorBoardFS(tmp_path, index_workers=1))
     assert mounted._state.runs[()].files[path].progress.resumed
 
 

@@ -12,6 +12,7 @@ from tboardfs.cli_options import LOGLEVEL, SCALAR_FORMAT, STEP_DIGITS
 from tboardfs.constants import (
     DEFAULT_CACHE_SIZE_MB,
     DEFAULT_DISCOVERY_SECONDS,
+    DEFAULT_INDEX_WORKERS,
     DEFAULT_SOURCE_CHECK_SECONDS,
     LOG_FORMAT,
 )
@@ -56,7 +57,7 @@ from tboardfs.stdlib_logging import StdlibToLoguru
     "--index-workers",
     type=click.IntRange(min=1),
     metavar="N",
-    default=1,
+    default=DEFAULT_INDEX_WORKERS,
     show_default=True,
     help="Maximum workers for cold indexing of event files at least 8 MiB.",
 )

@@ -104,7 +104,7 @@ tboardfs runs in the background by default. With `--foreground`, it stays in the
 | `--refresh-age-seconds S` | `150` | Minimum interval between local searches for new files and directories (`0` to search on each access, `inf` to freeze each directory after its first scan). |
 | `--source-check-seconds S` | `120` | Minimum interval between status checks of known event files in an accessed run. Accepts finite, nonnegative seconds; `0` checks on every access. |
 | `--cache-size-mb N` | `1024` | Memory for rendered files. `0` turns the cache off. |
-| `-j N`, `--index-workers N` | `1` | Maximum workers per cold file index (`1` keeps indexing serial). |
+| `-j N`, `--index-workers N` | `4` | Maximum workers per cold file index. |
 | `--disk-index` | off | Reuse verified per-file indexes across mounts. |
 | `--disk-index-size-mb N` | `2048` | Disk budget in MiB for saved index payloads; does not enable the disk index by itself. |
 | `--root-owner` / `--user-owner` | `--root-owner` | Owner of all files and directories: root, or the user who mounts. |

@@ -13,7 +13,7 @@ from typing import Any
 from loguru import logger
 
 from tboardfs._directory import _PlainDirectory
-from tboardfs.constants import DEFAULT_SOURCE_CHECK_SECONDS
+from tboardfs.constants import DEFAULT_INDEX_WORKERS, DEFAULT_SOURCE_CHECK_SECONDS
 from tboardfs.disk_index import DiskIndex, _IndexHit
 from tboardfs.event_source import EventSource
 from tboardfs.file_status import _HAS_BIRTH_TIME, FileIdentity
@@ -73,7 +73,7 @@ class _IndexOptions:
         mountpoint: str | Path | None,
         parallel_min_bytes: int,
         *,
-        index_workers: int = 1,
+        index_workers: int = DEFAULT_INDEX_WORKERS,
         disk_index: bool = False,
         disk_index_size_mb: int = _DEFAULT_DISK_INDEX_SIZE_MB,
         source_check_seconds: float = DEFAULT_SOURCE_CHECK_SECONDS,
