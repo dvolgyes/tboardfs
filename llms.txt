@@ -4,7 +4,10 @@ This read-only tree exposes TensorBoard event data as files for training analysi
 
 ## Directories
 
-Each run has tabs: `scalars`, `histograms`, `distributions`, `pr_curves`, `images`, `audio`, `videos`, `text`, `meshes`, `tensors`, `hparams`, `custom_scalars`, `graphs`, `projector`, `profile` and `plugins`. `projector` and `profile` include run-directory sidecar files when available. `raw/<event-file>/` contains the original complete TFRecord frames in source order.
+Metric tabs (`scalars`, `histograms`, `distributions`, `pr_curves`) contain training values and per-step tables; media tabs (`images`, `audio`, `videos`) contain stored media.
+`text` contains text summaries; `meshes` geometry; `tensors` tensor values; `graphs` model graphs and run metadata; `hparams` run settings; `custom_scalars/layout.json` layouts; and `plugins` other plugin data.
+`projector` and `profile` include run-directory sidecar files when available.
+`raw/<event-file>/<20-digit-byte-offset>.tfrecord` contains one complete original TFRecord frame; filenames identify byte offsets in source order.
 
 ## Events and formats
 
