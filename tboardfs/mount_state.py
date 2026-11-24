@@ -60,3 +60,37 @@ class _FsState:
         default_factory=dict
     )
     next_handle: int = 1
+
+    def visible_dirs(self) -> list[tuple[str, ...]]:
+        """Keep existing files and still-cold branches proven by discovery."""
+        visible = []
+        parents: set[tuple[str, ...]] = {()}
+        for parts in reversed(self.directories):
+            if parts in parents or self._has_files(parts):
+                visible.append(parts)
+                parents.add(parts[:-1])
+        return visible
+
+    def restore_branches(self, branches: set[tuple[str, ...]]) -> bool:
+        """Reopen hidden branches when a fresh search finds a logfile again."""
+        restored = False
+        for parts in branches:
+            if not self._has_subtree(parts):
+                self.directories[parts].scanned_at = None
+                restored = True
+        return restored
+
+    def _has_subtree(self, parts: tuple[str, ...]) -> bool:
+        pending = [parts]
+        while pending:
+            current = pending.pop()
+            if self._has_files(current):
+                return True
+            pending.extend(self.directories[current].children)
+        return False
+
+    def _has_files(self, parts: tuple[str, ...]) -> bool:
+        run = self.runs.get(parts)
+        return self.directories[parts].scanned_at is None or (
+            run is not None and bool(run.files)
+        )

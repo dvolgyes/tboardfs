@@ -35,8 +35,10 @@ def test_raw_listing_lookup_and_snapshot(
     original = source.read_bytes()
     names = [_name(0), _name(len(first))]
     directory = f"/raw/{_EVENTS}"
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
-    mounted = MountedTensorBoardFS(tmp_path, refresh_age_seconds=0)
+    fs = TensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=0, raw=True
+    )
+    mounted = MountedTensorBoardFS(tmp_path, refresh_age_seconds=0, raw=True)
 
     def materialized(*args: object) -> NoReturn:
         pytest.fail("building or listing a raw tree materialized a frame")
@@ -167,7 +169,7 @@ def test_empty_source_and_raw_named_nested_run(tmp_path: Path) -> None:
     (tmp_path / (_EVENTS + ".empty")).touch()
     (tmp_path / "raw").mkdir()
     _append(tmp_path / "raw" / _EVENTS, 100)
-    fs = TensorBoardFS(tmp_path)
+    fs = TensorBoardFS(tmp_path, raw=True)
     assert fs.readdir("/raw") == [".", "..", _EVENTS]
     assert fs.readdir(f"/raw/{_EVENTS}") == [".", "..", _name(0)]
     assert fs.readdir(f"/raw~2/raw/{_EVENTS}") == [".", "..", _name(0)]
@@ -178,6 +180,7 @@ def _guarded_mount(source: Path) -> tuple[TensorBoardFS, str]:
         source.parent,
         mountpoint=source.parent.parent / "mount",
         refresh_age_seconds=float("inf"),
+        raw=True,
     )
     virtual = f"/raw/{source.name}/{_name(0)}"
     assert fs.readdir(f"/raw/{source.name}") == [".", "..", _name(0)]
@@ -240,9 +243,9 @@ def test_guarded_mount_denies_lexical_private_path_before_open(
     mount.mkdir()
     private = mount / _EVENTS
     private.write_bytes(_loss_record(1))
-    unguarded = TensorBoardFS(mount)
+    unguarded = TensorBoardFS(mount, raw=True)
     node, key = unguarded._locate(f"/raw/{private.name}/{_name(0)}")
-    guarded = TensorBoardFS(tmp_path, mountpoint=mount)
+    guarded = TensorBoardFS(tmp_path, mountpoint=mount, raw=True)
 
     def unexpected_open(*args: object, **kwargs: object) -> NoReturn:
         pytest.fail("render attempted to open the private payload")

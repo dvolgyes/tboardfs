@@ -82,6 +82,7 @@ class SingleEventTree:
                 step_digits=step_digits,
                 scalar_formats=scalar_formats,
                 cache_size_mb=0,
+                raw=True,
             )
             self.tree = filesystem.virtual_tree()
             return

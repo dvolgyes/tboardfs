@@ -29,12 +29,12 @@ class RunTree:
         run: RunCache,
         scalar_formats: tuple[str, ...],
         step_digits: int,
+        *,
+        raw: bool = True,
     ) -> dict[str, Any]:
         """Build a complete run tree, including sidecars when present."""
         run_node = _DirectoryNode()
-        for tab in FIXED_TABS:
-            run_node["children"][tab] = _DirectoryNode()
-        _Projection.add_run_files(run_node, run, scalar_formats, step_digits)
+        _Projection.add_run_files(run_node, run, scalar_formats, step_digits, raw=raw)
         FileTimes.stamp_dirs(run_node)
         return run_node
 
@@ -46,6 +46,8 @@ class RunTree:
         after: EventFileCache,
         scalar_formats: tuple[str, ...],
         step_digits: int,
+        *,
+        raw: bool = True,
     ) -> dict[str, Any] | None:
         """Project a verified final-file append, or request a cold build.
 
@@ -82,8 +84,12 @@ class RunTree:
         _Projection.add_json_files(files, entries, step_digits, consumed)
         GraphFiles.add_summaries(files, binaries, step_digits)
 
-        raw = RawFrames.extend(tree["children"]["raw"], after, files.name_map)
-        return files.patch(tree, run, raw=raw)
+        raw_tab = (
+            RawFrames.extend(tree["children"].get("raw"), after, files.name_map)
+            if raw
+            else None
+        )
+        return files.patch(tree, run, raw=raw_tab)
 
 
 class _Projection:
@@ -150,7 +156,7 @@ class _Projection:
         )
         scalars = _Projection.merged_scalars(caches, tags=dirty, epochs=epochs)
         _Projection.add_scalar_files(files, caches, scalars, scalar_formats, tags=dirty)
-        if not tree["children"]["hparams"]["children"]:
+        if "hparams" not in tree["children"]:
             return True
         return _Projection.project_hparams(files, caches, scalars, epochs)
 
@@ -212,6 +218,8 @@ class _Projection:
         run: RunCache,
         scalar_formats: tuple[str, ...],
         step_digits: int,
+        *,
+        raw: bool,
     ) -> None:
         """Populate one run directory with indexed virtual files."""
         caches = _Projection.sorted_file_caches(run)
@@ -227,7 +235,11 @@ class _Projection:
         _Projection.add_json_files(files, entries, step_digits, consumed)
         GraphFiles.add(files, caches, step_digits)
         _Projection.add_sidecar_files(files, run)
-        RawFrames.add(run_node["children"]["raw"], run, files.name_map)
+        if raw:
+            raw_tab = _DirectoryNode()
+            RawFrames.add(raw_tab, run, files.name_map)
+            if raw_tab["children"]:
+                run_node["children"]["raw"] = raw_tab
         files.fill(run_node, run)
 
     @staticmethod

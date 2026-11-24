@@ -50,20 +50,15 @@ class RunPlaces:
         return depth, owner
 
     def build(
-        self,
-        run_trees: Mapping[tuple[str, ...], dict[str, Any]],
-        *,
-        root_files: Mapping[str, dict[str, Any]],
+        self, run_trees: Mapping[tuple[str, ...], dict[str, Any]]
     ) -> dict[str, Any]:
-        """Return the virtual tree of all runs and fixed root files.
+        """Return the virtual tree of all runs.
 
         Args:
             run_trees: each run tree, keyed by source run path, not changed.
-            root_files: regular files to expose directly at the mount root.
         """
         root = _DirectoryNode()
         maps: dict[tuple[str, ...], dict[str, str]] = {}
-        root["children"].update(root_files)
         dirs: dict[tuple[str, ...], dict[str, Any]] = {(): root}
         paths: dict[tuple[str, ...], tuple[str, ...]] = {(): ()}
         renamed: dict[tuple[str, ...], tuple[str, ...]] = {}
@@ -93,8 +88,6 @@ class RunPlaces:
                     if isinstance(children, RunListing)
                     else dict(children)
                 )
-                if not run_parts:
-                    placed_children.update(root["children"])
                 dirs[run_parts]["children"] = placed_children
         for parts, names in maps.items():
             if names:

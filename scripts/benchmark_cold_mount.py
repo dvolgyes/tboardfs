@@ -217,8 +217,15 @@ class _Mount:
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, previous)
-        if roots != [run] or "raw" not in tabs or process.poll() is not None:
-            raise RuntimeError(f"unexpected FUSE listing: root={roots!r}, run={tabs!r}")
+        if (
+            roots != [run]
+            or "scalars" not in tabs
+            or "raw" in tabs
+            or process.poll() is not None
+        ):
+            raise RuntimeError(
+                f"unexpected typed-only FUSE listing: root={roots!r}, run={tabs!r}"
+            )
         return {
             "elapsed_ns": end - start,
             "launch_to_ready_ns": ready - start,

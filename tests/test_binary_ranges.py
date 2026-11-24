@@ -267,7 +267,7 @@ def test_discovery_filters_fresh_links_to_protected_roots(
     (source / "mount-link").symlink_to(mountpoint, target_is_directory=True)
     (source / "storage-link").symlink_to(storage / "run", target_is_directory=True)
 
-    assert fs.readdir("/")[2:] == ["allowed", "llms.txt"]
+    assert fs.readdir("/")[2:] == ["allowed"]
     assert fs.getattr("/allowed" + NAME)["st_size"] == len(blob)
     assert fs.read("/allowed" + NAME, len(blob), 0) == blob
 

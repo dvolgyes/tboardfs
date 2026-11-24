@@ -2,7 +2,7 @@
 
 import os
 import stat
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -46,6 +46,43 @@ class SidecarScan:
                     pending.append((path, self._listing(path)))
         self.owned.difference_update(self.boundaries)
         return tuple(result)
+
+    @staticmethod
+    def branches(
+        directory: Path,
+        entries: list[os.DirEntry[str]],
+        owned: set[Path],
+        run_dir: Path | None,
+        allowed: Callable[[Path], bool],
+        mountpoint: Path | None,
+    ) -> tuple[set[str], list[SidecarEntry]]:
+        """Find visible branches and keep sidecars from branches without logs."""
+        children = set()
+        sidecars: list[SidecarEntry] = []
+        for name in _Paths.child_names(directory, entries, owned):
+            path = directory / name
+            listings = _Paths.check_branch(
+                path, allowed, mountpoint, remember=run_dir is not None
+            )
+            if listings is None:
+                children.add(name)
+            elif listings and run_dir is not None:
+                sidecars.extend(
+                    SidecarScan(path, run_dir, allowed).collect_group(listings)
+                )
+        return children, sidecars
+
+    def collect_group(
+        self, listings: list[list[os.DirEntry[str]]]
+    ) -> Iterator[SidecarEntry]:
+        """Project sidecars from a guarded, already scanned group without logs."""
+        for entries in listings:
+            self._read_configs(entries)
+            for entry in entries:
+                if _Paths.is_file(entry):
+                    item = self._entry(Path(entry.path))
+                    if item is not None:
+                        yield item
 
     def _separate_run(self, path: Path, entries: list[os.DirEntry[str]]) -> bool:
         if path == self.directory:

@@ -11,7 +11,7 @@ from math import inf
 from pathlib import Path
 from threading import RLock
 from time import monotonic as _source_clock
-from typing import Any, TypedDict, Unpack
+from typing import Any, Unpack
 
 from loguru import logger
 
@@ -30,8 +30,19 @@ from tboardfs.errors import fuse_error
 from tboardfs.file_attributes import _FileAttributes, _unrendered_size
 from tboardfs.file_times import FileTimes
 from tboardfs.leaf_cache import _CachedLeaf, _Location, _resolve_node
-from tboardfs.model import BinaryEntry, EventFileCache, GraphEntry, RunCache
-from tboardfs.mount_index import _IndexOptions, _RunData, _SiblingSnapshot
+from tboardfs.model import (
+    BinaryEntry,
+    EventFileCache,
+    GraphEntry,
+    RunCache,
+    SidecarEntry,
+)
+from tboardfs.mount_index import (
+    MountIndexKeywords,
+    _IndexOptions,
+    _RunData,
+    _SiblingSnapshot,
+)
 from tboardfs.mount_state import _Directory, _FsState
 from tboardfs.node_source import _NodeSource
 from tboardfs.paths import _DirectoryNode, _Paths
@@ -47,13 +58,10 @@ _PARALLEL_MIN_BYTES = 8 << 20
 _GUARD_PLAN_LIMIT = 256
 
 
-class _MountIndexKeywords(TypedDict, total=False):
-    """Optional indexing settings for the mount constructor."""
+class _MountKeywords(MountIndexKeywords, total=False):
+    """Optional mount settings supplied as keywords."""
 
-    index_workers: int
-    disk_index: bool
-    disk_index_size_mb: int
-    source_check_seconds: float
+    raw: bool
 
 
 class TensorBoardFS:
@@ -81,7 +89,8 @@ class TensorBoardFS:
         folders with a suffix so each is logged once
     """
 
-    _llms_text: bytes
+    _guide: dict[str, Any]
+    _raw: bool
     source: Path
     step_digits: int
     refresh_age_seconds: float
@@ -104,10 +113,15 @@ class TensorBoardFS:
         cache_size_mb: int = DEFAULT_CACHE_SIZE_MB,
         owner: tuple[int, int] = (0, 0),
         mountpoint: str | Path | None = None,
-        **index_options: Unpack[_MountIndexKeywords],
+        **options: Unpack[_MountKeywords],
     ) -> None:
         self.source = Path(source)
-        self._llms_text = package_files("tboardfs").joinpath("llms.txt").read_bytes()
+        self._guide = {
+            "type": "bytes",
+            "data": package_files("tboardfs").joinpath("llms.txt").read_bytes(),
+            "mtime": 0.0,
+        }
+        self._raw = options.pop("raw", False)
         self.step_digits = step_digits
         self.refresh_age_seconds = refresh_age_seconds
         self.scalar_formats = (
@@ -116,6 +130,7 @@ class TensorBoardFS:
         self.log_to_screen = log_to_screen
         self.owner = owner
         self._renders = RenderCache(cache_size_mb * 1024 * 1024)
+        index_options: MountIndexKeywords = options
         index = _IndexOptions.create(
             self.source, mountpoint, _PARALLEL_MIN_BYTES, **index_options
         )
@@ -401,16 +416,9 @@ class TensorBoardFS:
     def _build_tree(self) -> dict[str, Any]:
         tree = self._run_places.build(
             {
-                parts: self._visible_run(parts) or {"type": "dir", "children": {}}
-                for parts in self._state.directories
-            },
-            root_files={
-                "llms.txt": {
-                    "type": "bytes",
-                    "data": self._llms_text,
-                    "mtime": 0.0,
-                }
-            },
+                parts: self._visible_run(parts) or _DirectoryNode()
+                for parts in self._state.visible_dirs()
+            }
         )
         # The run trees have their times, so only the run folders get them.
         FileTimes.stamp_dirs(tree)
@@ -419,17 +427,14 @@ class TensorBoardFS:
     def _visible_run(self, parts: tuple[str, ...]) -> dict[str, Any] | None:
         """Return the run's own tree, or leave its mount directory empty."""
         run = self._state.runs.get(parts)
-        if run is not None and (
-            run.files or (not parts and not self._state.directories[()].children)
-        ):
-            return self._run_tree(run)
-        return None
+        return self._run_tree(run) if run is not None and run.files else None
 
     def _run_tree(self, run: RunCache) -> dict[str, Any]:
         cached = self._state.run_trees.get(run.run_parts)
         if cached is not None and cached[0] == run.version:
             return cached[1]
-        tree = RunTree.build(run, self.scalar_formats, self.step_digits)
+        tree = RunTree.build(run, self.scalar_formats, self.step_digits, raw=self._raw)
+        tree["children"]["llms.txt"] = self._guide
         self._state.run_trees[run.run_parts] = (run.version, tree)
         return tree
 
@@ -592,10 +597,18 @@ class TensorBoardFS:
             if local.owner != parts or local.pieces or run.sidecars:
                 self._refresh_sidecars(run, None)
             return verified
-        directory = self.source.joinpath(*parts)
+        self._refresh_local(run, local, now, scan=scan, reuse=reuse)
+        return None
+
+    def _refresh_local(
+        self, run: RunCache, local: _Directory, now: float, *, scan: bool, reuse: bool
+    ) -> None:
+        """Refresh runs and branch visibility after the cached checks miss."""
+        first_scan = local.scanned_at is None
+        directory = self.source.joinpath(*run.run_parts)
         entries = None
         if scan:
-            entries = self._scan_entries(directory)
+            entries = _Paths.mount_entries(directory, self._allowed)
             local.scanned_at = now
         files, entries = self._run_sources(run, directory, entries)
         if reuse and run.files.keys() == set(files):
@@ -604,20 +617,37 @@ class TensorBoardFS:
             if self._refresh_run(run, files, entries):
                 self._log("finished parsing TensorBoard files")
             local.checked_at = now
-        if entries is not None:
-            self._update_children(parts, directory, entries)
-        return None
+        if first_scan and not run.files and not local.children:
+            self._invalidate_tree()
+
+    def _scan_branches(
+        self,
+        parts: tuple[str, ...],
+        entries: list[os.DirEntry[str]],
+        owner: tuple[str, ...] | None,
+    ) -> list[SidecarEntry]:
+        """Keep log branches visible and collect sidecars from hidden branches."""
+        directory = self.source.joinpath(*parts)
+        local = self._state.directories[parts]
+        run_dir = None if owner is None else self.source.joinpath(*owner)
+        names, sidecars = SidecarScan.branches(
+            directory,
+            entries,
+            local.owned,
+            run_dir,
+            self._allowed,
+            self._state.index.mountpoint,
+        )
+        self._update_children(parts, {(*parts, name) for name in names})
+        return sidecars
 
     def _update_children(
-        self, parts: tuple[str, ...], directory: Path, entries: list[os.DirEntry[str]]
+        self, parts: tuple[str, ...], children: set[tuple[str, ...]]
     ) -> None:
         local = self._state.directories[parts]
-        children = {
-            (*parts, name)
-            for name in self._child_names(directory, entries, local.owned)
-        }
         old = local.children
-        if old == children:
+        restored = self._state.restore_branches(children & old)
+        if old == children and not restored:
             return
         local.children = children
         for child in children - old:
@@ -625,15 +655,6 @@ class TensorBoardFS:
         for removed in old - children:
             self._forget(removed)
         self._invalidate_tree()
-
-    def _scan_entries(self, directory: Path) -> list[os.DirEntry[str]]:
-        if not self._allowed(directory):
-            return []
-        return [
-            entry
-            for entry in _Paths.entries(directory)
-            if not entry.is_symlink() or self._allowed(Path(entry.path))
-        ]
 
     def _run_sources(
         self,
@@ -652,32 +673,6 @@ class TensorBoardFS:
         )
         event_names = {path.name for path in files}
         return files, [entry for entry in entries if entry.name not in event_names]
-
-    @staticmethod
-    def _child_names(
-        directory: Path, entries: list[os.DirEntry[str]], owned: set[Path]
-    ) -> list[str]:
-        children = [
-            entry
-            for entry in entries
-            if _Paths.is_dir(entry) and Path(entry.path) not in owned
-        ]
-        if not any(entry.is_symlink() for entry in children):
-            return [entry.name for entry in children]
-        parent = directory.resolve()
-        seen = {parent, *(p.resolve() for p in directory.parents)}
-        names = []
-        for entry in children:
-            target = (
-                Path(entry.path).resolve()
-                if entry.is_symlink()
-                else parent / entry.name
-            )
-            if target in seen or parent.is_relative_to(target):
-                continue
-            seen.add(target)
-            names.append(entry.name)
-        return names
 
     def _forget(self, parts: tuple[str, ...]) -> None:
         local = self._state.directories[parts]
@@ -705,10 +700,10 @@ class TensorBoardFS:
         self._state.run_trees.pop(run.run_parts, None)
         self._renders.expire(run.version)
 
-    def _change_run_version(self, run: RunCache) -> None:
+    def _change_run_version(self, run: RunCache, *, removed: bool = False) -> None:
         self._drop_run_cache(run)
         run.version = self._version()
-        self._invalidate_tree(parts=run.run_parts)
+        self._invalidate_tree(parts=None if removed else run.run_parts)
 
     def _refresh_run(
         self,
@@ -721,6 +716,7 @@ class TensorBoardFS:
         local = self._state.directories[run.run_parts]
         local.siblings = None
         options = self._state.index
+        had_files = bool(run.files)
         changed, base = _RunData.refresh_event_files(
             run,
             files,
@@ -733,18 +729,26 @@ class TensorBoardFS:
         self._refresh_sidecars(run, entries)
         run.refreshed_at = now
         if changed:
-            self._publish_changes(run, base)
+            self._publish_changes(run, base, removed=had_files and not run.files)
         return changed
 
-    def _publish_changes(self, run: RunCache, before: EventFileCache | None) -> None:
+    def _publish_changes(
+        self, run: RunCache, before: EventFileCache | None, *, removed: bool
+    ) -> None:
         """Extend the last source only when its previous tree and index agree."""
         cached = self._state.run_trees.get(run.run_parts)
-        self._change_run_version(run)
+        self._change_run_version(run, removed=removed)
         if cached is None or before is None or before.source_path != max(run.files):
             return
         after = run.files[before.source_path]
         tree = RunTree.append(
-            cached[1], run, before, after, self.scalar_formats, self.step_digits
+            cached[1],
+            run,
+            before,
+            after,
+            self.scalar_formats,
+            self.step_digits,
+            raw=self._raw,
         )
         if tree is not None:
             self._state.run_trees[run.run_parts] = (run.version, tree)
@@ -785,6 +789,8 @@ class TensorBoardFS:
             local.owner = owner
         if owner is None:
             local.owned.clear()
+            if entries is not None:
+                self._scan_branches(parts, entries, None)
             return
         pieces = self._state.directories[owner].pieces
         if entries is not None:
@@ -793,8 +799,9 @@ class TensorBoardFS:
                 self.source.joinpath(*owner),
                 self._allowed,
             )
-            files = scan.collect(entries)
+            direct = scan.collect(entries)
             local.owned = scan.owned
+            files = (*direct, *self._scan_branches(parts, entries, owner))
             if files:
                 pieces[parts] = files
             else:

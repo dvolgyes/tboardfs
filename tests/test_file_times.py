@@ -34,18 +34,18 @@ def test_a_file_has_its_event_time_as_all_three_times(tmp_path: Path) -> None:
     assert _times(fs, "/scalars/loss.json") == (1000.0, 1000.0, 1000.0)
 
 
-def test_a_directory_has_the_newest_time_below_it(tmp_path: Path) -> None:
-    """An empty directory has the time of the directory above it."""
+def test_populated_directories_have_the_newest_time_below_them(tmp_path: Path) -> None:
     _scalar(tmp_path / "a", 1000.0, "loss")
     _scalar(tmp_path / "b", 2000.0, "acc")
     fs = TensorBoardFS(tmp_path)
 
     assert _times(fs, "/a/scalars") == (1000.0, 1000.0, 1000.0)
     assert _times(fs, "/a") == (1000.0, 1000.0, 1000.0)
-    assert _times(fs, "/a/images") == (1000.0, 1000.0, 1000.0)
     assert _times(fs, "/") == (1000.0, 1000.0, 1000.0)
     assert _times(fs, "/b/scalars") == (2000.0, 2000.0, 2000.0)
     assert _times(fs, "/") == (2000.0, 2000.0, 2000.0)
+    with pytest.raises(FileNotFoundError):
+        fs.getattr("/a/images")
 
 
 def test_stat_of_cold_run_uses_the_parent_time_until_descent(tmp_path: Path) -> None:
@@ -118,6 +118,7 @@ def test_cold_stat_does_not_read_retargeted_directory_metadata(
     source.mkdir()
     mount.mkdir()
     outside.mkdir()
+    _scalar(outside, 1000.0, "loss")
     cache = tmp_path / "cache"
     storage = cache / "tboardfs" / "indexes-v1"
     storage.mkdir(parents=True)
@@ -155,17 +156,17 @@ def test_listing_then_stat_does_not_open_or_scan_cold_runs(
     assert _times(fs, "/") == (500.0, 500.0, 500.0)
     assert listed == []
     names = fs.readdir("/")[2:]
-    assert names == ["llms.txt", *[f"run{i:02}" for i in range(32)]]
-    assert all(
-        stat.S_ISDIR(fs.getattr(f"/{name}")["st_mode"])
-        for name in names
-        if name != "llms.txt"
-    )
-    assert listed == [tmp_path]
+    assert names == [f"run{i:02}" for i in range(32)]
+    assert all(stat.S_ISDIR(fs.getattr(f"/{name}")["st_mode"]) for name in names)
+    assert listed == [tmp_path, *(tmp_path / name for name in names)]
     assert opened == []
 
     assert "scalars" in fs.readdir("/run00")
-    assert listed == [tmp_path, tmp_path / "run00"]
+    assert listed == [
+        tmp_path,
+        *(tmp_path / name for name in names),
+        tmp_path / "run00",
+    ]
     assert tmp_path / "run00" / "events.out.tfevents.host" in opened
 
 
@@ -202,8 +203,9 @@ def test_stat_does_not_use_a_real_directory_placeholder_for_a_sidecar(
     plugins = tmp_path / "plugins"
     _scalar(plugins, 2000.0, "nested")
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
-    assert "plugins~2" in fs.readdir("/")
-    assert _times(fs, "/plugins~2") == (1000.0, 1000.0, 1000.0)
+    assert "plugins" in fs.readdir("/")
+    assert "scalars" in fs.readdir("/plugins")
+    assert _times(fs, "/plugins") == (2000.0, 2000.0, 2000.0)
 
     (plugins / "events.out.tfevents.host").unlink()
     profile = plugins / "profile"
@@ -213,7 +215,7 @@ def test_stat_does_not_use_a_real_directory_placeholder_for_a_sidecar(
     os.utime(trace, (3000.0, 3000.0))
 
     with pytest.raises(FileNotFoundError):
-        fs.getattr("/plugins~2")
+        fs.getattr("/plugins")
     assert _times(fs, "/profile/trace") == (3000.0, 3000.0, 3000.0)
     assert _times(fs, "/profile") == (3000.0, 3000.0, 3000.0)
     assert fs.read("/profile/trace", 32, 0) == b"trace"

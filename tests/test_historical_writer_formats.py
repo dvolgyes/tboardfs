@@ -154,7 +154,8 @@ def test_graph_meta_graph_and_execution_metadata(fs: TensorBoardFS) -> None:
     )
 
 
-def test_status_and_obsolete_fields_survive_raw_mount(fs: TensorBoardFS) -> None:
+def test_status_and_obsolete_fields_survive_raw_mount(run: Path) -> None:
+    fs = TensorBoardFS(run, raw=True)
     frames = b"".join(fs.read(p, 8192, 0) for p in sorted(_files(fs, "/raw")))
     records = [
         compat_pb2.Event.FromString(r.payload) for r in iter_tfrecords(BytesIO(frames))
@@ -173,7 +174,8 @@ def test_status_and_obsolete_fields_survive_raw_mount(fs: TensorBoardFS) -> None
     assert values["metadata-only"].node_name == "validation/input"
 
 
-def test_numeric_debugger_and_bare_beholder_frame(fs: TensorBoardFS, run: Path) -> None:
+def test_numeric_debugger_and_bare_beholder_frame(run: Path) -> None:
+    fs = TensorBoardFS(run, raw=True)
     debug = json.loads(fs.read("/plugins/debugger/activations/000004.json", 4096, 0))
     assert json.loads(debug["plugin_content"]) == {"device": "CPU:0", "outputSlot": 0}
     tensor = debug["tensor"]

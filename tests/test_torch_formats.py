@@ -76,9 +76,8 @@ def test_add_tensor_typed_export(
     assert array.tolist() == expected
 
 
-def test_noncanonical_tensors_remain_exact_in_raw_view(
-    fs: TensorBoardFS, values: dict
-) -> None:
+def test_noncanonical_tensors_remain_exact_in_raw_view(values: dict) -> None:
+    fs = TensorBoardFS(CORPUS / "torch", raw=True)
     files = set(_files(fs))
     for tag, dtype, field, expected in [
         ("float16", 19, "half_val", [1069547520, -1073741824]),

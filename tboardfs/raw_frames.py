@@ -134,11 +134,15 @@ class RawFrames:
 
     @staticmethod
     def extend(
-        directory: dict[str, Any], cache: EventFileCache, name_map: dict[str, str]
-    ) -> _DirectoryNode:
+        directory: dict[str, Any] | None,
+        cache: EventFileCache,
+        name_map: dict[str, str],
+    ) -> _DirectoryNode | None:
         """Publish the appended frame index without replacing other raw listings."""
         raw = _DirectoryNode()
-        raw.update(view="raw", children=directory["children"].copy())
+        raw["view"] = "raw"
+        if directory is not None:
+            raw["children"] = directory["children"].copy()
         progress = cache.progress
         RawFrames._add_source(
             raw,
@@ -147,7 +151,7 @@ class RawFrames:
             progress.frames,
             name_map=name_map,
         )
-        return raw
+        return raw if raw["children"] else None
 
     @staticmethod
     def _add_source(
@@ -158,9 +162,9 @@ class RawFrames:
         *,
         name_map: dict[str, str] | None = None,
     ) -> None:
-        basename = _Paths.safe_component(path.name, name_map=name_map)
         if not frames.ends:
             return
+        basename = _Paths.safe_component(path.name, name_map=name_map)
         source = _DirectoryNode()
         source.update(
             children=_RawFrameChildren(path, identity, frames),

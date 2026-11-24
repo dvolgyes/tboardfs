@@ -34,7 +34,7 @@ def test_debugger_streams_are_not_discovered_as_training_events() -> None:
         ".graph_execution_traces",
     }
     assert all(p.stat().st_size > 0 for p in streams)
-    fs = TensorBoardFS(RUN)
+    fs = TensorBoardFS(RUN, raw=True)
     rows = json.loads(fs.read("/scalars/control.json", 4096, 0))
     assert [(r["step"], r["value"]) for r in rows] == [(3, 1.25)]
     event = RUN / "events.out.tfevents.auxiliary"

@@ -326,7 +326,7 @@ def test_single_file_tree_matches_filesystem_for_one_event_file(tmp_path: Path) 
     """Single-event mode and FUSE mode expose identical file bytes."""
     source = tmp_path / FIXTURE_EVENT.name
     source.write_bytes(FIXTURE_EVENT.read_bytes())
-    fs = TensorBoardFS(tmp_path, step_digits=3)
+    fs = TensorBoardFS(tmp_path, step_digits=3, raw=True)
     tree = SingleEventTree(source, step_digits=3)
 
     fs_paths = [path for path in _filesystem_file_paths(fs, "/") if path != "/llms.txt"]

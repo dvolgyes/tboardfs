@@ -75,7 +75,7 @@ def test_distribution_interpolates_in_populated_buckets() -> None:
 
 
 def test_generic_strings_keep_shape_and_exact_binary_in_raw_view() -> None:
-    fs = TensorBoardFS(CORPUS)
+    fs = TensorBoardFS(CORPUS, raw=True)
     text = json.loads(fs.read("/text/words/000008.json", 4096, 0))
     assert text["shape"] == [2, 2]
     assert text["values"] == [["café", ""], ["南", "a\nb"]]

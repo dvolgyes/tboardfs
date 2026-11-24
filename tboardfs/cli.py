@@ -73,6 +73,7 @@ from tboardfs.stdlib_logging import StdlibToLoguru
     show_default=True,
     help="Disk budget for persistent indexes (requires --disk-index).",
 )
+@click.option("-r", "--raw", is_flag=True, help="Expose exact event frames under raw/.")
 @click.option("--foreground/--background", default=False, show_default=True)
 @click.option(
     "--root-owner/--user-owner",
@@ -125,6 +126,7 @@ def main(
         index_workers=cast(int, params["index_workers"]),
         disk_index=cast(bool, params["disk_index"]),
         disk_index_size_mb=cast(int, params["disk_index_size_mb"]),
+        raw=cast(bool, params["raw"]),
     )
     try:
         mount(

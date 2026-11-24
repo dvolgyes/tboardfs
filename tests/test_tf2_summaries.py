@@ -34,9 +34,9 @@ def _value(event: compat_pb2.Event, tag: str, plugin: str, shape: list[int]) -> 
     return value.tensor
 
 
-def _log(tmp_path: Path, *events: compat_pb2.Event) -> TensorBoardFS:
+def _log(tmp_path: Path, *events: compat_pb2.Event, raw: bool = False) -> TensorBoardFS:
     (tmp_path / "events.out.tfevents.host").write_bytes(b"".join(map(_frame, events)))
-    return TensorBoardFS(tmp_path)
+    return TensorBoardFS(tmp_path, raw=raw)
 
 
 def _images(step: int, *blobs: bytes) -> compat_pb2.Event:
@@ -49,7 +49,7 @@ def _images(step: int, *blobs: bytes) -> compat_pb2.Event:
 
 def test_an_image_summary_is_an_image_file(tmp_path: Path) -> None:
     """One sample is <step>.png, as a TF1 image summary is."""
-    fs = _log(tmp_path, _images(1, PNG + b"a"))
+    fs = _log(tmp_path, _images(1, PNG + b"a"), raw=True)
 
     assert sorted(_files(fs)) == ["/images/img/000001.png", RAW]
     assert fs.read("/images/img/000001.png", 100, 0) == PNG + b"a"
@@ -74,7 +74,7 @@ def test_malformed_image_keeps_packed_and_raw(
     tensor.dtype = DT_STRING
     tensor.tensor_shape.unknown_rank = unknown_rank
     tensor.string_val.extend(strings)
-    fs = _log(tmp_path, event)
+    fs = _log(tmp_path, event, raw=True)
     packed = "/plugins/images/bad/000001.json"
     healthy = "/images/img/000001.png"
     assert set(_files(fs)) == {packed, healthy, RAW}
@@ -101,14 +101,14 @@ def test_unusable_plugin_layout_does_not_promote_a_tensor_member(
     tensor.dtype = DT_STRING
     tensor.tensor_shape.unknown_rank = unknown_rank
     tensor.string_val.append(PNG + bytes(2048))
-    fs = _log(tmp_path, event)
+    fs = _log(tmp_path, event, raw=True)
     assert set(_files(fs)) == {f"/plugins/{plugin}/broken/000001.json", RAW}
     assert fs.read(RAW, 65536, 0) == _frame(event)
 
 
 def test_zero_image_vector_needs_no_packed_fallback(tmp_path: Path) -> None:
     event = _images(1)
-    fs = _log(tmp_path, event)
+    fs = _log(tmp_path, event, raw=True)
     assert set(_files(fs)) == {RAW}
     assert fs.read(RAW, 65536, 0) == _frame(event)
 
@@ -125,7 +125,7 @@ def test_gif_routes_by_summary_kind(tmp_path: Path) -> None:
     audio = _value(event, "tensor", "audio", [1, 2])
     audio.dtype = DT_STRING
     audio.string_val.extend([gif, b"clip"])
-    fs = _log(tmp_path, event)
+    fs = _log(tmp_path, event, raw=True)
     media = {
         "/videos/img/000001.gif",
         "/audio/legacy/000001.gif",
@@ -188,7 +188,7 @@ def test_large_embedded_image_does_not_promote_a_short_label(tmp_path: Path) -> 
     tensor.tensor_shape.dim.add(size=2)
     blob = PNG + bytes(2048)
     tensor.string_val.extend([b"short", blob])
-    fs = _log(tmp_path, event)
+    fs = _log(tmp_path, event, raw=True)
     assert fs.read("/tensors/blobs/000001_1.png", 4096, 0) == blob
     assert fs.readdir("/tensors/blobs")[2:] == ["000001_1.png"]
     assert (
@@ -200,7 +200,7 @@ def test_large_embedded_image_does_not_promote_a_short_label(tmp_path: Path) -> 
 def test_each_image_sample_is_a_file(tmp_path: Path) -> None:
     """Samples of one step are <step>_<i>, with the same width of i."""
     blobs = [PNG + bytes([index]) for index in range(11)]
-    fs = _log(tmp_path, _images(1, *blobs))
+    fs = _log(tmp_path, _images(1, *blobs), raw=True)
 
     files = sorted(_files(fs))
 
@@ -216,7 +216,7 @@ def test_an_audio_summary_is_an_audio_file_per_sample(tmp_path: Path) -> None:
     tensor.dtype = DT_STRING
     wave = b"RIFF\x00\x00\x00\x00WAVEfmt "
     tensor.string_val.extend([wave + b"0", b"first", wave + b"1", b"second"])
-    fs = _log(tmp_path, event)
+    fs = _log(tmp_path, event, raw=True)
 
     assert sorted(_files(fs)) == [
         "/audio/aud/000002_0.wav",
@@ -250,7 +250,7 @@ def test_a_scalar_summary_has_only_the_scalar_table(tmp_path: Path) -> None:
     tensor = _value(event, "loss", "scalars", [])
     tensor.dtype = DT_FLOAT
     tensor.float_val.append(0.5)
-    fs = _log(tmp_path, event)
+    fs = _log(tmp_path, event, raw=True)
 
     assert sorted(_files(fs)) == [
         RAW,
@@ -266,7 +266,7 @@ def test_a_non_scalar_scalars_record_keeps_its_json(tmp_path: Path) -> None:
     tensor = _value(event, "loss", "scalars", [2])
     tensor.dtype = DT_FLOAT
     tensor.float_val.extend([0.5, 0.25])
-    fs = _log(tmp_path, event)
+    fs = _log(tmp_path, event, raw=True)
 
     assert sorted(_files(fs)) == [RAW, "/scalars/loss/000001.json"]
 
@@ -333,7 +333,11 @@ def test_an_empty_tf1_histogram_has_no_buckets(tmp_path: Path) -> None:
     warnings: list[str] = []
     sink = logger.add(warnings.append, level="WARNING", format="{message}")
     try:
-        fs = _log(tmp_path, _tf1_histogram([1.0, 2.0], [0.0, 0.0], low=0.0, high=0.0))
+        fs = _log(
+            tmp_path,
+            _tf1_histogram([1.0, 2.0], [0.0, 0.0], low=0.0, high=0.0),
+            raw=True,
+        )
 
         assert list(_files(fs)) == [RAW]
     finally:
@@ -344,7 +348,7 @@ def test_an_empty_tf1_histogram_has_no_buckets(tmp_path: Path) -> None:
 def test_a_large_image_is_only_an_image(tmp_path: Path) -> None:
     """An image over the large-tensor size is not also a tensor file."""
     blob = PNG + bytes(4096)
-    fs = _log(tmp_path, _images(1, blob))
+    fs = _log(tmp_path, _images(1, blob), raw=True)
 
     assert sorted(_files(fs)) == ["/images/img/000001.png", RAW]
     assert fs.read("/images/img/000001.png", 1 << 20, 0) == blob
@@ -356,7 +360,7 @@ def test_a_malformed_audio_tensor_is_left_packed(tmp_path: Path) -> None:
     tensor = _value(event, "aud", "audio", [4])
     tensor.dtype = DT_STRING
     tensor.string_val.extend([b"RIFF0", b"RIFF1", b"RIFF2"])
-    fs = _log(tmp_path, event)
+    fs = _log(tmp_path, event, raw=True)
 
     assert sorted(_files(fs)) == ["/plugins/audio/aud/000001.json", RAW]
 
@@ -367,7 +371,7 @@ def test_a_malformed_histogram_tensor_is_left_packed(tmp_path: Path) -> None:
     tensor = _value(event, "h", "histograms", [2, 2])
     tensor.dtype = DT_DOUBLE
     tensor.tensor_content = np.asarray([0, 1, 1, 2], dtype="<f8").tobytes()
-    fs = _log(tmp_path, event)
+    fs = _log(tmp_path, event, raw=True)
 
     assert sorted(_files(fs)) == ["/histograms/h/000001.json", RAW]
     assert (

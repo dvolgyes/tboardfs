@@ -176,7 +176,9 @@ def test_removed_run_releases_cache_but_keeps_bytes_of_open_handle(
     assert fs._renders.size_bytes > retained_size
 
     (tmp_path / "run_a" / EVENTS).unlink()
-    assert "scalars" not in fs.readdir("/run_a")
+    assert "run_a" not in fs.readdir("/")
+    with pytest.raises(FileNotFoundError):
+        fs.readdir("/run_a")
     assert fs._renders.size_bytes == retained_size
     assert ("run_a",) not in fs._state.run_trees
     assert fs.read(path_a, 1 << 20, 0, handle) == pinned
@@ -211,6 +213,7 @@ def test_tree_only_change_evicts_the_name_map_without_other_renders(
     _append(run / EVENTS, 0)
     mapped = tmp_path / ("%" * 100)
     mapped.mkdir()
+    _append(mapped / EVENTS, 0)
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
     path = "/run/scalars/loss.json"
     other = fs.read(path, 1 << 20, 0)
@@ -218,6 +221,7 @@ def test_tree_only_change_evicts_the_name_map_without_other_renders(
     assert mapped.name.encode() in fs.read("/.tboardfs-names.json", 1 << 20, 0)
     assert fs._renders.size_bytes > retained_size
 
+    (mapped / EVENTS).unlink()
     mapped.rmdir()
     assert ".tboardfs-names.json" not in fs.readdir("/")
     assert fs._renders.size_bytes == retained_size

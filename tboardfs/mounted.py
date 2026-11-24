@@ -1,13 +1,20 @@
 """mfusepy operations for direct file I/O and typed directory listings."""
 
 from collections.abc import Iterator
+from fnmatch import fnmatchcase
+from pathlib import Path
 from stat import S_IFDIR, S_IFREG
+from threading import Thread
 from typing import Any, Protocol
 
 from mfusepy import Operations
 
+from tboardfs.constants import TENSORBOARD_EVENT_GLOB
+from tboardfs.event_source import EventSource
 from tboardfs.filesystem import TensorBoardFS
 from tboardfs.leaf_spec import LeafSpec
+from tboardfs.mount_index import _RunData
+from tboardfs.paths import _Paths
 from tboardfs.raw_frames import _RawFrameChildren
 from tboardfs.run_listing import RunListing
 
@@ -30,6 +37,37 @@ class MountedTensorBoardFS(TensorBoardFS, Operations):  # type: ignore[misc]
     File info arguments are ``fuse_file_info`` structures, or ``None`` when
     the kernel has no open handle.
     """
+
+    def _start_index_warmup(self) -> None:
+        """Start the newest-event warmup without delaying FUSE initialization."""
+        Thread(
+            target=self._warm_index,
+            name="tboardfs-index-warmup",
+            daemon=True,
+        ).start()
+
+    def _warm_index(self) -> None:
+        """Select the newest event source without holding the mount lock."""
+        latest: tuple[int, Path] | None = None
+        for directory, entries in _Paths.mount_walk(self.source, self._allowed):
+            for entry in entries:
+                if fnmatchcase(entry.name, TENSORBOARD_EVENT_GLOB):
+                    latest = self._newest_event(directory / entry.name, latest)
+        if latest is not None:
+            _RunData.warm(latest[1], self._state.index, log=self.log_to_screen)
+
+    def _newest_event(
+        self, path: Path, latest: tuple[int, Path] | None
+    ) -> tuple[int, Path] | None:
+        options = self._state.index
+        try:
+            status = EventSource.stat(
+                path, mountpoint=options.mountpoint, storage=options.storage
+            )
+        except OSError:
+            return latest
+        candidate = status.st_mtime_ns, path
+        return candidate if latest is None or candidate > latest else latest
 
     def open(self, path: str, info: _FileInfo) -> int:  # type: ignore[override]
         """Open a virtual file with direct I/O."""

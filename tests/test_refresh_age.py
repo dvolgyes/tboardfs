@@ -34,11 +34,11 @@ def test_known_data_refreshes_before_new_runs_are_discovered(
 
     clock[0] += 59
     assert fs.getattr("/a/scalars/loss.json")["st_size"] > size
-    assert fs.readdir("/")[2:] == ["a", "llms.txt"]
+    assert fs.readdir("/")[2:] == ["a"]
 
     clock[0] += 1
     assert fs.getattr("/a/scalars/loss.json")["st_size"] > size
-    assert fs.readdir("/")[2:] == ["a", "b", "llms.txt"]
+    assert fs.readdir("/")[2:] == ["a", "b"]
     assert fs.getattr("/b/scalars/loss.json")["st_size"] > 0
 
     _scalar(tmp_path / "b", 2)
@@ -53,19 +53,23 @@ def test_new_file_discovery_is_local_but_deletion_is_immediate(
 ) -> None:
     clock = [1000.0]
     monkeypatch.setattr(tboardfs.filesystem, "_source_clock", lambda: clock[0])
-    run = tmp_path / "a"
+    run = tmp_path / "a" / "group"
     _scalar(run, 0)
     fs = TensorBoardFS(tmp_path, source_check_seconds=0)
-    assert "loss.json" in fs.readdir("/a/scalars")
+    assert "loss.json" in fs.readdir("/a/group/scalars")
     event = compat_pb2.Event(step=1, wall_time=1.0)
     event.summary.value.add(tag="accuracy", simple_value=0.5)
     (run / "events.out.tfevents.second").write_bytes(_frame(event))
     (run / "events.out.tfevents.host").unlink()
 
     clock[0] += 149
-    assert "scalars" not in fs.readdir("/a")
+    for path in ("/a/group/scalars/loss.json", "/a/group/scalars/accuracy.json"):
+        with pytest.raises(FileNotFoundError):
+            fs.getattr(path)
+    assert "a" not in fs.readdir("/")
     clock[0] += 1
-    assert fs.readdir("/a/scalars")[2:] == [
+    assert "a" in fs.readdir("/")
+    assert fs.readdir("/a/group/scalars")[2:] == [
         "accuracy.json",
         "accuracy.npz",
         "accuracy.tsv",
@@ -86,7 +90,7 @@ def test_infinite_interval_freezes_each_directory_after_first_access(
     now = 1000.0
 
     assert fs.read("/run/scalars/loss.json", 4096, 0) == before
-    assert fs.readdir("/")[2:] == ["llms.txt", "run"]
+    assert fs.readdir("/")[2:] == ["run"]
 
 
 def test_default_source_deadline_is_not_slid_by_reads_or_discovery(

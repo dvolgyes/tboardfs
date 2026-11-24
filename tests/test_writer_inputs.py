@@ -14,7 +14,7 @@ RUN = ROOT / "tests/data/producer-cases/writer-inputs"
 
 def test_add_scalars_keeps_identical_tags_in_separate_runs() -> None:
     fs = TensorBoardFS(RUN)
-    assert fs.readdir("/scalars")[2:] == []
+    assert "scalars" not in fs.readdir("/")
     assert fs.readdir("/shared")[2:] == ["left", "right"]
     for subrun, expected in (("left", 1.25), ("right", 2.5)):
         path = f"/shared/{subrun}/scalars/shared.json"

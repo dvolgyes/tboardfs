@@ -240,7 +240,7 @@ def test_a_dtype_that_numpy_cannot_hold_does_not_decode(dtype: int) -> None:
 
 def test_opaque_tensors_and_binary_strings_survive_raw_frame_export() -> None:
     source = CORPUS / "events.out.tfevents.dtypes"
-    fs = TensorBoardFS(CORPUS)
+    fs = TensorBoardFS(CORPUS, raw=True)
     frame = fs.read(f"/raw/{source.name}/{0:020d}.tfrecord", source.stat().st_size, 0)
     assert frame == source.read_bytes()
     event = compat_pb2.Event.FromString(frame[12:-4])

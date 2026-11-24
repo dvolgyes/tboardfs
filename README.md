@@ -13,9 +13,10 @@
 
 Read TensorBoard event logs as ordinary files.
 
-tboardfs shows TensorBoard event files (`events.out.tfevents*`) as a read-only directory tree. Browse the typed view to
-read scalars as tables, images as images, and tensors as NumPy arrays. Use the separate `raw` view to read the original
-TFRecord frames, including records with no typed representation. Neither view needs TensorFlow or TensorBoard.
+tboardfs shows TensorBoard event files (`events.out.tfevents*`) as a read-only directory tree. The default mount exposes
+typed files, so you can read scalars as tables, images as images, and tensors as NumPy arrays. Enable the separate `raw`
+view to read original TFRecord frames, including records with no typed representation. Neither view needs TensorFlow or
+TensorBoard.
 
 ```console
 $ tboardfs runs mnt
@@ -95,10 +96,22 @@ cat mnt/scalars/loss.json
 fusermount -u mnt    # unmount; with libfuse 3, use fusermount3 -u
 ```
 
-tboardfs runs in the background by default. With `--foreground`, it stays in the terminal until you stop it with Ctrl+C.
+tboardfs runs in the background by default.
+
+With `--foreground`, it stays in the terminal until you stop it with Ctrl+C.
+
+To include raw frames alongside typed files, mount with `tboardfs --raw SOURCE MOUNTPOINT` or
+`tboardfs -r SOURCE MOUNTPOINT`.
+
+A background thread finds the event file with the latest modification time under SOURCE and starts indexing that file.
+
+Mount startup does not wait for this index to finish.
+
+The mount indexes other event files when you access their run's contents.
 
 | Option | Default | Meaning |
 | -- | -- | -- |
+| `-r`, `--raw` | off | Include the raw TFRecord view alongside typed files. |
 | `--scalar-format LIST` | `json,tsv,npz` | Comma-separated table formats for scalars, histograms and distributions: `json`, `tsv`, `csv`, `npz`. |
 | `--step-digits N` | `6` | Zero-padding width of step file names, from 1 to 20. |
 | `--refresh-age-seconds S` | `150` | Minimum interval between local searches for new files and directories (`0` to search on each access, `inf` to freeze each directory after its first scan). |
@@ -136,7 +149,8 @@ SOURCE is one event file, a run directory, or a log directory.
 
 - For one event file, the tabs are at the root, for example `/scalars` and `/images`.
 - Projector, profile, Open3D and other sidecar files require a run directory as SOURCE.
-- For a directory, the tree is the same as a mount of that directory.
+- For a directory, the file paths use the same run layout as a mount, with typed and raw selection controlled by the
+  command.
 
 | Command | Purpose |
 | -- | -- |
@@ -182,12 +196,12 @@ Only file data and file lists go to stdout, so you can pipe them. Messages, warn
 
 ## Directory Layout
 
-A log directory has one directory for each run. A run is a directory that holds event files. The tabs of a run are
-directories in the run directory:
+A run is a directory that directly contains one or more event files. Each run's typed tabs appear in the run directory.
 
 ```text
 MOUNTPOINT/
 ├── experiment-1/                  a run
+│   ├── llms.txt                   guide to this run's exports
 │   ├── scalars/train/loss.json    the tag train/loss
 │   ├── images/sample/000010.png   the tag sample at step 10
 │   ├── ...                        the other tabs
@@ -197,8 +211,14 @@ MOUNTPOINT/
     └── ...
 ```
 
-When SOURCE is a run, its 16 typed tabs and its `raw` directory appear at the mount root. A typed tab without data is
-empty. Multiple event files in a run contribute to the same typed tabs but retain separate directories under `raw`.
+When SOURCE is itself a run, its typed tabs appear at the mount root.
+
+The mount omits empty tabs and other empty directories, including source branches with no exported content.
+
+Each directory that directly contains an event file exposes an `llms.txt` guide.
+
+Multiple event files in a run contribute to the same typed tabs but retain separate directories under `raw` when that
+view is enabled.
 
 ### Tags and Steps
 
@@ -246,7 +266,7 @@ components.
 | `profile` | files of the run directory | Profiler files |
 | `plugins` | `<plugin>/<tag>/<step>.json` | Data of other plugins |
 | `plugins/Open3D` | `<tag>/<step>.manifest.json`, `~assets/*.msgpack` | Native geometry ranges, references to earlier steps and original sidecar bytes |
-| `raw` | `<event-file>/<20-digit-byte-offset>.tfrecord` | One complete frame: header, payload and footer, in source order |
+| `raw` (opt-in on mounts) | `<event-file>/<20-digit-byte-offset>.tfrecord` | One complete frame: header, payload and footer, in source order |
 
 `--scalar-format` selects the table formats of scalars, histograms and distributions. The default is `json,tsv,npz`;
 `csv` is also available.
@@ -306,7 +326,8 @@ Media files contain the original bytes; tboardfs does not transcode them.
 - A custom `video` plugin can instead store a native video container.
 - An audio summary stays under `audio/` even if the bytes identify a different format.
 - A TF2 image tensor must be a vector containing two dimension strings followed by the declared number of images. If its
-  layout is inconsistent, `plugins/images/` contains the packed JSON and `raw/` keeps the original event.
+  layout is inconsistent, `plugins/images/` contains the packed JSON and the optional raw view retains the original
+  event.
 
 Filename extensions identify likely content; they do not certify that it will decode. Unknown payloads keep `.bin`. If a
 generated tensor view and an embedded file would have the same path, the generated view keeps its name. For example,

@@ -15,7 +15,7 @@ CASES = Path(__file__).parent / "data" / "producer-cases"
 
 def test_native_tensorboard_retains_unknown_events_and_binary_metadata() -> None:
     run = CASES / "tensorboard"
-    fs = TensorBoardFS(run)
+    fs = TensorBoardFS(run, raw=True)
     frames = [
         fs.read(path, 1 << 20, 0)
         for path in sorted(_files(fs, "/raw"))
@@ -32,14 +32,13 @@ def test_native_tensorboard_retains_unknown_events_and_binary_metadata() -> None
 def test_historical_non_summary_events_and_obsolete_value() -> None:
     """Checkpoint, stop, and log messages keep both scalar rows at the same step."""
     run = CASES / "tb115"
-    fs = TensorBoardFS(run)
+    fs = TensorBoardFS(run, raw=True)
     rows = json.loads(fs.read("/scalars/loss.json", 4096, 0))
     assert [(r["step"], r["wall_time"], r["value"]) for r in rows] == [
         (1, 2.0, 2.5),
         (1, 6.0, 1.25),
     ]
-    assert fs.readdir("/histograms") == [".", ".."]
-    assert fs.readdir("/distributions") == [".", ".."]
+    assert {"histograms", "distributions"}.isdisjoint(fs.readdir("/"))
 
     frames = [fs.read(p, 4096, 0) for p in sorted(_files(fs, "/raw"))]
     assert b"".join(frames) == (run / "events.out.tfevents.tb115").read_bytes()
@@ -57,7 +56,7 @@ def test_historical_non_summary_events_and_obsolete_value() -> None:
 def test_legacy_debug_summary_and_beholder_sidecar() -> None:
     """A debugger Event has a generic plugin view; a bare Summary is not an Event."""
     run = CASES / "tb115"
-    fs = TensorBoardFS(run)
+    fs = TensorBoardFS(run, raw=True)
     entry = json.loads(fs.read("/plugins/debugger/activation/000001.json", 4096, 0))
     assert json.loads(entry["plugin_content"]) == {"device": "CPU:0", "outputSlot": 0}
     tensor = entry["tensor"]

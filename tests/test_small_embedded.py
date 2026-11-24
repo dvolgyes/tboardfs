@@ -38,7 +38,7 @@ def test_embedded_strings_keep_original_bytes_and_indices(
     tensor.string_val.extend(items)
     frame = _frame(event)
     (tmp_path / "events.out.tfevents.files").write_bytes(frame)
-    fs = TensorBoardFS(tmp_path)
+    fs = TensorBoardFS(tmp_path, raw=True)
     files = list(_files(fs))
     exported = {
         p.split("/")[-1]: fs.read(p, 8192, 0)

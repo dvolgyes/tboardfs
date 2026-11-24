@@ -148,7 +148,10 @@ def test_rows_without_a_step_count_as_step_zero(
         tmp_path, _run(_version(), _frame(event)), _run(_version(), _start(start))
     )
 
-    assert ("loss.json" in fs.readdir("/scalars")) == kept
+    if kept:
+        assert "loss.json" in fs.readdir("/scalars")
+    else:
+        assert "scalars" not in fs.readdir("/")
 
 
 def test_file_version_applies_to_later_files(tmp_path: Path) -> None:
@@ -174,7 +177,7 @@ def test_graphs_are_not_dropped(tmp_path: Path) -> None:
     fs = _write(tmp_path, _run(FIRST_RUN, graph), _run(_version(), _start(0)))
 
     assert fs.read("/graphs/graph.pb", 100, 0) == b"graph"
-    assert fs.readdir("/scalars")[2:] == []
+    assert "scalars" not in fs.readdir("/")
 
 
 @pytest.mark.parametrize("seed", range(10))

@@ -21,7 +21,7 @@ def delegated(request: pytest.FixtureRequest) -> TensorBoardFS:
 
 def _raw_values(producer: str) -> dict[str, compat_pb2.Summary.Value]:
     root = CORPUS / producer
-    fs = TensorBoardFS(root)
+    fs = TensorBoardFS(root, raw=True)
     (event,) = root.glob("events.out.tfevents.*")
     raw = f"/raw/{event.name}"
     payload = b"".join(
@@ -35,11 +35,18 @@ def _raw_values(producer: str) -> dict[str, compat_pb2.Summary.Value]:
     }
 
 
-def test_grouped_subruns_keep_shared_tag(delegated: TensorBoardFS) -> None:
-    assert "score" not in delegated.readdir("/scalars")
+@pytest.mark.parametrize(
+    ("producer", "has_root_scalars"),
+    [("torch-matrix", False), ("lightning-matrix", True)],
+)
+def test_grouped_subruns_keep_shared_tag(producer: str, has_root_scalars: bool) -> None:
+    fs = TensorBoardFS(CORPUS / producer)
+    assert ("scalars" in fs.readdir("/")) == has_root_scalars
+    if has_root_scalars:
+        assert "score" not in fs.readdir("/scalars")
     for child, expected in [("left", 1.25), ("right", 2.5)]:
         (row,) = json.loads(
-            delegated.read(f"/score_split_{child}/scalars/score/split.json", 4096, 0)
+            fs.read(f"/score_split_{child}/scalars/score/split.json", 4096, 0)
         )
         assert (row["step"], row["value"]) == (4, expected)
 

@@ -142,7 +142,7 @@ def test_open3d_stale_node_does_not_follow_replacement(tmp_path: Path) -> None:
 
 
 def test_native_open3d_writer_ranges_match_original_bytes() -> None:
-    fs = TensorBoardFS(RUN)
+    fs = TensorBoardFS(RUN, raw=True)
     events = RUN / "events.out.tfevents.open3d"
     with events.open("rb") as stream:
         summaries = [r.payload for r in iter_tfrecords(stream) if _fields(r.payload, 5)]

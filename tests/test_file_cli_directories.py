@@ -29,9 +29,7 @@ def test_list_of_a_log_directory_matches_the_mount(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     mounted = _files(TensorBoardFS(logs))
-    assert result.output.splitlines() == sorted(
-        p for p in mounted if not p.startswith(("/a/raw/", "/b/raw/"))
-    )
+    assert result.output.splitlines() == sorted(mounted)
     assert "/a/projector/projector_config.pbtxt" in result.output.splitlines()
 
 
@@ -52,7 +50,7 @@ def test_get_from_a_run_directory_has_tabs_at_the_root(tmp_path: Path) -> None:
 def test_copy_all_of_a_log_directory_copies_every_run(tmp_path: Path) -> None:
     """copy-all writes the files of all runs, with the mount's bytes."""
     logs = _logdir(tmp_path)
-    fs = TensorBoardFS(logs)
+    fs = TensorBoardFS(logs, raw=True)
 
     result = CliRunner().invoke(
         main, ["copy-all", str(logs), str(tmp_path / "out"), "--view", "both"]
@@ -74,11 +72,7 @@ def test_directory_listing_uses_the_format_options(tmp_path: Path) -> None:
 
     expected = TensorBoardFS(logs, step_digits=3, scalar_formats="csv")
     assert result.exit_code == 0
-    assert result.output.splitlines() == sorted(
-        p
-        for p in _files(expected)
-        if not p.startswith(("/a/raw/", "/b/raw/", "/c/raw/"))
-    )
+    assert result.output.splitlines() == sorted(_files(expected))
     assert "/a/scalars/loss.csv" in result.output.splitlines()
     assert "/c/tensors/activations/001.npy" in result.output.splitlines()
 
@@ -101,6 +95,6 @@ def test_run_named_raw_does_not_change_view(tmp_path: Path) -> None:
     prefix = next(p for p in typed_paths if p.endswith("/scalars/loss.json")).rsplit(
         "/scalars/", 1
     )[0]
-    assert runner.invoke(main, ["list", str(logs), prefix]).stdout.splitlines() == [
-        path for path in typed.stdout.splitlines() if path != "/llms.txt"
-    ]
+    assert runner.invoke(main, ["list", str(logs), prefix]).stdout.splitlines() == (
+        typed.stdout.splitlines()
+    )

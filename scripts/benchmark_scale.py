@@ -192,7 +192,7 @@ class _Trial:
         else:
             frame = _ScaleCorpus.event_frame(count - 1)
             offset = source.stat().st_size - len(frame)
-        path = f"/raw/{EVENT_NAME}/{offset:020d}.tfrecord"
+        path = f"/raw/{source.name}/{offset:020d}.tfrecord"
         block = self.measure("raw_record", partial(_read_file, fs, path, len(frame)))
         if block != frame:
             raise ValueError(f"{path} returned different framing")
@@ -267,7 +267,11 @@ def main() -> None:
         shutil.copyfile(args.data, source)
         trial.cold_scalar(root, args.count)
         fs = TensorBoardFS(
-            root, refresh_age_seconds=0, source_check_seconds=0, cache_size_mb=0
+            root,
+            refresh_age_seconds=0,
+            source_check_seconds=0,
+            cache_size_mb=0,
+            raw=not args.narrow,
         )
         trial.images(fs, args.count, large_slice)
         if not args.narrow:

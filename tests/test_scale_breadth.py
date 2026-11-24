@@ -289,14 +289,14 @@ def test_native_sidecars_in_producer_layouts() -> None:
         == (_CASES / "tf200-native/plugins/profile/signal/local.trace").read_bytes()
     )
     assert b"Square" in trace and b"Sum" in trace
-    auxiliary = _Probe(TensorBoardFS(_CASES / "auxiliary"))
+    auxiliary = _Probe(TensorBoardFS(_CASES / "auxiliary", raw=True))
     assert auxiliary.read("/projector/projector_config.pbtxt") == (
         b'model_checkpoint_path: "weights"\nembeddings {\n  tensor_name: "vectors"\n}\n'
     )
     assert auxiliary.fs.readdir("/projector")[2:] == ["projector_config.pbtxt"]
     assert auxiliary.fs.readdir("/raw")[2:] == ["events.out.tfevents.auxiliary"]
     legacy = _Probe(TensorBoardFS(_CASES / "legacy-tool-assets"))
-    assert legacy.fs.readdir("/plugins")[2:] == []
+    assert "plugins" not in legacy.fs.readdir("/")
     root = legacy.data("/profile/schema-only/host.op_profile.json")["byProgram"]
     operations = [
         (node["xla"]["op"], node["metrics"]["rawTime"]) for node in root["children"]
@@ -308,7 +308,7 @@ def test_captured_breadth_exercises_mount_reads(tmp_path: Path) -> None:
     """Read exact typed and raw bytes from the merged event file."""
     source = tmp_path / _EVENT
     source.write_bytes(b"".join(frame for _, frame in captured_frames()))
-    fs = TensorBoardFS(tmp_path)
+    fs = TensorBoardFS(tmp_path, raw=True)
     check_breadth(fs)
     with source.open("rb") as stream:
         frames = list(iter_tfrecords(stream))

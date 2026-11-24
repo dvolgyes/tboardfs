@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tboardfs import run_listing
-from tboardfs.constants import FIXED_TABS
 from tboardfs.file_times import FileTimes
 from tboardfs.leaf_spec import LeafSpec, LeafValue
 from tboardfs.model.binary_entry import BinaryEntry
@@ -74,23 +73,13 @@ class _TreeEdits:
         edits.children[path[-1]] = leaf
         return True
 
-    def apply(self, tree: dict[str, Any], raw: dict[str, Any]) -> dict[str, Any] | None:
-        """Copy changed paths, then let empty fixed tabs inherit the new run time."""
+    def apply(
+        self, tree: dict[str, Any], raw: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Copy changed paths and install a new raw snapshot when requested."""
         updated = self._apply(tree)
-        if updated is None or not self._install_raw(updated, raw):
+        if updated is None or (raw is not None and not self._install_raw(updated, raw)):
             return None
-        children: RunListing = updated["children"]
-        for tab in FIXED_TABS:
-            child = children.stored(tab)
-            if (
-                isinstance(child, dict)
-                and child["type"] == "dir"
-                and not child["children"]
-                and child.get("mtime") != updated["mtime"]
-            ):
-                empty = _DirectoryNode()
-                empty.update(child, mtime=updated["mtime"])
-                children[tab] = empty
         return updated
 
     @staticmethod

@@ -45,13 +45,13 @@ def test_warmed_run_discovers_and_refreshes_sidecar(
     mountpoint.mkdir()
     _append(source / f"{EVENTS}.1", 0)
     _append(source / f"{EVENTS}.2", 1)
-    discovery_path = "/group" if grouped else "/"
     discovery_dir = source / "group" if grouped else source
     discovery_dir.mkdir(exist_ok=True)
     fs = TensorBoardFS(source, mountpoint=mountpoint, refresh_age_seconds=60)
     assert fs.read("/scalars/loss.json", 4096, 0)
-    fs.readdir(discovery_path)
-    assert fs.readdir("/profile")[2:] == []
+    assert "group" not in fs.readdir("/")
+    with pytest.raises(FileNotFoundError):
+        fs.readdir("/profile")
 
     profile = discovery_dir / "profile"
     profile.mkdir()
@@ -60,10 +60,9 @@ def test_warmed_run_discovers_and_refreshes_sidecar(
     virtual = "/profile/trace"
 
     now += 59
-    fs.readdir(discovery_path)
-    assert fs.readdir("/profile")[2:] == []
+    with pytest.raises(FileNotFoundError):
+        fs.readdir("/profile")
     now += 1
-    fs.readdir(discovery_path)
     assert fs.readdir("/profile")[2:] == ["trace"]
     assert fs.getattr(virtual)["st_size"] == len(b"trace")
     assert fs.read(virtual, 100, 0) == b"trace"
@@ -79,7 +78,8 @@ def test_warmed_run_discovers_and_refreshes_sidecar(
 
     now += 1
     trace.unlink()
-    assert fs.readdir("/profile")[2:] == []
+    with pytest.raises(FileNotFoundError):
+        fs.readdir("/profile")
     with pytest.raises(OSError) as raised:
         fs.getattr(virtual)
     assert raised.value.errno == errno.ENOENT
@@ -91,7 +91,8 @@ def test_removed_sidecar_is_no_longer_listed(tmp_path: Path) -> None:
 
     projector.unlink()
 
-    assert fs.readdir("/projector")[2:] == []
+    with pytest.raises(FileNotFoundError):
+        fs.readdir("/projector")
 
 
 def test_changed_sidecar_shows_its_new_mtime(tmp_path: Path) -> None:
@@ -148,15 +149,16 @@ def test_group_sidecars_change_owner_when_nested_run_appears(tmp_path: Path) -> 
     profile.mkdir(parents=True)
     (profile / "trace").write_bytes(b"trace")
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
-    fs.readdir("/group/inner")
+    assert "group" not in fs.readdir("/")
     assert fs.read("/profile/trace", 20, 0) == b"trace"
 
     event = group / EVENTS
     _append(event, 0)
     assert fs.read("/group/profile/trace", 20, 0) == b"trace"
-    assert "trace" not in fs.readdir("/profile")
+    with pytest.raises(FileNotFoundError):
+        fs.readdir("/profile")
     event.unlink()
-    fs.readdir("/group")
+    assert "group" not in fs.readdir("/")
     assert fs.read("/profile/trace", 20, 0) == b"trace"
 
 

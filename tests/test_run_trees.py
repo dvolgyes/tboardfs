@@ -136,8 +136,8 @@ def test_duplicate_step_can_lower_directory_times(tmp_path: Path) -> None:
     )
     before = fs.virtual_tree()
     winning_path = "/tensors/metric/000003.json"
-    assert fs.readdir("/images") == [".", ".."]
-    assert fs.getattr("/images")["st_mtime"] == 100
+    assert "images" not in fs.readdir("/")
+    assert fs.getattr("/tensors/metric")["st_mtime"] == 100
 
     _append_records(event, _tensor(2, 10, "metric", 2), _tensor(3, 30, "metric", 4))
 
@@ -149,8 +149,7 @@ def test_duplicate_step_can_lower_directory_times(tmp_path: Path) -> None:
     ]
     assert fs.getattr("/tensors/metric")["st_mtime"] == 30
     assert fs.getattr("/tensors")["st_mtime"] == 30
-    assert fs.getattr("/images")["st_mtime"] == 30
-    assert _node(before, "/images")["mtime"] == 100
+    assert _node(before, "/tensors/metric")["mtime"] == 100
 
 
 def test_new_file_directory_collision_renames_tags_across_tabs(tmp_path: Path) -> None:
@@ -199,7 +198,7 @@ def test_append_to_earlier_file_preserves_duplicate_step_precedence(
 def test_restart_after_append_removes_previously_published_paths(
     tmp_path: Path,
 ) -> None:
-    """A session restart can remove tags and refresh inherited empty-tab times."""
+    """A session restart drops removed tags without changing retained snapshots."""
     event = tmp_path / EVENTS
     event.write_bytes(_version() + _scalars(0, 10, kept=1.0))
     fs = TensorBoardFS(
@@ -208,14 +207,17 @@ def test_restart_after_append_removes_previously_published_paths(
     fs.virtual_tree()
     _append_records(event, _scalars(2, 100, removed=2.0))
     before = fs.virtual_tree()
-    assert fs.getattr("/images")["st_mtime"] == 100
+    removed_path = "/scalars/removed.json"
+    assert fs.read(removed_path, 4096, 0)
 
     _append_records(event, _start(2), _scalars(2, 30, resumed=3.0))
 
     _assert_fresh(fs, tmp_path)
     assert fs.readdir("/scalars") == [".", "..", "kept.json", "resumed.json"]
-    assert fs.getattr("/images")["st_mtime"] == 30
-    rows = json.loads(render_node(_node(before, "/scalars/removed.json")))
+    with pytest.raises(OSError) as missing:
+        fs.getattr(removed_path)
+    assert missing.value.errno == ENOENT
+    rows = json.loads(render_node(_node(before, removed_path)))
     assert [row["value"] for row in rows] == [2.0]
 
 
@@ -297,7 +299,8 @@ def test_run_versions_are_unique_and_change_with_the_run(tmp_path: Path) -> None
     fs.readdir("/run_a")
     after = {parts: run.version for parts, run in fs._state.runs.items() if parts}
     run_b.unlink()
-    fs.readdir("/run_b")
+    with pytest.raises(FileNotFoundError):
+        fs.readdir("/run_b")
     _append(run_b, 0)
     fs.readdir("/run_b")
     recreated = fs._state.runs[("run_b",)].version
@@ -311,13 +314,14 @@ def test_run_versions_are_unique_and_change_with_the_run(tmp_path: Path) -> None
 def test_removed_nested_run_leaves_no_entries_in_its_parent_run(
     tmp_path: Path,
 ) -> None:
-    """A run inside a tab-named directory of another run can go away cleanly."""
+    """A nested run inside a tab-named directory can go away cleanly."""
     (tmp_path / "a" / "scalars").mkdir(parents=True)
     _append(tmp_path / "a" / EVENTS, 0)
     nested = tmp_path / "a" / "scalars" / EVENTS
     _append(nested, 0)
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
-    assert "images" in fs.readdir("/a/scalars~2")
+    assert "scalars~2" in fs.readdir("/a")
+    assert "images" not in fs.readdir("/a/scalars~2")
 
     nested.unlink()
 
@@ -336,11 +340,13 @@ def test_flat_run_removals_refresh_listings_and_inherited_times(tmp_path: Path) 
     )
     before = fs.virtual_tree()
     assert before["mtime"] == 120
-
     newest.unlink()
+    newest.parent.rmdir()
 
-    assert fs.readdir("/run_a") == [".", ".."]
-    assert fs.getattr("/run_a")["st_mtime"] == fs.getattr("/")["st_mtime"] == 110
+    with pytest.raises(OSError) as missing_run:
+        fs.readdir("/run_a")
+    assert missing_run.value.errno == ENOENT
+    assert fs.getattr("/")["st_mtime"] == 110
     with pytest.raises(OSError) as missing_file:
         fs.open("/run_a/scalars/loss.json", 0)
     assert missing_file.value.errno == ENOENT
@@ -349,30 +355,28 @@ def test_flat_run_removals_refresh_listings_and_inherited_times(tmp_path: Path) 
     next_newest.unlink()
     next_newest.parent.rmdir()
 
-    assert fs.readdir("/") == [".", "..", "llms.txt", "run_a", "run_c"]
-    with pytest.raises(OSError) as missing_dir:
-        fs.readdir("/run_b")
-    assert missing_dir.value.errno == ENOENT
-    assert fs.getattr("/run_a")["st_mtime"] == fs.getattr("/")["st_mtime"] == 100
+    assert fs.readdir("/") == [".", "..", "run_c"]
+    for missing_name in ("/run_a", "/run_b"):
+        with pytest.raises(OSError) as missing_dir:
+            fs.readdir(missing_name)
+        assert missing_dir.value.errno == ENOENT
+    assert fs.getattr("/")["st_mtime"] == 100
     assert fs.readdir("/run_c/scalars") == [".", "..", "loss.json"]
     assert before["mtime"] == 120
     assert _node(before, "/run_a")["mtime"] == 120
     assert "loss.json" in _node(before, "/run_a/scalars")["children"]
-    assert _node(middle, "/run_a")["mtime"] == 110
     assert "loss.json" in _node(middle, "/run_b/scalars")["children"]
 
 
 def test_grouped_leaf_changes_preserve_placement_and_inherited_times(
     tmp_path: Path,
 ) -> None:
-    """Blank groups inherit even lower times without changing old snapshots."""
+    """Run placement survives pruning while published snapshots stay immutable."""
     newest = tmp_path / "a/newest" / EVENTS
     older = tmp_path / "z/older" / EVENTS
     for event, wall_time in [(newest, 100), (older, 40)]:
         event.parent.mkdir(parents=True)
         event.write_bytes(_tensor(1, wall_time, "metric", 1))
-    (tmp_path / "a/blank").mkdir()
-    (tmp_path / "b/blank/leaf").mkdir(parents=True)
 
     fs = TensorBoardFS(
         tmp_path, refresh_age_seconds=0, source_check_seconds=0, scalar_formats="json"
@@ -380,8 +384,8 @@ def test_grouped_leaf_changes_preserve_placement_and_inherited_times(
     before = fs.virtual_tree()
     placement = fs._run_places.disk_parts
     old_names = _node(before, "/a").sorted_names()
-    assert old_names == ("blank", "newest")
-    assert fs.readdir("/") == [".", "..", "a", "b", "llms.txt", "z"]
+    assert old_names == ("newest",)
+    assert fs.readdir("/") == [".", "..", "a", "z"]
 
     _append_records(newest, _tensor(1, 60, "metric", 2))
     fs.readdir("/a/newest")
@@ -390,20 +394,20 @@ def test_grouped_leaf_changes_preserve_placement_and_inherited_times(
     assert _node(middle, "/a").sorted_names() is old_names
     assert _node(middle, "/z") is _node(before, "/z")
     assert middle["mtime"] == 60
-    for path in ("/a/blank", "/b", "/b/blank", "/b/blank/leaf"):
-        assert _node(before, path)["mtime"] == 100
-        assert _node(middle, path)["mtime"] == 60
     _assert_fresh(fs, tmp_path)
 
     newest.unlink()
-    assert fs.readdir("/a/newest") == [".", ".."]
+    with pytest.raises(OSError) as missing_newest:
+        fs.readdir("/a/newest")
+    assert missing_newest.value.errno == ENOENT
     older.unlink()
-    assert fs.readdir("/z/older") == [".", ".."]
+    with pytest.raises(OSError) as missing_older:
+        fs.readdir("/z/older")
+    assert missing_older.value.errno == ENOENT
     after = fs._cached_tree()
-    assert fs._run_places.disk_parts is placement
+    assert fs._run_places.disk_parts is not placement
     assert middle["mtime"] == 60
     assert _node(middle, "/a/newest")["children"]
     assert after["mtime"] == 0
-    for path in ("/a", "/a/blank", "/a/newest", "/b", "/b/blank/leaf", "/z"):
-        assert _node(after, path)["mtime"] == 0
+    assert after["children"] == {}
     _assert_fresh(fs, tmp_path)

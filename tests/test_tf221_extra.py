@@ -140,7 +140,7 @@ def test_native_wide_and_complex_tensors(
 
 
 def test_graph_binary_strings_preserve_exact_raw_bytes() -> None:
-    fs = TensorBoardFS(ROOT / "graph")
+    fs = TensorBoardFS(ROOT / "graph", raw=True)
     data = json.loads(fs.read("/text/binary/000007.json", 4096, 0))
     assert (data["shape"], data["values"]) == ([2], ["a\0b", "\ufffd\ufffd"])
     directory = "/raw/events.out.tfevents.graph-extra"
@@ -242,6 +242,6 @@ def test_live_eager_debugger_records_cpu_square_without_training_events() -> Non
     assert _fields(device, 1) == [b"/job:localhost/replica:0/task:0/device:CPU:0"]
     assert _fields(op, 9) == [bytes(_fields(device, 2))]
 
-    fs = TensorBoardFS(run)
+    fs = TensorBoardFS(run, raw=True)
     assert fs.readdir("/raw")[2:] == ["events.out.tfevents.eager-extra"]
     assert fs.readdir("/tensors")[2:] == ["complex", "wide"]

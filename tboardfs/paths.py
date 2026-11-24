@@ -1,5 +1,6 @@
 import os
 import posixpath
+from collections.abc import Callable, Iterator
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,77 @@ class _Paths:
                 return sorted(listing, key=lambda entry: entry.name)
         except OSError:
             return []
+
+    @staticmethod
+    def mount_entries(
+        directory: Path, allowed: Callable[[Path], bool]
+    ) -> list[os.DirEntry[str]]:
+        """List the source without following links into blocked directories."""
+        if not allowed(directory):
+            return []
+        return [
+            entry
+            for entry in _Paths.entries(directory)
+            if not entry.is_symlink() or allowed(Path(entry.path))
+        ]
+
+    @staticmethod
+    def mount_walk(
+        directory: Path, allowed: Callable[[Path], bool]
+    ) -> Iterator[tuple[Path, list[os.DirEntry[str]]]]:
+        """Walk source branches using the same link rules as mount discovery."""
+        pending = [directory]
+        while pending:
+            current = pending.pop()
+            entries = _Paths.mount_entries(current, allowed)
+            yield current, entries
+            pending.extend(
+                current / name for name in _Paths.child_names(current, entries, ())
+            )
+
+    @staticmethod
+    def check_branch(
+        directory: Path,
+        allowed: Callable[[Path], bool],
+        mountpoint: Path | None,
+        *,
+        remember: bool,
+    ) -> list[list[os.DirEntry[str]]] | None:
+        """Find a log or return the scanned listings for sidecar discovery."""
+        listings = []
+        for current, entries in _Paths.mount_walk(directory, allowed):
+            if _Paths.event_files(current, entries, mountpoint=mountpoint):
+                return None
+            if remember and entries:
+                listings.append(entries)
+        return listings
+
+    @staticmethod
+    def child_names(
+        directory: Path, entries: list[os.DirEntry[str]], owned: set[Path] | tuple[()]
+    ) -> list[str]:
+        """List physical child branches except sidecar roots and link cycles."""
+        children = [
+            entry
+            for entry in entries
+            if _Paths.is_dir(entry) and Path(entry.path) not in owned
+        ]
+        if not any(entry.is_symlink() for entry in children):
+            return [entry.name for entry in children]
+        parent = directory.resolve()
+        seen = {parent, *(p.resolve() for p in directory.parents)}
+        names = []
+        for entry in children:
+            target = (
+                Path(entry.path).resolve()
+                if entry.is_symlink()
+                else parent / entry.name
+            )
+            if target in seen or parent.is_relative_to(target):
+                continue
+            seen.add(target)
+            names.append(entry.name)
+        return names
 
     @staticmethod
     def event_files(

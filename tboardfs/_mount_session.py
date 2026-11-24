@@ -3,7 +3,7 @@
 import errno
 import logging
 from collections.abc import Callable
-from ctypes import c_char_p, pointer, sizeof
+from ctypes import c_char_p, c_void_p, pointer, sizeof
 from functools import partial
 from signal import SIG_DFL, SIGINT, getsignal, signal
 from stat import S_IFDIR, S_IFREG
@@ -37,6 +37,14 @@ _CALLBACKS = (
     ("create", "create"),
     ("write", "write"),
 )
+
+
+class _FallbackSession(MountBinding):
+    """Start the warmup even when the operations provide their own init."""
+
+    def _init(self, conn: object, config: object) -> None:
+        super()._init(conn, config)
+        self.operations._start_index_warmup()
 
 
 class _Fuse2Session(MountBinding):
@@ -125,6 +133,11 @@ class _Fuse2Session(MountBinding):
             failures.append(exit_error)
         return -errno.EFAULT
 
+    def _initialize(self, private_data: c_void_p, _conn: object) -> int | None:
+        """Start indexing after daemonization and preserve FUSE private data."""
+        self._invoke(self.operations._start_index_warmup)
+        return private_data.value
+
     def _run(
         self, callbacks: StatCallbacks, mountpoint: str, foreground: bool, options: str
     ) -> None:
@@ -137,7 +150,8 @@ class _Fuse2Session(MountBinding):
         fuse_ops.getattr = callbacks.getattr
         fuse_ops.fgetattr = callbacks.fgetattr
         private_data = callbacks.user_data
-        fuse_ops.init = prototypes["init"](lambda _conn: private_data.value)
+
+        fuse_ops.init = prototypes["init"](partial(self._initialize, private_data))
 
         args = ["fuse"]
         if foreground:
@@ -183,7 +197,7 @@ def mount(
         and _try_mount(operations, mountpoint, foreground, options)
     ):
         return
-    MountBinding(
+    _FallbackSession(
         operations, mountpoint, foreground=foreground, raw_fi=raw_fi, **options
     )
 

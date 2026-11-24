@@ -101,12 +101,12 @@ def test_root_and_active_run_do_not_read_idle_subtrees(
         profile = event.parent / "plugins" / "profile"
         profile.mkdir(parents=True)
         (profile / "trace").write_bytes(b"trace")
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
     listed = _spy_listings(monkeypatch)
     opened = _spy_opens(monkeypatch)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
-    assert fs.readdir("/")[2:] == ["llms.txt", *names]
-    assert listed == [tmp_path]
-    assert opened == [Path(__file__).parents[1] / "tboardfs" / "llms.txt"]
+    assert fs.readdir("/")[2:] == names
+    assert listed == [tmp_path, *(tmp_path / name for name in names)]
+    assert opened == []
 
     assert fs.read("/run00/profile/trace", 16, 0) == b"trace"
     _append(idle[-1], 1)
@@ -195,7 +195,7 @@ def test_stat_of_frozen_raw_frame_needs_no_source_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (event,) = _runs(tmp_path, "run")
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=float("inf"))
+    fs = TensorBoardFS(tmp_path, refresh_age_seconds=float("inf"), raw=True)
     directory = f"/run/raw/{EVENTS}"
     (filename,) = fs.readdir(directory)[2:]
     opened = _spy_opens(monkeypatch)

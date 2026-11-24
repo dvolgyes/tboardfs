@@ -1,20 +1,25 @@
 """The mount adapter maps raw FUSE file info onto TensorBoardFS handles."""
 
 import json
+import os
 from ctypes import memset, pointer, sizeof
 from errno import ENOENT, ENOTDIR
 from importlib.resources import files
 from pathlib import Path
 from stat import S_IFDIR, S_IFMT, S_IFREG, S_ISREG
+from threading import Event
 from types import SimpleNamespace
 
 import mfusepy
 import pytest
 from test_open_handles import LOSS, _append
 
+from tboardfs import _mount_callbacks
+from tboardfs._mount_session import mount
 from tboardfs.constants import DEFAULT_SOURCE_CHECK_SECONDS
 from tboardfs.file_attributes import _FileAttributes
 from tboardfs.mount_binding import MountBinding
+from tboardfs.mount_index import _RunData
 from tboardfs.mounted import MountedTensorBoardFS
 
 
@@ -179,6 +184,8 @@ def test_root_run_name_cannot_hide_llms_guide(tmp_path: Path) -> None:
     event = source / "llms.txt" / "events.out.tfevents"
     event.parent.mkdir(parents=True)
     _append(event, 0)
+    _append(source / "events.out.tfevents.root", 1)
+    _append(source / "events.out.tfevents", 0)
     fs = MountedTensorBoardFS(source, refresh_age_seconds=0, source_check_seconds=0)
 
     assert ("llms.txt", S_IFREG, 0) in fs.readdir("/", 0)
@@ -203,4 +210,90 @@ def test_llms_guide_survives_incremental_run_updates(tmp_path: Path) -> None:
     assert len(json.loads(fs.read(path, 1 << 20, 0))) == 1
     _append(event, 2)
     assert len(json.loads(fs.read(path, 1 << 20, 0))) == 2
-    assert ("llms.txt", S_IFREG, 0) in fs.readdir("/", 0)
+    assert ("llms.txt", S_IFREG, 0) not in fs.readdir("/", 0)
+    assert ("llms.txt", S_IFREG, 0) in fs.readdir("/experiment", 0)
+
+
+def test_fallback_init_returns_while_newest_event_is_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    run_dir = source / "group" / "run"
+    run_dir.mkdir(parents=True)
+    older = source / "events.out.tfevents.older"
+    newest = run_dir / "events.out.tfevents.newest"
+    _append(older, 1)
+    _append(newest, 2)
+    older_ns = 1_000_000_000
+    newest_ns = 2_000_000_000
+
+    os.utime(older, ns=(older_ns, older_ns))
+    os.utime(newest, ns=(newest_ns, newest_ns))
+    mountpoint = tmp_path / "mount"
+    mountpoint.mkdir()
+    blocked = mountpoint / "events.out.tfevents.blocked"
+    _append(blocked, 3)
+    (source / blocked.name).symlink_to(blocked)
+
+    entered_parser = Event()
+    release_parser = Event()
+    warmup_finished = Event()
+    parsed: list[Path] = []
+    parse = _RunData.parse_event_file
+
+    def gated_parse(path: Path, **kwargs: object):
+        parsed.append(path)
+        entered_parser.set()
+        assert release_parser.wait(5)
+        return parse(path, **kwargs)
+
+    monkeypatch.setattr(_RunData, "parse_event_file", staticmethod(gated_parse))
+    monkeypatch.setattr(_mount_callbacks, "_supported", lambda: False)
+    ready = Event()
+
+    def binding_init(
+        binding: mfusepy.FUSE,
+        operations: MountedTensorBoardFS,
+        _mountpoint: str,
+        **_options: object,
+    ) -> None:
+        binding.operations = operations
+        binding._init(None, None)
+        ready.set()
+
+    monkeypatch.setattr(mfusepy.FUSE, "__init__", binding_init)
+    fs = MountedTensorBoardFS(source, mountpoint=mountpoint, refresh_age_seconds=0)
+    custom_init: list[str] = []
+    fs.init = custom_init.append
+
+    def finish_warmup(self: MountedTensorBoardFS) -> None:
+        try:
+            original_warm_index(self)
+        finally:
+            warmup_finished.set()
+
+    original_warm_index = MountedTensorBoardFS._warm_index
+    monkeypatch.setattr(MountedTensorBoardFS, "_warm_index", finish_warmup)
+    try:
+        mount(
+            fs,
+            str(mountpoint),
+            foreground=True,
+            ro=True,
+            raw_fi=True,
+            attr_timeout=0,
+        )
+        assert ready.is_set()
+        assert custom_init == ["/"]
+        assert entered_parser.wait(2)
+        assert parsed == [newest]
+        assert warmup_finished.is_set() is False
+    finally:
+        release_parser.set()
+
+    assert warmup_finished.wait(5)
+    rows = json.loads(fs.read("/group/run/scalars/loss.json", 4096, 0))
+    assert [(row["step"], row["wall_time"]) for row in rows] == [(2, 102.0)]
+    rows = json.loads(fs.read("/scalars/loss.json", 4096, 0))
+    assert [row["step"] for row in rows] == [1]
+    assert parsed == [newest, older]

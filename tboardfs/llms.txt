@@ -1,18 +1,29 @@
 # tboardfs mounted logs
 
-This read-only tree exposes TensorBoard event data as files for training analysis. A log-directory mount has one directory per run; a run-directory mount exposes that run's tabs at the mount root. A nested run appears as a directory below its parent.
+This read-only tree exposes TensorBoard event data as files for training analysis.
+This guide appears in each run directory that directly contains event files, including the mount root only when it directly contains event files.
+A nested run appears as a directory below its parent.
+Empty tabs and other empty directories are omitted.
 
 ## Directories
 
 Metric tabs (`scalars`, `histograms`, `distributions`, `pr_curves`) contain training values and per-step tables; media tabs (`images`, `audio`, `videos`) contain stored media.
 `text` contains text summaries; `meshes` geometry; `tensors` tensor values; `graphs` model graphs and run metadata; `hparams` run settings; `custom_scalars/layout.json` layouts; and `plugins` other plugin data.
 `projector` and `profile` include run-directory sidecar files when available.
-`raw/<event-file>/<20-digit-byte-offset>.tfrecord` contains one complete original TFRecord frame; filenames identify byte offsets in source order.
+The mount exposes typed files by default; start it with `-r` or `--raw` to include original records.
+Each `raw/<event-file>/<20-digit-byte-offset>.tfrecord` file contains one complete original TFRecord frame, named by byte offset in source order.
 
 ## Events and formats
 
-The tree reads TensorFlow 1/2, Keras, PyTorch and PyTorch Lightning, tensorboardX, and compatible TensorBoard event writers. It exposes scalar, histogram, distribution, PR-curve, image, audio, video, text, mesh, tensor, hyperparameter, custom-scalar, graph and plugin data. A typed preview may be absent for an unsupported or malformed payload; check `raw/` for the original frame.
+The tree reads TensorFlow 1/2, Keras, PyTorch and PyTorch Lightning, tensorboardX, and compatible TensorBoard event writers.
+It exposes scalar, histogram, distribution, PR-curve, image, audio, video, text, mesh, tensor, hyperparameter, custom-scalar, graph and plugin data.
+A typed preview may be absent for an unsupported or malformed payload; enable the raw view to read the original frame.
 
-Equivalent encodings are alternate views of the same logged values, not separate observations. For example, scalar `<tag>.json`, `.tsv`, `.csv` and `.npz` files contain the same table; tensor `.npy` and `.json` files preview the same tensor. Step-based files use zero-padded global steps. Equal-step scalar rows are kept in producer order.
+Equivalent encodings are alternate views of the same logged values, not separate observations.
+For example, scalar `<tag>.json`, `.tsv`, `.csv` and `.npz` files contain the same table; tensor `.npy` and `.json` files preview the same tensor.
+Step-based files use zero-padded global steps.
+Equal-step scalar rows are kept in producer order.
 
-Media files keep the stored bytes and are not transcoded. Extensions indicate likely formats, not guaranteed decodability. `.bin` files contain opaque original tensor or field bytes, not a whole event frame; they are not, by themselves, evidence of a model checkpoint or weights. Use `raw/` for complete event framing and unsupported types.
+Media files keep the stored bytes and are not transcoded.
+Extensions indicate likely formats, not guaranteed decodability.
+`.bin` files contain opaque original tensor or field bytes, not a whole event frame; they are not, by themselves, evidence of a model checkpoint or weights.

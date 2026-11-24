@@ -17,7 +17,9 @@ def _files(fs: TensorBoardFS) -> list[str]:
     return [path for path in _all_files(fs) if path != "/llms.txt"]
 
 
-def _log(tmp_path: Path, values: list[float], shape: list[int]) -> TensorBoardFS:
+def _log(
+    tmp_path: Path, values: list[float], shape: list[int], *, raw: bool = False
+) -> TensorBoardFS:
     event = compat_pb2.Event(wall_time=1.0, step=3)
     value = event.summary.value.add(tag="w")
     value.tensor.dtype = DT_FLOAT
@@ -26,12 +28,12 @@ def _log(tmp_path: Path, values: list[float], shape: list[int]) -> TensorBoardFS
     )
     value.tensor.tensor_content = np.asarray(values, dtype="<f4").tobytes()
     (tmp_path / "events.out.tfevents.host").write_bytes(_frame(event))
-    return TensorBoardFS(tmp_path)
+    return TensorBoardFS(tmp_path, raw=raw)
 
 
 def test_a_vector_without_plugin_name_is_a_tensor_file(tmp_path: Path) -> None:
     """The tensor keeps its values and shape instead of being dropped."""
-    fs = _log(tmp_path, [1.0, 2.0, 3.0, 4.0], [2, 2])
+    fs = _log(tmp_path, [1.0, 2.0, 3.0, 4.0], [2, 2], raw=True)
 
     data = np.load(io.BytesIO(fs.read("/tensors/w/000003.npy", 1 << 20, 0)))
 

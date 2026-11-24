@@ -304,7 +304,7 @@ def test_mount_cli_sets_the_owner(
 ) -> None:
     """Files and directories belong to root unless --user-owner gives them to the user."""
     (tmp_path / "runs").mkdir()
-    (tmp_path / "runs" / "events.out.tfevents.1").write_bytes(b"")
+    _append(tmp_path / "runs" / "events.out.tfevents.1", 0)
     (tmp_path / "mnt").mkdir()
     monkeypatch.chdir(tmp_path)
     owners: list[tuple[int, int]] = []

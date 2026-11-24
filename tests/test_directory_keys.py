@@ -50,21 +50,21 @@ def test_warm_listing_follows_discovery_and_collision_renames(tmp_path: Path) ->
     (tmp_path / "scalars").mkdir()
     _append(tmp_path / "scalars" / EVENTS, 0)
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
-    assert fs.readdir("/") == [".", "..", "llms.txt", "scalars"]
-    assert "images" in fs.readdir("/scalars")
+    assert fs.readdir("/") == [".", "..", "scalars"]
+    assert "images" not in fs.readdir("/scalars")
 
     _append(tmp_path / EVENTS, 1)
     names = fs.readdir("/")
     assert names[2:] == sorted(names[2:])
     assert names.index("scalars") + 1 == names.index("scalars~2")
     assert "loss.json" in fs.readdir("/scalars")
-    assert "images" in fs.readdir("/scalars~2")
+    assert "images" not in fs.readdir("/scalars~2")
 
     (tmp_path / "scalars" / EVENTS).unlink()
     (tmp_path / "scalars").rmdir()
     (tmp_path / "extra").mkdir()
     names = fs.readdir("/")
-    assert "extra" in names and "scalars~2" not in names
+    assert "extra" not in names and "scalars~2" not in names
     assert names[2:] == sorted(names[2:])
 
 

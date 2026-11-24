@@ -357,13 +357,9 @@ class RunFiles:
             group.add(name, PackedLeaf(source, index, wall_time))
 
     def patch(
-        self, tree: dict[str, Any], run: RunCache, *, raw: dict[str, Any]
+        self, tree: dict[str, Any], run: RunCache, *, raw: dict[str, Any] | None
     ) -> dict[str, Any] | None:
-        """Publish changed logical files, or decline if cold resolution can differ.
-
-        The caller proves append provenance and projects the candidate cold
-        producers in order. The fresh raw tab replaces its old snapshot.
-        """
+        """Publish changed logical files, or decline if cold resolution can differ."""
         children = tree["children"]
         if "mtime" not in tree or self.name_map or NAME_MAP in children:
             return None

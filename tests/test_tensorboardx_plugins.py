@@ -114,7 +114,8 @@ def test_file_writer_tensor_values(
     np.testing.assert_array_equal(array, np.array(expected, dtype), strict=True)
 
 
-def test_string_values_and_opaque_resource(fs: TensorBoardFS) -> None:
+def test_string_values_and_opaque_resource() -> None:
+    fs = TensorBoardFS(RUN, raw=True)
     rows = json.loads(fs.read("/text/notes/000003.json", 8192, 0))
     assert rows["values"] == ["A3", "ré"]
     (source,) = RUN.glob("events.out.tfevents.*")

@@ -94,10 +94,8 @@ def test_native_frame_contains_both_sections_and_padding() -> None:
 
 
 def test_beholder_ancillaries_are_not_events_or_typed_assets() -> None:
-    fs = TensorBoardFS(RUN)
-    assert fs.readdir("/plugins")[2:] == []
-    assert fs.readdir("/tensors")[2:] == []
-    assert fs.readdir("/images")[2:] == []
+    fs = TensorBoardFS(RUN, raw=True)
+    assert {"plugins", "tensors", "images"}.isdisjoint(fs.readdir("/"))
     assert fs.readdir("/raw")[2:] == ["events.out.tfevents.legacy-tools"]
 
 

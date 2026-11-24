@@ -3,12 +3,13 @@
 import math
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from concurrent.futures import Future
+from dataclasses import dataclass, field
 from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
 from stat import S_ISREG
-from typing import Any
+from typing import Any, TypedDict
 
 from loguru import logger
 
@@ -55,9 +56,33 @@ def _has_symlink(directory: Path) -> bool:
     )
 
 
+class MountIndexKeywords(TypedDict, total=False):
+    """Optional indexing settings for the mount constructor."""
+
+    index_workers: int
+    disk_index: bool
+    disk_index_size_mb: int
+    source_check_seconds: float
+
+
+@dataclass(slots=True)
+class _WarmIndexSlot:
+    """Hand one in-flight or completed warm index to the ordered refresh."""
+
+    pending: tuple[Path, Future[EventFileCache | None]] | None = None
+
+    def take(self, path: Path) -> Future[EventFileCache | None] | None:
+        """Consume the pending index only from the matching source's refresh."""
+        pending = self.pending
+        if pending is None or pending[0] != path:
+            return None
+        self.pending = None
+        return pending[1]
+
+
 @dataclass(frozen=True, slots=True)
 class _IndexOptions:
-    """Event-source lookup, worker limits, and persistence for this mount."""
+    """Event-source lookup, worker limits, persistence, and optional warmup."""
 
     mountpoint: Path | None
     workers: int
@@ -65,6 +90,7 @@ class _IndexOptions:
     disk: DiskIndex | None = None
     storage: Path | None = None
     source_check_seconds: float = DEFAULT_SOURCE_CHECK_SECONDS
+    warmup: _WarmIndexSlot = field(default_factory=_WarmIndexSlot, compare=False)
 
     @classmethod
     def create(
@@ -239,10 +265,13 @@ class _RunData:
                 old is not None and old.progress.initial_metadata != carry
             )
             try:
-                if (
-                    old is None
-                    or FileIdentity.fingerprint(stat(source_path))
-                    != old.progress.checked_status
+                if old is None:
+                    current = _RunData._cold_source(
+                        source_path, carry, options, stat, log, hits.get(source_path)
+                    )
+                elif (
+                    FileIdentity.fingerprint(stat(source_path))
+                    != (old.progress.checked_status)
                     or reparse
                 ):
                     current = _RunData._update_source(
@@ -252,13 +281,14 @@ class _RunData:
                         log=log,
                         initial_metadata=carry,
                         options=options,
-                        hit=hits.get(source_path),
+                        hit=None,
                     )
+                else:
+                    current = old
+                if current is not old:
                     run.files[source_path] = current
                     base = old if not changed and current.progress.resumed else None
                     changed = True
-                else:
-                    current = old
             except OSError as error:
                 if not isinstance(error, FileNotFoundError):
                     logger.warning("cannot read event file {}: {}", source_path, error)
@@ -276,6 +306,55 @@ class _RunData:
         return changed, base
 
     @staticmethod
+    def _cold_source(
+        path: Path,
+        metadata: dict[str, dict[str, Any]],
+        options: _IndexOptions,
+        stat: Callable[[Path], os.stat_result],
+        log: Callable[[str, object], None] | None,
+        hit: _IndexHit | None,
+    ) -> EventFileCache:
+        pending = options.warmup.take(path)
+        warmed = pending.result() if pending is not None and not metadata else None
+        if warmed is not None and (
+            warmed.progress.checked_status != FileIdentity.fingerprint(stat(path))
+        ):
+            warmed = None
+        return _RunData._update_source(
+            path,
+            old=None,
+            force=False,
+            log=log,
+            initial_metadata=metadata,
+            options=options,
+            hit=hit,
+            warmed=warmed,
+        )
+
+    @staticmethod
+    def warm(path: Path, options: _IndexOptions, *, log: bool) -> None:
+        """Index one source speculatively, without publishing it to a run."""
+        pending: Future[EventFileCache | None] = Future()
+        options.warmup.pending = (path, pending)
+        cache = None
+        try:
+            if options.disk is not None:
+                hit = options.disk.candidates([path], 1).get(path)
+                if hit is not None:
+                    cache = options.disk.load(hit, path, {})
+            if cache is None:
+                if log:
+                    logger.info("parsing {}", path)
+                cache = _RunData.parse_event_file(
+                    path, old=None, initial_metadata={}, options=options, force=False
+                )
+        except OSError as error:
+            if not isinstance(error, FileNotFoundError):
+                logger.warning("cannot warm event file {}: {}", path, error)
+        finally:
+            pending.set_result(cache)
+
+    @staticmethod
     def _update_source(
         source_path: Path,
         *,
@@ -285,22 +364,25 @@ class _RunData:
         initial_metadata: dict[str, dict[str, Any]],
         options: _IndexOptions,
         hit: _IndexHit | None,
+        warmed: EventFileCache | None = None,
     ) -> EventFileCache:
         """Load or parse an index after detecting a new or changed source."""
         disk = options.disk if old is None else None
-        if disk is not None and hit is not None:
-            cached = disk.load(hit, source_path, initial_metadata)
-            if cached is not None:
-                return cached
-        if log is not None:
-            log("parsing {}", source_path)
-        cache = _RunData.parse_event_file(
-            source_path,
-            old=old,
-            initial_metadata=initial_metadata,
-            options=options,
-            force=force,
-        )
+        cache = warmed
+        if cache is None and disk is not None and hit is not None:
+            cache = disk.load(hit, source_path, initial_metadata)
+            if cache is not None:
+                return cache
+        if cache is None:
+            if log is not None:
+                log("parsing {}", source_path)
+            cache = _RunData.parse_event_file(
+                source_path,
+                old=old,
+                initial_metadata=initial_metadata,
+                options=options,
+                force=force,
+            )
         if (
             disk is not None
             and cache.progress.provenance.cacheable

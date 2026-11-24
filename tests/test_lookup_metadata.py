@@ -81,12 +81,14 @@ def test_name_map_leaf_disappears_on_direct_lookup(
 ) -> None:
     mapped = tmp_path / ("%" * 100)
     mapped.mkdir()
+    _append(mapped / EVENTS, 0)
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0)
     path = "/.tboardfs-names.json"
     before = _read_open(fs, path)
     assert mapped.name in json.loads(before).values()
     assert fs.getattr(path)["st_size"] == len(before)
 
+    (mapped / EVENTS).unlink()
     mapped.rmdir()
     with pytest.raises(OSError) as raised:
         if operation == "stat":
@@ -207,7 +209,7 @@ def test_warm_source_leaves_recheck_access_before_source_deadline(
     event.write_bytes(frame)
     excluded = (mountpoint if blocked == "mount" else storage) / EVENTS
     excluded.write_bytes(frame)
-    fs = TensorBoardFS(source, mountpoint=mountpoint, disk_index=True)
+    fs = TensorBoardFS(source, mountpoint=mountpoint, disk_index=True, raw=True)
     raw_dir = f"/raw/{EVENTS}"
     (name,) = fs.readdir(raw_dir)[2:]
     raw_path = f"{raw_dir}/{name}"
@@ -253,7 +255,9 @@ def test_cached_raw_bytes_require_current_read_access(
     event = tmp_path / EVENTS
     frame = _image_frame((CORPUS / "plugins/assets/sprite.png").read_bytes(), 1.0)
     event.write_bytes(frame)
-    fs = TensorBoardFS(tmp_path, mountpoint=tmp_path / "mount", disk_index=False)
+    fs = TensorBoardFS(
+        tmp_path, mountpoint=tmp_path / "mount", disk_index=False, raw=True
+    )
     raw_dir = f"/raw/{EVENTS}"
     (name,) = fs.readdir(raw_dir)[2:]
     path = f"{raw_dir}/{name}"

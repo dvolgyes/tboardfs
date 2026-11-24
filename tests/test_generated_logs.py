@@ -127,7 +127,7 @@ def test_tensorboardx_metadata_plugins_expose_clean_representations() -> None:
     assert hparams["session_start"]["hparams"]["optimizer"] == "sgd"
     assert hparams["metrics"]["hparam/loss"] == 0.25
     assert not any(name[:1].isdigit() for name in fs.readdir("/tensorboardx"))
-    assert fs.readdir("/tensorboardx/plugins") == [".", ".."]
+    assert "plugins" not in fs.readdir("/tensorboardx")
 
 
 def test_tensorboard_scalars_and_media_expose_clean_representations() -> None:
@@ -191,7 +191,7 @@ def test_tensorboard_custom_scalars_expose_clean_representations() -> None:
         "loss",
         "train/f1_score",
     ]
-    assert fs.readdir("/tensorboard/plugins") == [".", ".."]
+    assert "plugins" not in fs.readdir("/tensorboard")
 
 
 def test_tensorboard_meshes_expose_clean_representations() -> None:

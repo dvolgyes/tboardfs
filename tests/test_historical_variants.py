@@ -62,7 +62,7 @@ def test_historical_mesh_and_cloud_batches(run: Path) -> None:
 
 
 def test_historical_rank_three_text_and_exact_tensor_payloads(run: Path) -> None:
-    fs = TensorBoardFS(run)
+    fs = TensorBoardFS(run, raw=True)
     cube = json.loads(fs.read("/text/cube/000007.json", 4096, 0))
     assert cube["shape"] == [2, 1, 2]
     assert cube["values"] == [[["one", "two"]], [["三", "x|y"]]]

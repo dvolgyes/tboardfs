@@ -153,7 +153,7 @@ def test_real_worker_finishes_before_first_cut_is_known(
     if bad_header:
         tail = tail[:8] + bytes([tail[8] ^ 1]) + tail[9:]
     source.write_bytes(b"".join(frames[:-1]) + tail)
-    serial = TensorBoardFS(root, index_workers=1)
+    serial = TensorBoardFS(root, index_workers=1, raw=True)
     expected = _contents(serial)
     serial_index = serial._state.runs[()].files[source]
 
@@ -182,7 +182,7 @@ def test_real_worker_finishes_before_first_cut_is_known(
     monkeypatch.setattr(cold, "parallel_index", observe)
     _guard_mount_paths(monkeypatch, bad_header)
 
-    mounted = TensorBoardFS(root, index_workers=3, disk_index=bad_header)
+    mounted = TensorBoardFS(root, index_workers=3, disk_index=bad_header, raw=True)
     _assert_mount_matches_serial(mounted, expected, serial_index, prefix, bad_header)
     gate.assert_finished()
     assert len(attempts) == 1
@@ -225,7 +225,7 @@ def test_plan_and_workers_own_frame_starts(
     ]
     assert list(Segment.plan(source, source.stat(), workers)) == planned
 
-    serial = TensorBoardFS(tmp_path, index_workers=1)
+    serial = TensorBoardFS(tmp_path, index_workers=1, raw=True)
     expected = _contents(serial)
     serial_index = serial._state.runs[()].files[source]
     monkeypatch.setattr(filesystem, "_PARALLEL_MIN_BYTES", 1)
@@ -233,7 +233,7 @@ def test_plan_and_workers_own_frame_starts(
     monkeypatch.setattr(cold, "packed_work", _mark_finished_range)
     _guard_mount_paths(monkeypatch, False)
 
-    mounted = TensorBoardFS(tmp_path, index_workers=workers)
+    mounted = TensorBoardFS(tmp_path, index_workers=workers, raw=True)
     _assert_mount_matches_serial(mounted, expected, serial_index, frames, False)
     actual_ranges = list(pairwise([start for start, _ in planned] + [size]))
     _assert_workers_finished(tmp_path, actual_ranges, False)

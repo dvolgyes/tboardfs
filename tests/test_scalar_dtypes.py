@@ -53,7 +53,7 @@ def test_one_value_numeric_tensor_keeps_its_scalar_precision(
     with np.load(io.BytesIO(fs.read("/scalars/x.npz", 1 << 20, 0))) as archive:
         assert archive["value"].dtype == np.dtype(np_dtype)
         assert archive["value"].tolist() == [value]
-    assert fs.readdir("/tensors")[2:] == []
+    assert "tensors" not in fs.readdir("/")
 
 
 def test_a_one_value_complex_tensor_stays_a_tensor(tmp_path: Path) -> None:
@@ -62,7 +62,7 @@ def test_a_one_value_complex_tensor_stays_a_tensor(tmp_path: Path) -> None:
     tensor.scomplex_val.extend([1.0, 2.0])
     fs = _mount(tmp_path, tensor)
 
-    assert fs.readdir("/scalars")[2:] == []
+    assert "scalars" not in fs.readdir("/")
     assert fs.readdir("/tensors")[2:] == ["x"]
 
 

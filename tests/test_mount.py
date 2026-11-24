@@ -38,7 +38,9 @@ _DT_REG = 8
 
 
 @pytest.fixture
-def mounted(tmp_path: Path) -> Iterator[tuple[Path, Path]]:
+def mounted(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> Iterator[tuple[Path, Path]]:
     """Mount a source with one growing run; yield (event file, run dir)."""
     source = tmp_path / "src"
     mountpoint = tmp_path / "mnt"
@@ -49,7 +51,9 @@ def mounted(tmp_path: Path) -> Iterator[tuple[Path, Path]]:
     log = tmp_path / "mount.log"
     # A file, not a pipe: an unread pipe would block the logging mount.
     with log.open("w") as log_handle:
-        process = _start_mount(source, mountpoint, log_handle)
+        process = _start_mount(
+            source, mountpoint, log_handle, raw=getattr(request, "param", False)
+        )
     run = mountpoint / "run_a"
     deadline = time.monotonic() + MOUNT_TIMEOUT_SECONDS
     while not (run / "scalars").exists():
@@ -73,7 +77,7 @@ def mounted(tmp_path: Path) -> Iterator[tuple[Path, Path]]:
 
 
 def _start_mount(
-    source: Path, mountpoint: Path, log_handle: TextIO
+    source: Path, mountpoint: Path, log_handle: TextIO, *, raw: bool
 ) -> "subprocess.Popen[bytes]":
     return subprocess.Popen(
         [
@@ -87,6 +91,7 @@ def _start_mount(
             "0",
             "--source-check-seconds",
             "0",
+            *(["--raw"] if raw else []),
         ],
         stderr=log_handle,
     )
@@ -105,12 +110,29 @@ def _steps(run: Path, kind: str) -> list[int]:
         return [int(step) for step in archive["step"]]
 
 
-def test_mount_root_exposes_guide(mounted: tuple[Path, Path]) -> None:
-    _, run = mounted
-    guide = run.parent / "llms.txt"
+def test_mount_lists_only_populated_directories(mounted: tuple[Path, Path]) -> None:
+    event, run = mounted
+    (event.parent.parent / "empty/deeper").mkdir(parents=True)
+    nested = event.parent.parent / "group/nested" / event.name
+    nested.parent.mkdir(parents=True)
+    _append(nested, 1)
+
+    root = run.parent
+    assert {p.name for p in root.iterdir()} == {"group", "run_a"}
+    assert {p.name for p in (root / "group").iterdir()} == {"nested"}
+    assert {p.name for p in run.iterdir()} == {"llms.txt", "scalars"}
+    assert not (root / "empty").exists()
+    assert not (run / "custom_scalars").exists()
+    assert not (run / "raw").exists()
+
+    guide = run / "llms.txt"
     assert guide.is_file()
     expected = (Path(__file__).parents[1] / "tboardfs" / "llms.txt").read_bytes()
     assert guide.read_bytes() == expected
+    assert (root / "group/nested/llms.txt").read_bytes() == expected
+
+    nested.unlink()
+    assert not (root / "group").exists()
 
 
 def test_reads_right_after_a_change_are_complete(
@@ -201,6 +223,7 @@ def _getdents(directory: Path) -> list[tuple[str, int]]:
     return entries
 
 
+@pytest.mark.parametrize("mounted", [True], indirect=True)
 def test_getdents_returns_types_across_pages_and_refreshes_on_reopen(
     mounted: tuple[Path, Path],
 ) -> None:
@@ -225,12 +248,12 @@ def test_getdents_returns_types_across_pages_and_refreshes_on_reopen(
     assert _getdents(raw) == [*before, (f"{offset:020d}.tfrecord", _DT_REG)]
 
 
+@pytest.mark.parametrize("mounted", [True], indirect=True)
 def test_scandir_lists_names_in_lexical_order_after_append(
     mounted: tuple[Path, Path],
 ) -> None:
     """The real mount sorts final names without grouping files by type."""
     event, run = mounted
-    (event.parent.parent / "a_run").mkdir()
     earlier_source = event.with_name("events.out.tfevents.earlier")
     image = (
         Path(__file__).parent / "data/producer-cases/plugins/assets/sprite.png"
@@ -253,8 +276,6 @@ def test_scandir_lists_names_in_lexical_order_after_append(
     scalars = run / "scalars"
     images = run / "images" / "steps"
     assert listing(run.parent) == [
-        ("a_run", True),
-        ("llms.txt", False),
         ("run_a", True),
     ]
     assert listing(run / "raw") == [(earlier_source.name, True), (event.name, True)]
@@ -278,3 +299,78 @@ def test_scandir_lists_names_in_lexical_order_after_append(
         *before,
     ]
     assert listing(images) == [("1000000.png", False), ("999999.png", False)]
+
+
+def test_background_mount_returns_while_newest_log_is_blocked(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    mountpoint = tmp_path / "mount"
+    mountpoint.mkdir()
+    events = [
+        source / f"{name}/events.out.tfevents.{suffix}"
+        for name, suffix in (
+            ("older", "older"),
+            ("group/run", "sibling"),
+            ("group/run", "newest"),
+        )
+    ]
+    for step, event in enumerate(events, 1):
+        event.parent.mkdir(parents=True, exist_ok=True)
+        _append(event, step)
+        ns = step * 1_000_000_000
+        os.utime(event, ns=(ns, ns))
+
+    script = """
+import sys
+import time
+from pathlib import Path
+
+from tboardfs import main
+from tboardfs.mount_index import _RunData
+
+source, mount, trace, proceed = map(Path, sys.argv[1:])
+parse = _RunData.parse_event_file
+
+def gated(path, **kwargs):
+    with trace.open("a") as handle:
+        print(path.relative_to(source), file=handle)
+    if path.name.endswith(".newest"):
+        deadline = time.monotonic() + 30
+        while not proceed.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+    return parse(path, **kwargs)
+
+_RunData.parse_event_file = staticmethod(gated)
+main([str(source), str(mount)])
+"""
+    trace = tmp_path / "parsed"
+    proceed = tmp_path / "proceed"
+    try:
+        with (tmp_path / "mount.log").open("w") as output:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    script,
+                    *map(str, (source, mountpoint, trace, proceed)),
+                ],
+                check=True,
+                timeout=MOUNT_TIMEOUT_SECONDS,
+                stderr=output,
+            )
+        assert mountpoint.is_mount()
+        deadline = time.monotonic() + MOUNT_TIMEOUT_SECONDS
+        while not trace.exists() or not trace.stat().st_size:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert trace.read_text().splitlines() == [str(events[2].relative_to(source))]
+        assert (mountpoint / "older/scalars/loss.json").is_file()
+        proceed.touch()
+        rows = json.loads((mountpoint / "group/run/scalars/loss.json").read_bytes())
+        assert [row["step"] for row in rows] == [2, 3]
+        assert trace.read_text().splitlines() == [
+            str(event.relative_to(source)) for event in (events[2], *events[:2])
+        ]
+    finally:
+        proceed.touch()
+        if mountpoint.is_mount():
+            subprocess.run([str(FUSERMOUNT), "-u", str(mountpoint)], check=True)

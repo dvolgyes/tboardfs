@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import tboardfs.indexer
-from tboardfs import FIXED_TABS, TensorBoardFS, find_tensorboard_files, parse_file
+from tboardfs import TensorBoardFS, find_tensorboard_files, parse_file
 from tboardfs.classify import detect_extension
 from tboardfs.crc32c import masked_crc32c
 from tboardfs.file_tree import SingleEventTree
@@ -280,7 +280,7 @@ def test_parse_file_skips_plugin_binary_without_blob(tmp_path: Path) -> None:
     fs = TensorBoardFS(tmp_path, step_digits=3)
 
     assert result["binary_entries"] == []
-    assert fs.readdir("/meshes") == [".", ".."]
+    assert "meshes" not in fs.readdir("/")
 
 
 def test_parse_file_reads_integer_tensor_scalars(tmp_path: Path) -> None:
@@ -442,13 +442,13 @@ def test_parse_file_rejects_truncated_record(tmp_path: Path) -> None:
         parse_file(path)
 
 
-def test_filesystem_lists_fixed_tabs_for_empty_source(tmp_path: Path) -> None:
-    """Empty sources still expose fixed top-level tabs."""
+def test_filesystem_lists_no_tabs_for_empty_source(tmp_path: Path) -> None:
+    """Empty sources expose neither typed tabs nor a guide."""
     fs = TensorBoardFS(tmp_path)
 
     listing = fs.readdir("/")
 
-    assert sorted(listing) == sorted([".", "..", "llms.txt", *FIXED_TABS])
+    assert listing == [".", ".."]
 
 
 def test_filesystem_exposes_nested_scalar_formats(tmp_path: Path) -> None:
@@ -625,7 +625,7 @@ def test_filesystem_empty_source_does_not_scan_working_directory(
     monkeypatch.chdir(cwd)
     fs = TensorBoardFS(source)
 
-    assert "trace.json" not in fs.readdir("/profile")
+    assert "profile" not in fs.readdir("/")
 
 
 def test_filesystem_sidecars_stay_with_their_nested_run(tmp_path: Path) -> None:
@@ -639,7 +639,7 @@ def test_filesystem_sidecars_stay_with_their_nested_run(tmp_path: Path) -> None:
     trace.write_text("child-trace")
     fs = TensorBoardFS(tmp_path)
 
-    assert "trace.json" not in fs.readdir("/profile")
+    assert "profile" not in fs.readdir("/")
     assert fs.read("/child/profile/trace.json", 1000, 0) == b"child-trace"
 
 
@@ -970,7 +970,7 @@ def test_payload_checksum_failure_keeps_live_prefix(tmp_path: Path) -> None:
         TFRecordError, match=rf"payload checksum mismatch at offset {len(good)}"
     ):
         SingleEventTree(path)
-    fs = TensorBoardFS(tmp_path)
+    fs = TensorBoardFS(tmp_path, raw=True)
     assert [
         row["step"] for row in json.loads(fs.read("/scalars/loss.json", 10000, 0))
     ] == [1]
@@ -1016,7 +1016,9 @@ def test_raw_handle_retains_original_frame_across_replacement(tmp_path: Path) ->
     path = tmp_path / "events.out.tfevents"
     before, after = _loss_record(1), _loss_record(2)
     path.write_bytes(before)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
+    fs = TensorBoardFS(
+        tmp_path, refresh_age_seconds=0, source_check_seconds=0, raw=True
+    )
     name = f"/raw/{path.name}/{0:020d}.tfrecord"
     handle = fs.open(name, os.O_RDONLY)
     try:

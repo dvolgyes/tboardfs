@@ -151,5 +151,6 @@ def test_run_metadata_and_separate_v1_tools(fs: TensorBoardFS) -> None:
     np.testing.assert_array_equal(
         np.frombuffer(value.tensor.tensor_content, dtype="<f4"), [1, 4, 9]
     )
-    assert fs.readdir("/tfdbg", None)[2:] == []
-    assert fs.readdir("/profile", None)[2:] == []
+    root = fs.readdir("/")
+    assert "tfdbg" not in root
+    assert "profile" not in root
