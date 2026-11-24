@@ -4,6 +4,7 @@ from functools import partial
 from typing import Any
 
 from tboardfs.constants import FIXED_TABS
+from tboardfs.export_formats import _ExportFormats
 from tboardfs.file_times import FileTimes
 from tboardfs.graph_files import GraphFiles
 from tboardfs.histogram_files import add_histogram_files
@@ -27,14 +28,14 @@ class RunTree:
     @staticmethod
     def build(
         run: RunCache,
-        scalar_formats: tuple[str, ...],
+        formats: _ExportFormats,
         step_digits: int,
         *,
         raw: bool = True,
     ) -> dict[str, Any]:
         """Build a complete run tree, including sidecars when present."""
         run_node = _DirectoryNode()
-        _Projection.add_run_files(run_node, run, scalar_formats, step_digits, raw=raw)
+        _Projection.add_run_files(run_node, run, formats, step_digits, raw=raw)
         FileTimes.stamp_dirs(run_node)
         return run_node
 
@@ -44,7 +45,7 @@ class RunTree:
         run: RunCache,
         before: EventFileCache,
         after: EventFileCache,
-        scalar_formats: tuple[str, ...],
+        formats: _ExportFormats,
         step_digits: int,
         *,
         raw: bool = True,
@@ -74,13 +75,15 @@ class RunTree:
                 before,
                 scalar_tags,
                 hist_tags,
-                scalar_formats,
+                formats,
                 step_digits,
             )
         ):
             return None
         files.add_binaries((binaries,), step_digits)
-        consumed = add_typed_plugin_files(files, entries, {}, step_digits)
+        consumed = add_typed_plugin_files(
+            files, entries, {}, step_digits, pr_curve_npy=formats.pr_curve_npy
+        )
         _Projection.add_json_files(files, entries, step_digits, consumed)
         GraphFiles.add_summaries(files, binaries, step_digits)
 
@@ -111,7 +114,7 @@ class _Projection:
         before: EventFileCache,
         scalar_tags: set[str],
         hist_tags: set[str],
-        scalar_formats: tuple[str, ...],
+        formats: _ExportFormats,
         step_digits: int,
     ) -> bool:
         """Project dirty tables only when parser chunks match the unpurged view."""
@@ -125,7 +128,7 @@ class _Projection:
         epochs = _TableMerge.merge_run_tables(caches, tags={"epoch"}).get("epoch")
         align_all = "epoch" in scalar_tags
         if not _Projection.project_scalars(
-            files, tree, caches, scalar_tags, scalar_formats, epochs
+            files, tree, caches, scalar_tags, formats.scalars, epochs
         ):
             return False
         dirty = (
@@ -134,7 +137,7 @@ class _Projection:
             else hist_tags
         )
         return not dirty or add_histogram_files(
-            files, caches, epochs, scalar_formats, step_digits, tags=dirty
+            files, caches, epochs, formats.histograms, step_digits, tags=dirty
         )
 
     @staticmethod
@@ -216,7 +219,7 @@ class _Projection:
     def add_run_files(
         run_node: dict[str, Any],
         run: RunCache,
-        scalar_formats: tuple[str, ...],
+        formats: _ExportFormats,
         step_digits: int,
         *,
         raw: bool,
@@ -225,12 +228,14 @@ class _Projection:
         caches = _Projection.sorted_file_caches(run)
         scalars = _Projection.merged_scalars(caches)
         files = RunFiles()
-        _Projection.add_scalar_files(files, caches, scalars, scalar_formats)
+        _Projection.add_scalar_files(files, caches, scalars, formats.scalars)
         epochs = scalars.get("epoch")
-        _ = add_histogram_files(files, caches, epochs, scalar_formats, step_digits)
+        _ = add_histogram_files(files, caches, epochs, formats.histograms, step_digits)
         files.add_binaries((cache.binaries for cache in caches), step_digits)
         entries = [entry for cache in caches for entry in cache.json_entries]
-        consumed = add_typed_plugin_files(files, entries, scalars, step_digits)
+        consumed = add_typed_plugin_files(
+            files, entries, scalars, step_digits, pr_curve_npy=formats.pr_curve_npy
+        )
         Open3DFiles.add(files, entries, run.sidecars, step_digits)
         _Projection.add_json_files(files, entries, step_digits, consumed)
         GraphFiles.add(files, caches, step_digits)

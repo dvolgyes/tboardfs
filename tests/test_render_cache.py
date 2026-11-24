@@ -296,7 +296,12 @@ def test_concurrent_readers_see_whole_versions_while_runs_grow(
     """Cached and fresh renders never mix versions under concurrent reads."""
     path = tmp_path / EVENTS
     _append(path, 0)
-    fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
+    fs = TensorBoardFS(
+        tmp_path,
+        refresh_age_seconds=0,
+        source_check_seconds=0,
+        scalar_formats="npz",
+    )
     stop = threading.Event()
 
     def writer() -> None:

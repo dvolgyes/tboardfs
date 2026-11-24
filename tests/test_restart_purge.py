@@ -12,6 +12,7 @@ import pytest
 from test_incremental_parse import PNG, _contents, _frame
 
 from tboardfs import TensorBoardFS
+from tboardfs.export_formats import _ExportFormats
 from tboardfs.indexer import _EventIndexer
 from tboardfs.model import EventFileCache, RunCache
 from tboardfs.proto import compat_pb2
@@ -114,7 +115,7 @@ def test_run_tree_purges_once_and_reuses_single_file_columns(
         return purged
 
     monkeypatch.setattr(_RestartPurge, "purge", staticmethod(record_purge))
-    tree = RunTree.build(run, ("csv",), 6)
+    tree = RunTree.build(run, _ExportFormats(scalars=("csv",)), 6)
     series = tree["children"]["scalars"]["children"]["loss.csv"]["series"]
     assert len(snapshots) == 1
     assert series["value"] is snapshots[0][0].scalars["loss"]["value"]

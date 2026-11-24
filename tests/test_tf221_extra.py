@@ -34,7 +34,7 @@ ROOT = Path(__file__).parent / "data" / "producer-cases" / "tf221-extra"
     ],
 )
 def test_graph_precision_recall(name: str, rows: list[list[float]]) -> None:
-    fs = TensorBoardFS(ROOT / "graph")
+    fs = TensorBoardFS(ROOT / "graph", pr_curve_npy=True)
     path = f"/pr_curves/{name}/pr_curves/000007"
     table = json.loads(fs.read(f"{path}.json", 4096, 0))
     fields = (

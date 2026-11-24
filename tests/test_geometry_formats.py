@@ -43,7 +43,7 @@ FIELDS = (
     ],
 )
 def test_writer_pr_curve(tag: str, expected: list[list[float]]) -> None:
-    fs = TensorBoardFS(RUN)
+    fs = TensorBoardFS(RUN, pr_curve_npy=True)
     prefix = f"/pr_curves/{tag}/000004"
     tensor = np.load(BytesIO(fs.read(f"{prefix}.npy", 8192, 0)))
     np.testing.assert_array_equal(
@@ -91,7 +91,7 @@ def test_tensorboardx_mesh_has_float_components_and_integer_geometry() -> None:
 
 
 def test_raw_histogram_and_interpolated_distribution() -> None:
-    fs = TensorBoardFS(RUN, scalar_formats=("csv", "npz"))
+    fs = TensorBoardFS(RUN, histogram_formats=("csv", "npz"))
     with np.load(BytesIO(fs.read("/histograms/interval/000004.npz", 8192, 0))) as data:
         np.testing.assert_array_equal(data["bucket_left"], [0.0])
         np.testing.assert_array_equal(data["bucket_right"], [2.0])

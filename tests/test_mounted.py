@@ -158,7 +158,6 @@ def test_directory_hints_report_virtual_types_and_keep_listing_errors(
         (".", S_IFDIR, 0),
         ("..", S_IFDIR, 0),
         ("loss.json", S_IFREG, 0),
-        ("loss.npz", S_IFREG, 0),
         ("loss.tsv", S_IFREG, 0),
     ]
     for path, code in ((LOSS, ENOTDIR), ("/missing", ENOENT)):

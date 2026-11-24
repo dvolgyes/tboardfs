@@ -8,7 +8,13 @@ import click
 from loguru import logger
 
 from tboardfs._mount_session import mount
-from tboardfs.cli_options import LOGLEVEL, SCALAR_FORMAT, STEP_DIGITS
+from tboardfs.cli_options import (
+    HISTOGRAM_FORMAT,
+    LOGLEVEL,
+    PR_CURVE_NPY,
+    SCALAR_FORMAT,
+    STEP_DIGITS,
+)
 from tboardfs.constants import (
     DEFAULT_CACHE_SIZE_MB,
     DEFAULT_DISCOVERY_SECONDS,
@@ -45,6 +51,8 @@ from tboardfs.stdlib_logging import StdlibToLoguru
     ),
 )
 @SCALAR_FORMAT
+@HISTOGRAM_FORMAT
+@PR_CURVE_NPY
 @click.option(
     "--cache-size-mb",
     type=click.IntRange(min=0),
@@ -120,6 +128,8 @@ def main(
         refresh_age_seconds=cast(float, params["refresh_age_seconds"]),
         source_check_seconds=cast(float, params["source_check_seconds"]),
         scalar_formats=cast(str, params["scalar_format"]),
+        histogram_formats=cast(str, params["histogram_format"]),
+        pr_curve_npy=cast(bool, params["pr_curve_npy"]),
         log_to_screen=foreground,
         cache_size_mb=cast(int, params["cache_size_mb"]),
         owner=(0, 0) if params["root_owner"] else (os.getuid(), os.getgid()),

@@ -9,7 +9,7 @@ from urllib.parse import unquote
 import numpy as np
 import xxhash
 
-from tboardfs.constants import SCALAR_FORMATS, TENSORBOARD_EVENT_GLOB
+from tboardfs.constants import TENSORBOARD_EVENT_GLOB
 from tboardfs.event_source import EventSource
 
 _UNSAFE_PATH_CHARS = frozenset(
@@ -335,25 +335,3 @@ class _Paths:
         if isinstance(step, float) and step.is_integer():
             return f"{int(step):0{digits}d}"
         return str(step)
-
-    @staticmethod
-    def normalize_formats(
-        formats: str | list[str] | tuple[str, ...],
-    ) -> tuple[str, ...]:
-        """Normalize comma-separated scalar export format names.
-
-        Raises:
-            ValueError: A name is not one of SCALAR_FORMATS.
-        """
-        items = formats.split(",") if isinstance(formats, str) else list(formats)
-        normalized = []
-        for item in items:
-            fmt = item.strip().lower().lstrip(".")
-            if fmt and fmt not in SCALAR_FORMATS:
-                raise ValueError(
-                    f"unsupported scalar format {fmt!r}; "
-                    f"use one or more of {', '.join(SCALAR_FORMATS)}"
-                )
-            if fmt and fmt not in normalized:
-                normalized.append(fmt)
-        return tuple(normalized)

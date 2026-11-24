@@ -66,9 +66,8 @@ def test_tensorboardx_scalars_and_tables_expose_clean_representations() -> None:
     """TensorBoardX scalar and table fixtures expose typed virtual files."""
     fs = TensorBoardFS(FIXTURE_ROOT, step_digits=3)
 
-    assert fs.readdir("/tensorboardx/scalars/train")[-3:] == [
+    assert fs.readdir("/tensorboardx/scalars/train")[2:] == [
         "f1_score.json",
-        "f1_score.npz",
         "f1_score.tsv",
     ]
     assert "loss.json" in fs.readdir("/tensorboardx/scalars")
@@ -77,7 +76,7 @@ def test_tensorboardx_scalars_and_tables_expose_clean_representations() -> None:
     assert [row["step"] for row in loss_rows] == [1, 2, 3]
     assert [row["epoch"] for row in loss_rows] == [0.0, 1.0, 2.0]
     assert "001.npz" not in fs.readdir("/tensorboardx/pr_curves/quality/pr")
-    assert "001.npy" in fs.readdir("/tensorboardx/pr_curves/quality/pr")
+    assert "001.npy" not in fs.readdir("/tensorboardx/pr_curves/quality/pr")
     pr_rows = json.loads(
         fs.read("/tensorboardx/pr_curves/quality/pr/001.json", 1 << 20, 0)
     )
@@ -223,5 +222,5 @@ def test_tensorboard_meshes_expose_clean_representations() -> None:
     assert mesh_archive["faces"].shape == (1, 12, 3)
     assert mesh_archive["colors"].shape == (1, 8, 3)
     assert "001.npz" not in fs.readdir("/tensorboard/pr_curves/quality/pr")
-    assert "001.npy" in fs.readdir("/tensorboard/pr_curves/quality/pr")
+    assert "001.npy" not in fs.readdir("/tensorboard/pr_curves/quality/pr")
     assert "001.npy" in fs.readdir("/tensorboard/tensors/activations")

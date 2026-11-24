@@ -16,7 +16,7 @@ def _mount(tmp_path: Path, tensor: compat_pb2.TensorProto) -> TensorBoardFS:
     event = compat_pb2.Event(step=1, wall_time=3.0)
     event.summary.value.add(tag="x").tensor.CopyFrom(tensor)
     (tmp_path / "events.out.tfevents.1.host").write_bytes(_frame(event))
-    return TensorBoardFS(tmp_path, scalar_formats="json,npz")
+    return TensorBoardFS(tmp_path, scalar_formats="json,tsv,npz")
 
 
 @pytest.mark.parametrize(

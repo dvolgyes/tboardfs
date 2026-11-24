@@ -8,6 +8,7 @@ from loguru import logger
 from test_incremental_parse import _files, _frame
 
 from tboardfs import TensorBoardFS
+from tboardfs.export_formats import _ExportFormats
 from tboardfs.file_tree import SingleEventTree
 from tboardfs.model import RunCache, SidecarEntry
 from tboardfs.paths import _DirectoryNode
@@ -236,7 +237,9 @@ def test_equal_sidecar_leaves_and_plugin_roots(tmp_path: Path, reverse: bool) ->
             )
         )
     run = RunCache((), sidecars=tuple(entries))
-    nodes = RunTree.build(run, ("json",), 6)["children"]["profile"]["children"]
+    nodes = RunTree.build(run, _ExportFormats(scalars=("json",)), 6)["children"][
+        "profile"
+    ]["children"]
     assert render_node(nodes["trace.txt"]) == b"plugins/profile"
     assert render_node(nodes["trace.txt~2"]) == b"profile"
     fs = TensorBoardFS(tmp_path)

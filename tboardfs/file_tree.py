@@ -7,7 +7,8 @@ from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
-from tboardfs.constants import DEFAULT_SCALAR_FORMATS
+from tboardfs.constants import DEFAULT_HISTOGRAM_FORMATS, DEFAULT_SCALAR_FORMATS
+from tboardfs.export_formats import FormatList, _ExportFormats
 from tboardfs.filesystem import TensorBoardFS
 from tboardfs.host_publish import OutputPublisher, _OutputConflictError
 from tboardfs.indexer import _EventIndexer
@@ -70,22 +71,24 @@ class SingleEventTree:
         source: str | Path,
         *,
         step_digits: int = 6,
-        scalar_format: str = "json,tsv,npz",
+        scalar_format: FormatList = DEFAULT_SCALAR_FORMATS,
+        histogram_format: FormatList = DEFAULT_HISTOGRAM_FORMATS,
+        pr_curve_npy: bool = False,
     ) -> None:
         source_path = Path(source)
-        scalar_formats = (
-            _Paths.normalize_formats(scalar_format) or DEFAULT_SCALAR_FORMATS
-        )
         if source_path.is_dir():
             filesystem = TensorBoardFS(
                 source_path,
                 step_digits=step_digits,
-                scalar_formats=scalar_formats,
+                scalar_formats=scalar_format,
+                histogram_formats=histogram_format,
+                pr_curve_npy=pr_curve_npy,
                 cache_size_mb=0,
                 raw=True,
             )
             self.tree = filesystem.virtual_tree()
             return
+        formats = _ExportFormats.parse(scalar_format, histogram_format, pr_curve_npy)
         run = RunCache(())
         cache = _EventIndexer.parse_event_file(
             source_path, ignore_truncated=True, strict_framing=True
@@ -93,7 +96,7 @@ class SingleEventTree:
         if cache.progress.processed_pos == 0:
             raise _NoEventError(source_path)
         run.files[source_path] = cache
-        self.tree = RunTree.build(run, scalar_formats, step_digits)
+        self.tree = RunTree.build(run, formats, step_digits)
 
     @classmethod
     def from_framing(cls, source: str | Path) -> "SingleEventTree":

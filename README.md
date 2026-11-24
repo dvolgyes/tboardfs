@@ -25,7 +25,7 @@ $ ls mnt
 experiment-1  experiment-2
 
 $ ls mnt/experiment-1/scalars/train
-accuracy.json  accuracy.npz  accuracy.tsv  loss.json  loss.npz  loss.tsv
+accuracy.json  accuracy.tsv  loss.json  loss.tsv
 
 $ head -3 mnt/experiment-1/scalars/train/loss.tsv
 epoch   step    wall_time   relative_time   value
@@ -112,7 +112,9 @@ The mount indexes other event files when you access their run's contents.
 | Option | Default | Meaning |
 | -- | -- | -- |
 | `-r`, `--raw` | off | Include the raw TFRecord view alongside typed files. |
-| `--scalar-format LIST` | `json,tsv,npz` | Comma-separated table formats for scalars, histograms and distributions: `json`, `tsv`, `csv`, `npz`. |
+| `--scalar-format LIST` | `json,tsv` | Select the formats for scalar tables only. |
+| `--histogram-format LIST` | `json,tsv,npz` | Select the formats for both histogram bucket tables and distribution percentile tables. |
+| `--pr-curve-npy` | off | Add NPY files for PR curves alongside JSON and TSV. |
 | `--step-digits N` | `6` | Zero-padding width of step file names, from 1 to 20. |
 | `--refresh-age-seconds S` | `150` | Minimum interval between local searches for new files and directories (`0` to search on each access, `inf` to freeze each directory after its first scan). |
 | `--source-check-seconds S` | `120` | Minimum interval between status checks of known event files in an accessed run. Accepts finite, nonnegative seconds; `0` checks on every access. |
@@ -124,6 +126,9 @@ The mount indexes other event files when you access their run's contents.
 | `--foreground` / `--background` | `--background` | Stay in the terminal, or detach. |
 | `--logfile FILE` | none | Write the log to FILE. |
 | `--loglevel LEVEL` | `INFO` | `trace`, `debug`, `info`, `success`, `warning`, `error`, or `critical`, in any case. |
+
+Each of `--scalar-format` and `--histogram-format` replaces its default with a comma-separated list of `json`, `tsv`,
+`csv` and `npz`.
 
 In the background, the log goes only to `--logfile`. Without `--logfile`, you do not see the warnings about damaged
 data; use `--logfile` or `--foreground` when you need them.
@@ -158,9 +163,14 @@ SOURCE is one event file, a run directory, or a log directory.
 | `get SOURCE VPATH -o OUTPUT` | Write one virtual file to OUTPUT. `-o -` writes it to stdout. |
 | `copy-all SOURCE OUTDIR` | Copy the selected view into OUTDIR. |
 
-All three commands accept `--scalar-format` and `--step-digits`, with the same meaning as in filesystem mode. `list` and
-`copy-all` default to typed files. Use `--view raw` for complete frames or `--view both` for both views. `list` with an
-explicit raw prefix and `get` with an explicit raw path can select a frame directly.
+`list`, `get` and `copy-all` accept `--scalar-format`, `--histogram-format`, `--pr-curve-npy` and `--step-digits` with
+the same defaults and behavior as in filesystem mode.
+
+`list` and `copy-all` default to typed files.
+
+Use `--view raw` for complete frames or `--view both` for both views.
+
+`list` with an explicit raw prefix and `get` with an explicit raw path can select a frame directly.
 
 For a single event file, `tboardfs-file --framing-only list SOURCE` lists raw frames without decoding summaries or
 calling the payload classifier.
@@ -249,10 +259,10 @@ components.
 
 | Tab | Files | Content |
 | -- | -- | -- |
-| `scalars` | `<tag>.json` `.tsv` `.csv` `.npz` | One table per tag, all steps |
-| `histograms` | `<tag>/<step>.json` `.tsv` `.csv` `.npz` | The buckets of one histogram |
-| `distributions` | `<tag>/<step>.json` `.tsv` `.csv` `.npz` | The 9 percentiles of the Distributions tab |
-| `pr_curves` | `<tag>/<step>.json` `.tsv` `.npy` | One row per threshold |
+| `scalars` | `<tag>.json`, `.tsv` (`.csv` and `.npz` opt-in) | One table per tag, all steps |
+| `histograms` | `<tag>/<step>.json`, `.tsv`, `.npz` (`.csv` opt-in) | The buckets of one histogram |
+| `distributions` | `<tag>/<step>.json`, `.tsv`, `.npz` (`.csv` opt-in) | The 9 percentiles of the Distributions tab |
+| `pr_curves` | `<tag>/<step>.json`, `.tsv` (`.npy` opt-in) | One row per threshold |
 | `images` | `<tag>/<step>.png` (or `.jpg`, ...) | The stored image |
 | `audio` | `<tag>/<step>.wav` (or other type) | The stored audio clip |
 | `videos` | `<tag>/<step>.gif` (or other type) | Animated GIFs and videos |
@@ -268,8 +278,20 @@ components.
 | `plugins/Open3D` | `<tag>/<step>.manifest.json`, `~assets/*.msgpack` | Native geometry ranges, references to earlier steps and original sidecar bytes |
 | `raw` (opt-in on mounts) | `<event-file>/<20-digit-byte-offset>.tfrecord` | One complete frame: header, payload and footer, in source order |
 
-`--scalar-format` selects the table formats of scalars, histograms and distributions. The default is `json,tsv,npz`;
-`csv` is also available.
+### Migrating format options
+
+`--scalar-format` previously selected formats for scalars, histograms and distributions.
+
+To keep an explicit format list for all three views, pass the same list to both `--scalar-format` and
+`--histogram-format`.
+
+For example, replace `--scalar-format csv` with `--scalar-format csv --histogram-format csv`.
+
+If you previously relied on defaults, use `--scalar-format json,tsv,npz` to retain scalar NPZ files.
+
+The default histogram and distribution formats have not changed.
+
+Use `--pr-curve-npy` to retain PR-curve NPY files.
 
 ### Scalars
 
@@ -311,9 +333,13 @@ For common NPZ shapes, the mount reuses a NumPy-generated archive layout, not da
 ### PR Curves
 
 The `.json` and `.tsv` tables have one row per threshold, with the columns `threshold`, `true_positives`,
-`false_positives`, `true_negatives`, `false_negatives`, `precision` and `recall`. The thresholds are evenly spaced in
-[0, 1], as in TensorBoard. The `.npy` file is the stored `[6, N]` tensor. A tensor of another shape has the columns
-`value_0`, `value_1`, and so on.
+`false_positives`, `true_negatives`, `false_negatives`, `precision` and `recall`.
+
+The thresholds are evenly spaced in [0, 1], as in TensorBoard.
+
+A tensor of another shape has the columns `value_0`, `value_1`, and so on.
+
+With `--pr-curve-npy`, the `.npy` file contains the stored tensor, normally shaped `[6, N]`.
 
 ### Images, Audio and Videos
 
@@ -496,6 +522,12 @@ df = pd.read_csv("mnt/run/scalars/loss.tsv", sep="\t")
 ### NumPy
 
 An `.npz` table has one array per column, with the stored types: float32 values stay float32.
+
+Include `npz` in the scalar format list when mounting the logs for this example:
+
+```bash
+tboardfs --scalar-format json,tsv,npz runs mnt
+```
 
 ```python
 import numpy as np

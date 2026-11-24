@@ -2,16 +2,22 @@
 
 import click
 
-from tboardfs.constants import LOG_LEVELS, MAX_STEP_DIGITS, SCALAR_FORMATS
-from tboardfs.paths import _Paths
+from tboardfs.constants import (
+    DEFAULT_HISTOGRAM_FORMATS,
+    DEFAULT_SCALAR_FORMATS,
+    LOG_LEVELS,
+    MAX_STEP_DIGITS,
+    TABLE_FORMATS,
+)
+from tboardfs.export_formats import normalize_formats
 
 
-def _scalar_formats(_ctx: click.Context, _param: click.Parameter, value: str) -> str:
+def _table_formats(_ctx: click.Context, param: click.Parameter, value: str) -> str:
     """Refuse unsupported format names before a tree is built."""
     try:
-        _Paths.normalize_formats(value)
+        normalize_formats(value, (param.name or "").removesuffix("_format"))
     except ValueError as error:
-        raise click.BadParameter(str(error)) from error
+        raise click.BadParameter(str(error), param=param) from error
     return value
 
 
@@ -23,11 +29,31 @@ STEP_DIGITS = click.option(
     help="Zero-padding width of step file names.",
 )
 SCALAR_FORMAT = click.option(
+    "-S",
     "--scalar-format",
-    default="json,tsv,npz",
+    metavar="LIST",
+    default=",".join(DEFAULT_SCALAR_FORMATS),
     show_default=True,
-    callback=_scalar_formats,
-    help=f"Comma-separated table formats: {', '.join(SCALAR_FORMATS)}.",
+    callback=_table_formats,
+    help=f"Replace scalar formats with a comma-separated list: {', '.join(TABLE_FORMATS)}.",
+)
+HISTOGRAM_FORMAT = click.option(
+    "-H",
+    "--histogram-format",
+    metavar="LIST",
+    default=",".join(DEFAULT_HISTOGRAM_FORMATS),
+    show_default=True,
+    callback=_table_formats,
+    help=(
+        "Replace the formats for both histograms and distributions with a "
+        f"comma-separated list: {', '.join(TABLE_FORMATS)}."
+    ),
+)
+PR_CURVE_NPY = click.option(
+    "-P",
+    "--pr-curve-npy",
+    is_flag=True,
+    help="Add NPY files for PR curves. JSON and TSV are always available.",
 )
 LOGLEVEL = click.option(
     "--loglevel",

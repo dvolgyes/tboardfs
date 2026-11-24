@@ -52,7 +52,11 @@ def mounted(
     # A file, not a pipe: an unread pipe would block the logging mount.
     with log.open("w") as log_handle:
         process = _start_mount(
-            source, mountpoint, log_handle, raw=getattr(request, "param", False)
+            source,
+            mountpoint,
+            log_handle,
+            raw=getattr(request, "param", False) in (True, "raw-npz"),
+            scalar_npz=getattr(request, "param", False) in ("npz", "raw-npz"),
         )
     run = mountpoint / "run_a"
     deadline = time.monotonic() + MOUNT_TIMEOUT_SECONDS
@@ -77,7 +81,12 @@ def mounted(
 
 
 def _start_mount(
-    source: Path, mountpoint: Path, log_handle: TextIO, *, raw: bool
+    source: Path,
+    mountpoint: Path,
+    log_handle: TextIO,
+    *,
+    raw: bool,
+    scalar_npz: bool = False,
 ) -> "subprocess.Popen[bytes]":
     return subprocess.Popen(
         [
@@ -91,6 +100,7 @@ def _start_mount(
             "0",
             "--source-check-seconds",
             "0",
+            *(["--scalar-format", "json,tsv,npz"] if scalar_npz else []),
             *(["--raw"] if raw else []),
         ],
         stderr=log_handle,
@@ -135,6 +145,7 @@ def test_mount_lists_only_populated_directories(mounted: tuple[Path, Path]) -> N
     assert not (root / "group").exists()
 
 
+@pytest.mark.parametrize("mounted", ["npz"], indirect=True)
 def test_reads_right_after_a_change_are_complete(
     mounted: tuple[Path, Path],
 ) -> None:
@@ -153,6 +164,7 @@ def test_reads_right_after_a_change_are_complete(
             assert end == len(handle.read())
 
 
+@pytest.mark.parametrize("mounted", ["npz"], indirect=True)
 def test_a_private_memory_map_gives_the_bytes_of_a_read(
     mounted: tuple[Path, Path],
 ) -> None:
@@ -169,6 +181,7 @@ def test_a_private_memory_map_gives_the_bytes_of_a_read(
     assert raised.value.errno == errno.ENODEV
 
 
+@pytest.mark.parametrize("mounted", ["npz"], indirect=True)
 def test_concurrent_readers_see_whole_versions_while_a_run_grows(
     mounted: tuple[Path, Path],
 ) -> None:
@@ -223,7 +236,7 @@ def _getdents(directory: Path) -> list[tuple[str, int]]:
     return entries
 
 
-@pytest.mark.parametrize("mounted", [True], indirect=True)
+@pytest.mark.parametrize("mounted", ["raw-npz"], indirect=True)
 def test_getdents_returns_types_across_pages_and_refreshes_on_reopen(
     mounted: tuple[Path, Path],
 ) -> None:
@@ -248,7 +261,7 @@ def test_getdents_returns_types_across_pages_and_refreshes_on_reopen(
     assert _getdents(raw) == [*before, (f"{offset:020d}.tfrecord", _DT_REG)]
 
 
-@pytest.mark.parametrize("mounted", [True], indirect=True)
+@pytest.mark.parametrize("mounted", ["raw-npz"], indirect=True)
 def test_scandir_lists_names_in_lexical_order_after_append(
     mounted: tuple[Path, Path],
 ) -> None:

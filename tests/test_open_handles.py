@@ -48,12 +48,18 @@ def _read_in_chunks(fs: TensorBoardFS, path: str, handle: int, chunk: int) -> by
 
 
 def _growing_fs(
-    tmp_path: Path, *, source_check_seconds: float = 0
+    tmp_path: Path,
+    *,
+    source_check_seconds: float = 0,
+    scalar_formats: str = "json,tsv",
 ) -> tuple[TensorBoardFS, Path]:
     event = tmp_path / "events.out.tfevents"
     _append(event, *range(3))
     fs = TensorBoardFS(
-        tmp_path, refresh_age_seconds=0, source_check_seconds=source_check_seconds
+        tmp_path,
+        refresh_age_seconds=0,
+        source_check_seconds=source_check_seconds,
+        scalar_formats=scalar_formats,
     )
     return fs, event
 
@@ -101,7 +107,7 @@ def test_handles_opened_at_different_times_stay_apart(tmp_path: Path) -> None:
 
 def test_binary_export_stays_loadable_while_the_run_grows(tmp_path: Path) -> None:
     """An npz read in chunks across a change is one complete archive."""
-    fs, event = _growing_fs(tmp_path)
+    fs, event = _growing_fs(tmp_path, scalar_formats="json,tsv,npz")
     path = "/scalars/loss.npz"
     handle = fs.open(path, 0)
     first = fs.read(path, 100, 0, handle)

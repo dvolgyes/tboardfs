@@ -27,6 +27,7 @@ from tboardfs.constants import (
     DEFAULT_SCALAR_FORMATS,
 )
 from tboardfs.errors import fuse_error
+from tboardfs.export_formats import FormatList, _ExportFormats
 from tboardfs.file_attributes import _FileAttributes, _unrendered_size
 from tboardfs.file_times import FileTimes
 from tboardfs.leaf_cache import _CachedLeaf, _Location, _resolve_node
@@ -43,7 +44,7 @@ from tboardfs.mount_index import (
     _RunData,
     _SiblingSnapshot,
 )
-from tboardfs.mount_state import _Directory, _FsState
+from tboardfs.mount_state import _Directory, _FsState, _mount_formats, _MountKeywords
 from tboardfs.node_source import _NodeSource
 from tboardfs.paths import _DirectoryNode, _Paths
 from tboardfs.render_cache import RenderCache, RenderKey
@@ -56,12 +57,6 @@ from tboardfs.verified_span import _VerifiedSpan
 _PARALLEL_MIN_BYTES = 8 << 20
 
 _GUARD_PLAN_LIMIT = 256
-
-
-class _MountKeywords(MountIndexKeywords, total=False):
-    """Optional mount settings supplied as keywords."""
-
-    raw: bool
 
 
 class TensorBoardFS:
@@ -90,11 +85,11 @@ class TensorBoardFS:
     """
 
     _guide: dict[str, Any]
+    _formats: _ExportFormats
     _raw: bool
     source: Path
     step_digits: int
     refresh_age_seconds: float
-    scalar_formats: tuple[str, ...]
     log_to_screen: bool
     owner: tuple[int, int]
     _renders: RenderCache
@@ -108,7 +103,7 @@ class TensorBoardFS:
         *,
         step_digits: int = 6,
         refresh_age_seconds: float = DEFAULT_DISCOVERY_SECONDS,
-        scalar_formats: str | list[str] | tuple[str, ...] = DEFAULT_SCALAR_FORMATS,
+        scalar_formats: FormatList = DEFAULT_SCALAR_FORMATS,
         log_to_screen: bool = False,
         cache_size_mb: int = DEFAULT_CACHE_SIZE_MB,
         owner: tuple[int, int] = (0, 0),
@@ -124,9 +119,7 @@ class TensorBoardFS:
         self._raw = options.pop("raw", False)
         self.step_digits = step_digits
         self.refresh_age_seconds = refresh_age_seconds
-        self.scalar_formats = (
-            _Paths.normalize_formats(scalar_formats) or DEFAULT_SCALAR_FORMATS
-        )
+        self._formats = _mount_formats(scalar_formats, options)
         self.log_to_screen = log_to_screen
         self.owner = owner
         self._renders = RenderCache(cache_size_mb * 1024 * 1024)
@@ -149,6 +142,11 @@ class TensorBoardFS:
         self._run_places = RunPlaces()
         self._state.directories[()] = _Directory()
         self._ensure_run(())
+
+    @property
+    def scalar_formats(self) -> tuple[str, ...]:
+        """Return the enabled scalar export formats."""
+        return self._formats.scalars
 
     @property
     def source_check_seconds(self) -> float:
@@ -433,7 +431,7 @@ class TensorBoardFS:
         cached = self._state.run_trees.get(run.run_parts)
         if cached is not None and cached[0] == run.version:
             return cached[1]
-        tree = RunTree.build(run, self.scalar_formats, self.step_digits, raw=self._raw)
+        tree = RunTree.build(run, self._formats, self.step_digits, raw=self._raw)
         tree["children"]["llms.txt"] = self._guide
         self._state.run_trees[run.run_parts] = (run.version, tree)
         return tree
@@ -746,7 +744,7 @@ class TensorBoardFS:
             run,
             before,
             after,
-            self.scalar_formats,
+            self._formats,
             self.step_digits,
             raw=self._raw,
         )

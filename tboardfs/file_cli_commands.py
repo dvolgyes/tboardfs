@@ -7,7 +7,12 @@ from typing import cast
 import click
 from loguru import logger
 
-from tboardfs.cli_options import SCALAR_FORMAT, STEP_DIGITS
+from tboardfs.cli_options import (
+    HISTOGRAM_FORMAT,
+    PR_CURVE_NPY,
+    SCALAR_FORMAT,
+    STEP_DIGITS,
+)
 from tboardfs.file_tree import SingleEventTree, _CopyError, _NoEventError
 from tboardfs.host_publish import OutputPublisher, _OutputConflictError
 from tboardfs.model import TFRecordError
@@ -26,11 +31,12 @@ def register_file_cli_commands(group: click.Group) -> None:
     @_VIEW
     @STEP_DIGITS
     @SCALAR_FORMAT
-    def list_files(
-        source: str, prefix: str, step_digits: int, scalar_format: str, view: str | None
-    ) -> None:
+    @HISTOGRAM_FORMAT
+    @PR_CURVE_NPY
+    def list_files(**params: object) -> None:
         """Print virtual file paths below PREFIX."""
-        tree, view = _FileCli.open_tree(source, step_digits, scalar_format, view)
+        tree, view = _FileCli.open_tree(cast(str, params["source"]), params)
+        prefix = cast(str, params["prefix"])
         try:
             for path in tree.iter_file_paths(prefix=prefix, view=view):
                 sys.stdout.write(path + "\n")
@@ -45,17 +51,15 @@ def register_file_cli_commands(group: click.Group) -> None:
     @_VIEW
     @STEP_DIGITS
     @SCALAR_FORMAT
-    def get_file(
-        source: str,
-        vpath: str,
-        output: str,
-        force: bool,
-        step_digits: int,
-        scalar_format: str,
-        view: str | None,
-    ) -> None:
+    @HISTOGRAM_FORMAT
+    @PR_CURVE_NPY
+    def get_file(**params: object) -> None:
         """Write one virtual file to OUTPUT."""
-        tree, view = _FileCli.open_tree(source, step_digits, scalar_format, view)
+        source = cast(str, params["source"])
+        vpath = cast(str, params["vpath"])
+        output = cast(str, params["output"])
+        force = cast(bool, params["force"])
+        tree, view = _FileCli.open_tree(source, params)
         try:
             data = tree.read_file(vpath, view=view or "both")
         except FileNotFoundError as error:
@@ -94,6 +98,8 @@ def register_file_cli_commands(group: click.Group) -> None:
     @_VIEW
     @STEP_DIGITS
     @SCALAR_FORMAT
+    @HISTOGRAM_FORMAT
+    @PR_CURVE_NPY
     def copy_all(**params: object) -> None:
         """Copy every virtual file into OUTDIR."""
         force = cast(bool, params["force"])
@@ -101,12 +107,7 @@ def register_file_cli_commands(group: click.Group) -> None:
         if force and skip_existing:
             raise click.UsageError("Use either --force or --skip-existing, not both.")
         existing = "overwrite" if force else "skip" if skip_existing else "fail"
-        tree, view = _FileCli.open_tree(
-            cast(str, params["source"]),
-            cast(int, params["step_digits"]),
-            cast(str, params["scalar_format"]),
-            cast(str | None, params["view"]),
-        )
+        tree, view = _FileCli.open_tree(cast(str, params["source"]), params)
         try:
             copied, skipped = tree.copy_all(
                 cast(str, params["outdir"]),
@@ -130,17 +131,22 @@ class _FileCli:
 
     @staticmethod
     def open_tree(
-        source: str, step_digits: int, scalar_format: str, view: str | None
+        source: str, params: dict[str, object]
     ) -> tuple[SingleEventTree, str | None]:
         """Return the tree of a source; a source without events is a CLI error."""
         framing_only = click.get_current_context().meta.get("framing_only", False)
+        view = cast(str | None, params["view"])
         if framing_only and view not in (None, "raw"):
             raise click.UsageError("--framing-only requires --view raw or no --view.")
         try:
             if framing_only:
                 return SingleEventTree.from_framing(source), "raw"
             return SingleEventTree(
-                source, step_digits=step_digits, scalar_format=scalar_format
+                source,
+                step_digits=cast(int, params["step_digits"]),
+                scalar_format=cast(str, params["scalar_format"]),
+                histogram_format=cast(str, params["histogram_format"]),
+                pr_curve_npy=cast(bool, params["pr_curve_npy"]),
             ), view
         except _NoEventError as error:
             raise click.ClickException(str(error)) from error

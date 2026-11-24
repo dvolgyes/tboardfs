@@ -26,7 +26,9 @@ PR = np.array(
 )
 
 
-def _pr_log(tmp_path: Path, data: np.ndarray) -> TensorBoardFS:
+def _pr_log(
+    tmp_path: Path, data: np.ndarray, *, pr_curve_npy: bool = False
+) -> TensorBoardFS:
     event = compat_pb2.Event(wall_time=1.0, step=2)
     value = event.summary.value.add(tag="pr")
     value.metadata.plugin_data.plugin_name = "pr_curves"
@@ -36,7 +38,7 @@ def _pr_log(tmp_path: Path, data: np.ndarray) -> TensorBoardFS:
     )
     value.tensor.tensor_content = data.tobytes()
     (tmp_path / "events.out.tfevents.host").write_bytes(_frame(event))
-    return TensorBoardFS(tmp_path)
+    return TensorBoardFS(tmp_path, pr_curve_npy=pr_curve_npy)
 
 
 def _read(fs: TensorBoardFS, name: str) -> bytes:
@@ -95,7 +97,7 @@ def test_the_tsv_has_the_same_columns(tmp_path: Path) -> None:
 
 def test_the_npy_keeps_the_raw_tensor(tmp_path: Path) -> None:
     """The .npy file is the tensor as written, without the threshold column."""
-    data = np.load(io.BytesIO(_read(_pr_log(tmp_path, PR), "npy")))
+    data = np.load(io.BytesIO(_read(_pr_log(tmp_path, PR, pr_curve_npy=True), "npy")))
 
     np.testing.assert_array_equal(data, PR)
 

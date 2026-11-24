@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from functools import partial
 from typing import Literal
 
@@ -31,6 +32,8 @@ def add_typed_plugin_files(
     entries: list[JsonEntry],
     scalars: dict[str, dict[str, np.ndarray]],
     step_digits: int,
+    *,
+    pr_curve_npy: bool,
 ) -> set[int]:
     """Add typed plugin files and return consumed entry identities."""
     consumed: set[int] = set()
@@ -46,14 +49,15 @@ def add_typed_plugin_files(
         "the mesh files",
         partial(_TypedPluginFiles.add_meshes, files, entries, step_digits, consumed),
     )
+    builders: dict[str, Callable[[RunFiles, JsonEntry, int], set[int]]] = {
+        "pr_curves": partial(_TypedPluginFiles.add_pr_curve, npy=pr_curve_npy),
+        "tensors": _TypedPluginFiles.add_tensor,
+    }
     for entry in entries:
         marker = id(entry)
         if marker in consumed:
             continue
-        builder = {
-            "pr_curves": _TypedPluginFiles.add_tensor_table,
-            "tensors": _TypedPluginFiles.add_tensor,
-        }.get(entry.tab)
+        builder = builders.get(entry.tab)
         if builder is not None:
             consumed.update(
                 skip_failure(
@@ -112,10 +116,10 @@ class _TypedPluginFiles:
         consumed.update(id(entry) for entry in layouts)
 
     @staticmethod
-    def add_tensor_table(
-        files: RunFiles, entry: JsonEntry, step_digits: int
+    def add_pr_curve(
+        files: RunFiles, entry: JsonEntry, step_digits: int, *, npy: bool
     ) -> set[int]:
-        """Add table, JSON, and NPY views for tensor-backed plugin records."""
+        """Add PR curve tables and, when enabled, the NPY tensor."""
         data = tensor_to_array(entry.payload.get("tensor") or {})
         if data is None or data.size == 0:
             return set()
@@ -128,12 +132,13 @@ class _TypedPluginFiles:
                 f"{step}.{fmt}",
                 LeafSpec("table", entry.wall_time, "series", table, format=fmt),
             )
-        files.add(
-            ("pr_curves",),
-            entry.tag,
-            f"{step}.npy",
-            LeafSpec("npy", entry.wall_time, "data", data),
-        )
+        if npy:
+            files.add(
+                ("pr_curves",),
+                entry.tag,
+                f"{step}.npy",
+                LeafSpec("npy", entry.wall_time, "data", data),
+            )
         return {id(entry)}
 
     @staticmethod

@@ -81,7 +81,7 @@ def test_projected_step_files_match_plain_exports_across_restart(
         + _histogram(restarted, 2.0, 16.0)
         + _epoch(restarted, 7.0)
     )
-    fs = TensorBoardFS(tmp_path, scalar_formats=_FORMATS, step_digits=1)
+    fs = TensorBoardFS(tmp_path, histogram_formats=_FORMATS, step_digits=1)
     for step, epoch, walls, rights in (
         (first, np.nan, [-0.0], [1.0]),
         (before, -0.0, [1.0], [2.0]),

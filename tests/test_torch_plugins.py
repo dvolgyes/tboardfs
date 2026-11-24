@@ -45,6 +45,7 @@ def fs() -> TensorBoardFS:
     ],
 )
 def test_pr_curve(fs: TensorBoardFS, tag: str, matrix: list) -> None:
+    fs = TensorBoardFS(CORPUS / "torch-plugins", pr_curve_npy=True)
     array = np.load(BytesIO(fs.read(f"/pr_curves/{tag}/000003.npy", 4096, 0)))
     np.testing.assert_array_equal(
         array, np.asarray(matrix, dtype=np.float32), strict=True

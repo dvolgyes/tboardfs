@@ -71,7 +71,6 @@ def test_new_file_discovery_is_local_but_deletion_is_immediate(
     assert "a" in fs.readdir("/")
     assert fs.readdir("/a/group/scalars")[2:] == [
         "accuracy.json",
-        "accuracy.npz",
         "accuracy.tsv",
     ]
 
@@ -114,11 +113,11 @@ def test_default_source_deadline_is_not_slid_by_reads_or_discovery(
     wall = 50_000.0
     listed = _spy_listings(monkeypatch)
     now = 89.0
-    assert fs.readdir("/a/scalars")[2:] == ["loss.json", "loss.npz", "loss.tsv"]
+    assert fs.readdir("/a/scalars")[2:] == ["loss.json", "loss.tsv"]
     assert not listed
 
     now = 90.0
-    assert fs.readdir("/a/scalars")[2:] == ["loss.json", "loss.npz", "loss.tsv"]
+    assert fs.readdir("/a/scalars")[2:] == ["loss.json", "loss.tsv"]
     assert a in listed
     assert fs.read(first, 4096, 0) == before
     assert fs._state.runs[("a",)].refreshed_at == 1000.0

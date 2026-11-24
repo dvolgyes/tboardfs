@@ -464,7 +464,6 @@ def test_filesystem_exposes_nested_scalar_formats(tmp_path: Path) -> None:
         ".",
         "..",
         "loss.json",
-        "loss.npz",
         "loss.tsv",
     ]
 

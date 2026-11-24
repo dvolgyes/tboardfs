@@ -255,7 +255,6 @@ def test_a_scalar_summary_has_only_the_scalar_table(tmp_path: Path) -> None:
     assert sorted(_files(fs)) == [
         RAW,
         "/scalars/loss.json",
-        "/scalars/loss.npz",
         "/scalars/loss.tsv",
     ]
 

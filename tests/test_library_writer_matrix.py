@@ -55,7 +55,7 @@ def test_grouped_subruns_keep_shared_tag(producer: str, has_root_scalars: bool) 
     "producer", ["torch-matrix", "lightning-matrix", "tensorboardx-matrix"]
 )
 def test_pr_without_weights(producer: str) -> None:
-    fs = TensorBoardFS(CORPUS / producer)
+    fs = TensorBoardFS(CORPUS / producer, pr_curve_npy=True)
     path = "/pr_curves/unweighted/000004"
     data = np.load(BytesIO(fs.read(f"{path}.npy", 4096, 0)))
     rows = json.loads(fs.read(f"{path}.json", 4096, 0))
@@ -195,7 +195,7 @@ def test_image_grid_and_annotated_raster(
 
 
 def test_lightning_raw_buckets_and_precomputed_pr() -> None:
-    fs = TensorBoardFS(CORPUS / "lightning-matrix")
+    fs = TensorBoardFS(CORPUS / "lightning-matrix", pr_curve_npy=True)
     rows = json.loads(fs.read("/histograms/buckets/000004.json", 4096, 0))
     assert [(r["bucket_left"], r["bucket_right"], r["count"]) for r in rows] == [
         (0.5, 1, 1),

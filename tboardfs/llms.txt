@@ -20,7 +20,17 @@ It exposes scalar, histogram, distribution, PR-curve, image, audio, video, text,
 A typed preview may be absent for an unsupported or malformed payload; enable the raw view to read the original frame.
 
 Equivalent encodings are alternate views of the same logged values, not separate observations.
-For example, scalar `<tag>.json`, `.tsv`, `.csv` and `.npz` files contain the same table; tensor `.npy` and `.json` files preview the same tensor.
+For example, the enabled scalar formats contain the same table, and tensor `.npy` and `.json` files preview the same tensor.
+
+Scalar tables use JSON and TSV by default.
+Use `--scalar-format LIST` to select scalar formats, including optional CSV and NPZ.
+Histogram buckets and distribution percentiles are separate views, each with JSON, TSV and NPZ by default.
+Use `--histogram-format LIST` to select formats for both views, including optional CSV.
+For both options, use a comma-separated list of `json`, `tsv`, `csv` or `npz` to replace the corresponding default list.
+PR curves always have JSON and TSV files for supported payloads.
+Use `--pr-curve-npy` to add NPY files for PR curves.
+These options also work with `tboardfs-file list`, `get` and `copy-all`.
+
 Step-based files use zero-padded global steps.
 Equal-step scalar rows are kept in producer order.
 

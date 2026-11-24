@@ -5,10 +5,29 @@ from pathlib import Path
 from typing import Any
 
 from tboardfs._directory import _GuardPlans
+from tboardfs.constants import DEFAULT_HISTOGRAM_FORMATS
+from tboardfs.export_formats import FormatList, _ExportFormats
 from tboardfs.leaf_cache import _MountTree
 from tboardfs.model import RunCache, SidecarEntry
-from tboardfs.mount_index import _IndexOptions, _SiblingSnapshot
+from tboardfs.mount_index import MountIndexKeywords, _IndexOptions, _SiblingSnapshot
 from tboardfs.verified_span import _FrameValidations, _VerifiedSpan
+
+
+class _MountKeywords(MountIndexKeywords, total=False):
+    """Optional mount settings supplied as keywords."""
+
+    raw: bool
+    histogram_formats: FormatList
+    pr_curve_npy: bool
+
+
+def _mount_formats(scalars: FormatList, options: _MountKeywords) -> _ExportFormats:
+    """Extract export options before the remaining options go to the index."""
+    return _ExportFormats.parse(
+        scalars,
+        options.pop("histogram_formats", DEFAULT_HISTOGRAM_FORMATS),
+        options.pop("pr_curve_npy", False),
+    )
 
 
 @dataclass
