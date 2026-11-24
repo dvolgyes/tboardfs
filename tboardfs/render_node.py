@@ -59,6 +59,7 @@ _RENDERERS: Final[Mapping[str, Callable[[dict[str, Any]], bytes]]] = MappingProx
         ).encode("ascii"),
         "raw": RawFrames.read,
         "scalar": lambda node: export_table(node["series"], node["format"]),
+        "scalar_slice": lambda node: node["slice"].render(node["format"]),
         "table": lambda node: _render_step(node["series"], node["format"]),
         "binary": lambda node: extract_binary_blob(node["entry"]),
         "graph": lambda node: _extract_graph_blob(node["entry"]),

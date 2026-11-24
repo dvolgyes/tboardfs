@@ -13,6 +13,7 @@ from loguru import logger
 from tboardfs.classify import _Classifier
 from tboardfs.constants import PLUGIN_TAB
 from tboardfs.crc32c import masked_crc32c
+from tboardfs.epochs import _Epochs
 from tboardfs.event_source import SCAN_BUFFER, EventSource
 from tboardfs.file_status import FileIdentity
 from tboardfs.frame_ref import FrameRef
@@ -79,17 +80,14 @@ def parse_file(filename: str | Path) -> dict[str, Any]:
         del series["_inherits_epoch"]
     for series in cache.scalars.values():
         del series["_inherits_epoch"]
+    epochs = _Epochs.from_caches((cache,))
     return {
         "binaries": binaries,
         "binary_entries": cache.binaries,
         "graphs": cache.graphs,
-        "histograms": _TableMerge.step_epochs(
-            cache.histograms, cache.scalars.get("epoch")
-        ),
+        "histograms": epochs.align(cache.histograms),
         "json_entries": cache.json_entries,
-        "scalars": _TableMerge.sort_scalars(
-            _TableMerge.step_epochs(cache.scalars, cache.scalars.get("epoch"))
-        ),
+        "scalars": _TableMerge.sort_scalars(epochs.align(cache.scalars)),
     }
 
 

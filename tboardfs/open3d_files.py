@@ -48,6 +48,7 @@ class Open3DFiles:
                     entry.tag,
                     f"{_Paths.step_name(entry.step, step_digits)}.manifest.json",
                     LeafSpec("json", entry.wall_time, "data", manifest),
+                    step=entry.step,
                 )
 
     @staticmethod

@@ -93,6 +93,7 @@ def _add_summary_files(
             entry.tag,
             f"{step}.{name}",
             LeafSpec("graph_def", entry.wall_time, "entry", entry),
+            step=entry.step,
         )
     if entry.profiles:
         files.add(
@@ -100,4 +101,5 @@ def _add_summary_files(
             entry.tag,
             f"{step}.run_metadata.pbtxt",
             LeafSpec("run_metadata_text", entry.wall_time, "entry", entry),
+            step=entry.step,
         )

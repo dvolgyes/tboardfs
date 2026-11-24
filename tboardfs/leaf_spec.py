@@ -18,7 +18,7 @@ class LeafSpec:
 
     kind: str
     mtime: float
-    key: Literal["data", "entry", "series", "tensor_entry"]
+    key: Literal["data", "entry", "series", "slice", "tensor_entry"]
     payload: object
     format: str | None = field(default=None, kw_only=True)
 

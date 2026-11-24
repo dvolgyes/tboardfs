@@ -56,7 +56,7 @@ def test_a_metric_takes_the_epoch_written_after_it_at_its_step(tmp_path: Path) -
 
 
 def test_a_step_without_an_epoch_keeps_the_last_epoch(tmp_path: Path) -> None:
-    """A step with no epoch scalar uses the epoch read before it."""
+    """A step with no marker uses the marker at the latest earlier step."""
     data = b"".join(
         [
             _scalar(0, "epoch", 4.0),
@@ -94,7 +94,7 @@ def test_lightning_rows_have_the_epoch_of_their_step() -> None:
     assert _epochs(fs, "/scalars/val_loss.json") == [(1, 0.0), (3, 1.0)]
 
 
-def test_large_steps_sort_stably_after_epoch_carry_and_append(tmp_path: Path) -> None:
+def test_large_steps_sort_stably_before_and_after_epoch_append(tmp_path: Path) -> None:
     first = 2**53
     (tmp_path / "events.out.tfevents.0").write_bytes(
         _scalar(first + 1, "loss", 1) + _scalar(first, "epoch", 4)
@@ -108,16 +108,16 @@ def test_large_steps_sort_stably_after_epoch_carry_and_append(tmp_path: Path) ->
     )
     fs = TensorBoardFS(tmp_path, refresh_age_seconds=0, source_check_seconds=0)
 
-    def rows() -> list[tuple[int, float, float]]:
+    def rows() -> list[tuple[int, float | None, float]]:
         data = json.loads(fs.read("/scalars/loss.json", 1 << 20, 0))
         return [(row["step"], row["epoch"], row["value"]) for row in data]
 
-    assert rows() == [(first - 1, 4, 2), (first, 4, 3), (first + 1, 5, 1)]
-    assert _epochs(fs, f"/histograms/weights/{first - 1}.json") == [(first - 1, 4)]
+    assert rows() == [(first - 1, None, 2), (first, 4, 3), (first + 1, 5, 1)]
+    assert _epochs(fs, f"/histograms/weights/{first - 1}.json") == [(first - 1, None)]
     with later.open("ab") as handle:
         handle.write(_scalar(first + 1, "loss", 4) + _scalar(first + 1, "epoch", 6))
     assert rows() == [
-        (first - 1, 4, 2),
+        (first - 1, None, 2),
         (first, 4, 3),
         (first + 1, 6, 1),
         (first + 1, 6, 4),

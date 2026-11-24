@@ -131,6 +131,7 @@ class _TypedPluginFiles:
                 entry.tag,
                 f"{step}.{fmt}",
                 LeafSpec("table", entry.wall_time, "series", table, format=fmt),
+                step=entry.step,
             )
         if npy:
             files.add(
@@ -138,6 +139,7 @@ class _TypedPluginFiles:
                 entry.tag,
                 f"{step}.npy",
                 LeafSpec("npy", entry.wall_time, "data", data),
+                step=entry.step,
             )
         return {id(entry)}
 
@@ -170,12 +172,14 @@ class _TypedPluginFiles:
             entry.tag,
             f"{step}.json",
             LeafSpec("json", entry.wall_time, key, json_data),
+            step=entry.step,
         )
         files.add(
             ("tensors",),
             entry.tag,
             f"{step}.npy",
             LeafSpec("npy", entry.wall_time, key, data),
+            step=entry.step,
         )
         return {id(entry)}
 
@@ -188,8 +192,8 @@ class _TypedPluginFiles:
     ) -> None:
         """Add grouped mesh component archives."""
         nodes, used = mesh_nodes(entries, step_digits)
-        for tag, name, node in nodes:
-            files.add(("meshes",), tag, name, node)
+        for tag, name, node, step in nodes:
+            files.add(("meshes",), tag, name, node, step=step)
         consumed.update(used)
 
     @staticmethod

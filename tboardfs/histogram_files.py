@@ -4,6 +4,7 @@ from functools import partial
 from typing import Any
 
 from tboardfs._step_npz import StepArchives
+from tboardfs.epochs import _Epochs
 from tboardfs.leaf_spec import LeafSpec
 from tboardfs.model import EventFileCache
 from tboardfs.paths import _Paths
@@ -16,15 +17,16 @@ from tboardfs.tables import _TableMerge
 def add_histogram_files(
     files: RunFiles,
     caches: list[EventFileCache],
-    epochs: dict[str, Any] | None,
+    epochs: _Epochs,
     scalar_formats: tuple[str, ...],
     step_digits: int,
     *,
     tags: set[str] | None = None,
 ) -> bool:
     """Add the requested tags and report whether all producers succeeded."""
-    histograms = _TableMerge.merge_run_tables(caches, histograms=True, tags=tags)
-    histograms = _TableMerge.step_epochs(histograms, epochs)
+    histograms = epochs.align(
+        _TableMerge.merge_run_tables(caches, histograms=True, tags=tags)
+    )
     mtimes = _TableMerge.merge_mtimes(
         (cache.histogram_mtimes for cache in caches), tags=tags
     )
@@ -101,4 +103,5 @@ class _HistogramFiles:
             LeafSpec(
                 "table", item["mtime"], "series", item["series"], format=item["fmt"]
             ),
+            step=item["step"],
         )

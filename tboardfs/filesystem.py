@@ -5,7 +5,6 @@ import stat
 import time
 from errno import EINVAL, EIO, EISDIR, ENOENT, ENOTDIR, EROFS
 from functools import lru_cache, partial
-from importlib.resources import files as package_files
 from io import FileIO
 from math import inf
 from pathlib import Path
@@ -27,7 +26,7 @@ from tboardfs.constants import (
     DEFAULT_SCALAR_FORMATS,
 )
 from tboardfs.errors import fuse_error
-from tboardfs.export_formats import FormatList, _ExportFormats
+from tboardfs.export_formats import FormatList
 from tboardfs.file_attributes import _FileAttributes, _unrendered_size
 from tboardfs.file_times import FileTimes
 from tboardfs.leaf_cache import _CachedLeaf, _Location, _resolve_node
@@ -44,13 +43,12 @@ from tboardfs.mount_index import (
     _RunData,
     _SiblingSnapshot,
 )
-from tboardfs.mount_state import _Directory, _FsState, _mount_formats, _MountKeywords
+from tboardfs.mount_state import _Directory, _FsState, _MountKeywords, _RunView
 from tboardfs.node_source import _NodeSource
 from tboardfs.paths import _DirectoryNode, _Paths
 from tboardfs.render_cache import RenderCache, RenderKey
 from tboardfs.render_node import render_node
 from tboardfs.run_places import RunPlaces
-from tboardfs.run_tree import RunTree
 from tboardfs.sidecar_scan import SidecarScan
 from tboardfs.verified_span import _VerifiedSpan
 
@@ -84,9 +82,7 @@ class TensorBoardFS:
         folders with a suffix so each is logged once
     """
 
-    _guide: dict[str, Any]
-    _formats: _ExportFormats
-    _raw: bool
+    _view: _RunView
     source: Path
     step_digits: int
     refresh_age_seconds: float
@@ -111,15 +107,9 @@ class TensorBoardFS:
         **options: Unpack[_MountKeywords],
     ) -> None:
         self.source = Path(source)
-        self._guide = {
-            "type": "bytes",
-            "data": package_files("tboardfs").joinpath("llms.txt").read_bytes(),
-            "mtime": 0.0,
-        }
-        self._raw = options.pop("raw", False)
+        self._view = _RunView(scalar_formats, options)
         self.step_digits = step_digits
         self.refresh_age_seconds = refresh_age_seconds
-        self._formats = _mount_formats(scalar_formats, options)
         self.log_to_screen = log_to_screen
         self.owner = owner
         self._renders = RenderCache(cache_size_mb * 1024 * 1024)
@@ -146,7 +136,7 @@ class TensorBoardFS:
     @property
     def scalar_formats(self) -> tuple[str, ...]:
         """Return the enabled scalar export formats."""
-        return self._formats.scalars
+        return self._view.formats.scalars
 
     @property
     def source_check_seconds(self) -> float:
@@ -431,8 +421,7 @@ class TensorBoardFS:
         cached = self._state.run_trees.get(run.run_parts)
         if cached is not None and cached[0] == run.version:
             return cached[1]
-        tree = RunTree.build(run, self._formats, self.step_digits, raw=self._raw)
-        tree["children"]["llms.txt"] = self._guide
+        tree = self._view.build(run, self.step_digits)
         self._state.run_trees[run.run_parts] = (run.version, tree)
         return tree
 
@@ -736,18 +725,9 @@ class TensorBoardFS:
         """Extend the last source only when its previous tree and index agree."""
         cached = self._state.run_trees.get(run.run_parts)
         self._change_run_version(run, removed=removed)
-        if cached is None or before is None or before.source_path != max(run.files):
+        if cached is None or before is None:
             return
-        after = run.files[before.source_path]
-        tree = RunTree.append(
-            cached[1],
-            run,
-            before,
-            after,
-            self._formats,
-            self.step_digits,
-            raw=self._raw,
-        )
+        tree = self._view.append(cached[1], run, before, self.step_digits)
         if tree is not None:
             self._state.run_trees[run.run_parts] = (run.version, tree)
 

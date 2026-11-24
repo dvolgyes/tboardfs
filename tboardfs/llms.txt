@@ -13,6 +13,24 @@ Metric tabs (`scalars`, `histograms`, `distributions`, `pr_curves`) contain trai
 The mount exposes typed files by default; start it with `-r` or `--raw` to include original records.
 Each `raw/<event-file>/<20-digit-byte-offset>.tfrecord` file contains one complete original TFRecord frame, named by byte offset in source order.
 
+Mount with `-E` or `--epoch-breakdown` to add a view organized by epoch at `epoch-breakdown/epoch-N/<canonical path>` relative to each run.
+For example, `images/train/input/000010.png` in epoch 2 also appears at `epoch-breakdown/epoch-2/images/train/input/000010.png`.
+Step-file aliases are regular files, not symlinks, and share the same indexed data as the canonical files.
+With the default formats, `epoch-breakdown/epoch-2/scalars/train/loss.json` and `epoch-breakdown/epoch-2/scalars/train/loss.tsv` contain only epoch 2 rows.
+Epoch slices use the formats selected by `--scalar-format`, including optional CSV and NPZ.
+Full scalar tables remain at their canonical paths.
+The mount omits empty directories from this view.
+Hyperparameters, layouts, fixed graphs, sidecars and raw frames do not appear in this view.
+
+Epoch assignment uses exact `int64` global steps, not steps inferred from file names.
+Use the latest `<first-tag-component>/epoch` marker at or before a given step.
+Only if no scoped marker applies, use the latest unscoped `epoch` marker at or before that step.
+At a duplicate step within either marker series, the last marker in source and producer order wins.
+A marker must be a finite integer in `[0, 2**63)`.
+An invalid applicable marker stops inheritance rather than falling back to another marker.
+Without a valid applicable marker, the epoch is unknown and the file or row appears only at its canonical path.
+The canonical scalar `epoch` column follows these rules with or without `--epoch-breakdown`.
+
 ## Events and formats
 
 The tree reads TensorFlow 1/2, Keras, PyTorch and PyTorch Lightning, tensorboardX, and compatible TensorBoard event writers.

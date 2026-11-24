@@ -82,6 +82,12 @@ from tboardfs.stdlib_logging import StdlibToLoguru
     help="Disk budget for persistent indexes (requires --disk-index).",
 )
 @click.option("-r", "--raw", is_flag=True, help="Expose exact event frames under raw/.")
+@click.option(
+    "-E",
+    "--epoch-breakdown",
+    is_flag=True,
+    help="Group eligible step files and scalar rows by recorded epoch markers.",
+)
 @click.option("--foreground/--background", default=False, show_default=True)
 @click.option(
     "--root-owner/--user-owner",
@@ -130,6 +136,7 @@ def main(
         scalar_formats=cast(str, params["scalar_format"]),
         histogram_formats=cast(str, params["histogram_format"]),
         pr_curve_npy=cast(bool, params["pr_curve_npy"]),
+        epoch_breakdown=cast(bool, params["epoch_breakdown"]),
         log_to_screen=foreground,
         cache_size_mb=cast(int, params["cache_size_mb"]),
         owner=(0, 0) if params["root_owner"] else (os.getuid(), os.getgid()),

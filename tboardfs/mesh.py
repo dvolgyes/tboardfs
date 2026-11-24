@@ -43,9 +43,9 @@ class _MeshGroup:
 def mesh_nodes(
     entries: list[JsonEntry],
     step_digits: int,
-) -> tuple[list[tuple[str, str, LeafSpec]], set[int]]:
-    """Return the mesh tag, file name and node of each mesh file."""
-    nodes: list[tuple[str, str, LeafSpec]] = []
+) -> tuple[list[tuple[str, str, LeafSpec, int]], set[int]]:
+    """Return each mesh file with its raw tag and recorded step."""
+    nodes: list[tuple[str, str, LeafSpec, int]] = []
     consumed: set[int] = set()
     for (tag, step_number), group in sorted(_MeshFiles.groups(entries).items()):
         if _MESH_VERTEX not in group.components:
@@ -57,7 +57,7 @@ def mesh_nodes(
         )
         if group_files is None:
             continue
-        nodes.extend((tag, *file) for file in group_files)
+        nodes.extend((tag, *file, step_number) for file in group_files)
         consumed.update(id(entry) for entry in group.entries)
     return nodes, consumed
 

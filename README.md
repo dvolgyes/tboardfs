@@ -115,6 +115,7 @@ The mount indexes other event files when you access their run's contents.
 | `--scalar-format LIST` | `json,tsv` | Select the formats for scalar tables only. |
 | `--histogram-format LIST` | `json,tsv,npz` | Select the formats for both histogram bucket tables and distribution percentile tables. |
 | `--pr-curve-npy` | off | Add NPY files for PR curves alongside JSON and TSV. |
+| `-E`, `--epoch-breakdown` | off | Add a read-only `epoch-breakdown/` view of eligible step files and scalar slices grouped by recorded epoch markers. |
 | `--step-digits N` | `6` | Zero-padding width of step file names, from 1 to 20. |
 | `--refresh-age-seconds S` | `150` | Minimum interval between local searches for new files and directories (`0` to search on each access, `inf` to freeze each directory after its first scan). |
 | `--source-check-seconds S` | `120` | Minimum interval between status checks of known event files in an accessed run. Accepts finite, nonnegative seconds; `0` checks on every access. |
@@ -240,6 +241,44 @@ view is enabled.
   digits, such as `000010.png`.
 - An event without a step field is at step 0, as in TensorBoard.
 
+### Epoch Breakdown
+
+Use `-E` or `--epoch-breakdown` when mounting to add `epoch-breakdown/epoch-N/<canonical path>` to each run.
+
+For example, `images/train/input/000010.png` in epoch 2 also appears at
+`epoch-breakdown/epoch-2/images/train/input/000010.png`.
+
+Step-file aliases are regular files, not symlinks, and share the same indexed data as the canonical files.
+
+- A scalar slice contains only the rows assigned to its epoch.
+- With the default formats, `scalars/train/loss` in epoch 2 has slices at
+  `epoch-breakdown/epoch-2/scalars/train/loss.json` and `epoch-breakdown/epoch-2/scalars/train/loss.tsv`.
+- The full scalar tables remain at their canonical paths.
+- Slices use the formats selected by `--scalar-format`, including optional CSV and NPZ.
+
+#### Epoch markers
+
+- Epoch assignment uses exact `int64` steps, never steps inferred from file names.
+
+- For a given tag, use the latest marker at or before its step from the scalar tag `<first-tag-component>/epoch`, such
+  as `train/epoch` for `train/loss`.
+
+- If there is no such scoped marker, use the latest marker at or before that step from the unscoped scalar tag `epoch`.
+
+- At a duplicate step within either marker series, the last marker in source and producer order wins.
+
+- A marker must be a finite integer in `[0, 2**63)`.
+
+- An invalid applicable marker stops inheritance: do not use an earlier marker or fall back to the unscoped series.
+
+- With no applicable marker or an invalid applicable marker, the epoch is unknown.
+
+- Files and scalar rows with unknown epochs appear only in the canonical view.
+
+- Hyperparameters, layouts, fixed graphs, sidecars and raw frames do not appear in the epoch view.
+
+- The mount omits empty epoch directories and their empty subdirectories.
+
 ### Name Conflicts
 
 Ordinary names keep their spelling. This naming scheme replaces the earlier lossy scheme; scripts that addressed unusual
@@ -300,15 +339,14 @@ their producer order.
 
 | Column | Meaning |
 | -- | -- |
-| `epoch` | The `epoch` scalar at that step (see below) |
+| `epoch` | The epoch assigned by the [epoch marker rules](#epoch-markers) |
 | `step` | The global step |
 | `wall_time` | Seconds since the Unix epoch |
 | `relative_time` | Seconds since the first summary of the event file |
 | `value` | The scalar value |
 
-- The `epoch` column is the value of the scalar tag `epoch` at the same step, as PyTorch Lightning writes it. A step
-  without an `epoch` value has the last epoch written before it. Without an earlier `epoch` value, the cell is missing
-  (`null` in JSON, `nan` in TSV and CSV).
+- The canonical `epoch` column follows these rules with or without `--epoch-breakdown`.
+- An unknown epoch is missing (`null` in JSON, `nan` in TSV and CSV).
 - In the `.npz` file, each column is an array with the same name. `value` keeps the stored type: float32 for TensorFlow
   1 and PyTorch scalars, or the dtype of a tensor scalar, such as float64 or int64.
 - A supported one-value numeric tensor without a more specific plugin can be a scalar.
@@ -325,6 +363,9 @@ A distribution table has the values that the TensorBoard Distributions tab shows
 `wall_time`, `relative_time`, `percentile` and `value`. The 9 percentiles are 0, 6.68, 15.87, 30.85, 50, 69.15, 84.13,
 93.32 and 100: the minimum, the maximum, and the positions of the mean and ±1, 2 and 3 standard deviations of a normal
 distribution. Each value interpolates linearly inside its histogram bucket.
+
+The canonical `epoch` column in both tables follows the [epoch marker rules](#epoch-markers), with or without
+`--epoch-breakdown`.
 
 For small tables with identical metadata on every row, the text writer formats those fields once.
 

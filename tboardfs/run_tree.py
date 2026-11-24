@@ -4,6 +4,8 @@ from functools import partial
 from typing import Any
 
 from tboardfs.constants import FIXED_TABS
+from tboardfs.epoch_breakdown import _EpochBreakdown
+from tboardfs.epochs import _Epochs
 from tboardfs.export_formats import _ExportFormats
 from tboardfs.file_times import FileTimes
 from tboardfs.graph_files import GraphFiles
@@ -32,10 +34,18 @@ class RunTree:
         step_digits: int,
         *,
         raw: bool = True,
+        epoch_breakdown: bool = False,
     ) -> dict[str, Any]:
         """Build a complete run tree, including sidecars when present."""
         run_node = _DirectoryNode()
-        _Projection.add_run_files(run_node, run, formats, step_digits, raw=raw)
+        _Projection.add_run_files(
+            run_node,
+            run,
+            formats,
+            step_digits,
+            raw=raw,
+            epoch_breakdown=epoch_breakdown,
+        )
         FileTimes.stamp_dirs(run_node)
         return run_node
 
@@ -125,8 +135,10 @@ class _Projection:
             return True
         if not _Projection.histogram_names_are_stable(caches, before, hist_tags):
             return False
-        epochs = _TableMerge.merge_run_tables(caches, tags={"epoch"}).get("epoch")
-        align_all = "epoch" in scalar_tags
+        epochs = _Epochs.from_caches(caches)
+        align_all = any(map(_Epochs.is_marker, scalar_tags))
+        if align_all:
+            scalar_tags = {tag for cache in caches for tag in cache.scalars}
         if not _Projection.project_scalars(
             files, tree, caches, scalar_tags, formats.scalars, epochs
         ):
@@ -147,18 +159,13 @@ class _Projection:
         caches: list[EventFileCache],
         tags: set[str],
         scalar_formats: tuple[str, ...],
-        epochs: dict[str, Any] | None,
+        epochs: _Epochs,
     ) -> bool:
         """Realign scalar tags on an epoch append and update HParams metrics."""
         if not tags:
             return True
-        dirty = (
-            {tag for cache in caches for tag in cache.scalars}
-            if "epoch" in tags
-            else tags
-        )
-        scalars = _Projection.merged_scalars(caches, tags=dirty, epochs=epochs)
-        _Projection.add_scalar_files(files, caches, scalars, scalar_formats, tags=dirty)
+        scalars = _Projection.merged_scalars(caches, tags=tags, epochs=epochs)
+        _Projection.add_scalar_files(files, caches, scalars, scalar_formats, tags=tags)
         if "hparams" not in tree["children"]:
             return True
         return _Projection.project_hparams(files, caches, scalars, epochs)
@@ -168,7 +175,7 @@ class _Projection:
         files: RunFiles,
         caches: list[EventFileCache],
         scalars: dict[str, dict[str, Any]],
-        epochs: dict[str, Any] | None,
+        epochs: _Epochs,
     ) -> bool:
         """Regenerate only HParams from its original entries and all metrics."""
         entries = [
@@ -223,13 +230,17 @@ class _Projection:
         step_digits: int,
         *,
         raw: bool,
+        epoch_breakdown: bool = False,
     ) -> None:
         """Populate one run directory with indexed virtual files."""
         caches = _Projection.sorted_file_caches(run)
-        scalars = _Projection.merged_scalars(caches)
-        files = RunFiles()
+        epochs = _Epochs.from_caches(caches)
+        breakdown = (
+            _EpochBreakdown(epochs) if epoch_breakdown and epochs.has_markers else None
+        )
+        scalars = _Projection.merged_scalars(caches, epochs=epochs, breakdown=breakdown)
+        files = RunFiles(epoch_breakdown=breakdown)
         _Projection.add_scalar_files(files, caches, scalars, formats.scalars)
-        epochs = scalars.get("epoch")
         _ = add_histogram_files(files, caches, epochs, formats.histograms, step_digits)
         files.add_binaries((cache.binaries for cache in caches), step_digits)
         entries = [entry for cache in caches for entry in cache.json_entries]
@@ -246,6 +257,8 @@ class _Projection:
             if raw_tab["children"]:
                 run_node["children"]["raw"] = raw_tab
         files.fill(run_node, run)
+        if breakdown is not None:
+            breakdown.project(run_node)
 
     @staticmethod
     def add_scalar_files(
@@ -295,7 +308,9 @@ class _Projection:
             step = _Paths.step_name(entry.step, step_digits)
             if text_nodes:
                 for suffix, node in text_nodes:
-                    files.add((tab,), entry.tag, f"{step}.{suffix}", node)
+                    files.add(
+                        (tab,), entry.tag, f"{step}.{suffix}", node, step=entry.step
+                    )
                 continue
             files.add(
                 _Projection.json_entry_root(tab, entry, files.name_map),
@@ -303,20 +318,23 @@ class _Projection:
                 f"{step}.json",
                 LeafSpec("json", entry.wall_time, "data", entry.payload),
                 producer="fallback" if tab in {"tensors", "pr_curves"} else "",
+                step=entry.step,
             )
 
     @staticmethod
     def merged_scalars(
         caches: list[EventFileCache],
         *,
+        epochs: _Epochs,
         tags: set[str] | None = None,
-        epochs: dict[str, Any] | None = None,
+        breakdown: _EpochBreakdown | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Return merged scalar series for one run, with the epoch of each step."""
-        scalars = _TableMerge.merge_run_tables(caches, tags=tags)
-        if epochs is None:
-            epochs = scalars.get("epoch")
-        return _TableMerge.sort_scalars(_TableMerge.step_epochs(scalars, epochs))
+        scalars = _TableMerge.sort_scalars(
+            _TableMerge.merge_run_tables(caches, tags=tags)
+        )
+        record = breakdown.record_scalars if breakdown is not None else None
+        return epochs.align(scalars, record=record)
 
     @staticmethod
     def add_sidecar_files(files: RunFiles, run: RunCache) -> None:

@@ -5,6 +5,7 @@ from collections.abc import Container, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
+from tboardfs.epoch_breakdown import _EpochBreakdown
 from tboardfs.leaf_spec import LeafSpec, LeafValue
 from tboardfs.model import BinaryEntry, RunCache
 from tboardfs.model.packed_binaries import PackedBinaries
@@ -79,6 +80,7 @@ class _RunFile:
     named: bool
     identity: str = ""
     producer: str = ""
+    step: int | float | None = None
 
     def path(self, tags: TagPaths, name_map: dict[str, str]) -> tuple[str, ...]:
         """Return the file's virtual path, including any generated extension."""
@@ -152,14 +154,17 @@ class _BinaryGroup:
     tag: str
     names: dict[str, _BinaryValue] = field(default_factory=dict)
     long_names: set[str] = field(default_factory=set)
+    steps: dict[int, tuple[str, int | float]] | None = None
 
-    def add(self, name: str, entry: _BinaryValue) -> None:
+    def add(self, name: str, entry: _BinaryValue, step: float) -> None:
         """Keep the latest entry and its position in producer order."""
         size = len(name)
         can_shorten = size > 255 or (size > 63 and not name.isascii())
         if name in self.names:
             del self.names[name]
         self.names[name] = entry
+        if self.steps is not None:
+            self.steps[id(entry)] = (self.tag, step)
         if can_shorten:
             self.long_names.add(name)
 
@@ -259,10 +264,12 @@ class RunFiles:
 
     files: list[_Stage]
     name_map: dict[str, str]
+    epoch_breakdown: _EpochBreakdown | None
 
-    def __init__(self) -> None:
+    def __init__(self, *, epoch_breakdown: _EpochBreakdown | None = None) -> None:
         self.files = []
         self.name_map = {}
+        self.epoch_breakdown = epoch_breakdown
 
     def add(
         self,
@@ -272,10 +279,19 @@ class RunFiles:
         node: LeafValue,
         *,
         producer: str = "",
+        step: float | None = None,
     ) -> None:
         """Add a file to the directory of a tag below a root, such as a tab."""
         self.files.append(
-            _RunFile(root, tag, name, node, named=False, producer=producer)
+            _RunFile(
+                root,
+                tag,
+                name,
+                node,
+                named=False,
+                producer=producer,
+                step=step if self.epoch_breakdown is not None else None,
+            )
         )
 
     def add_named(
@@ -318,7 +334,9 @@ class RunFiles:
         key = kind, tag
         group = groups.get(key)
         if group is None:
-            groups[key] = group = _BinaryGroup((kind,), tag)
+            groups[key] = group = _BinaryGroup(
+                (kind,), tag, steps={} if self.epoch_breakdown is not None else None
+            )
             self.files.append(group)
         return group
 
@@ -336,7 +354,7 @@ class RunFiles:
                 f"{_Paths.step_name(entry.step, step_digits)}{entry.suffix}"
                 f".{entry.extension}"
             )
-            group.add(name, entry)
+            group.add(name, entry, entry.step)
 
     def _add_packed(
         self,
@@ -354,7 +372,7 @@ class RunFiles:
                 ending = f"{suffix}.{extension}"
                 previous = label
             name = _Paths.step_name(step, step_digits) + ending
-            group.add(name, PackedLeaf(source, index, wall_time))
+            group.add(name, PackedLeaf(source, index, wall_time), step)
 
     def patch(
         self, tree: dict[str, Any], run: RunCache, *, raw: dict[str, Any] | None
@@ -441,6 +459,17 @@ class RunFiles:
             _listing(run_node).set_leaf(
                 NAME_MAP, {"type": "name_map", "data": self.name_map}
             )
+        if self.epoch_breakdown is not None:
+            self._track_steps(self.epoch_breakdown)
+
+    def _track_steps(self, epochs: _EpochBreakdown) -> None:
+        for file in self.files:
+            if isinstance(file, _RunFile) and file.tag is not None:
+                epochs.track(file.node, file.tag, file.step)
+            elif isinstance(file, _BinaryGroup) and file.steps is not None:
+                for value in file.names.values():
+                    tag, step = file.steps[id(value)]
+                    epochs.track(value, tag, step)
 
     def _tag_names(self) -> dict[str, None]:
         return dict.fromkeys(file.tag for file in self.files if file.tag is not None)

@@ -1,6 +1,7 @@
 """Keep discovery, source checks, publications, and open handles local to one mount."""
 
 from dataclasses import dataclass, field
+from importlib.resources import files as package_files
 from pathlib import Path
 from typing import Any
 
@@ -8,26 +9,70 @@ from tboardfs._directory import _GuardPlans
 from tboardfs.constants import DEFAULT_HISTOGRAM_FORMATS
 from tboardfs.export_formats import FormatList, _ExportFormats
 from tboardfs.leaf_cache import _MountTree
-from tboardfs.model import RunCache, SidecarEntry
+from tboardfs.model import EventFileCache, RunCache, SidecarEntry
 from tboardfs.mount_index import MountIndexKeywords, _IndexOptions, _SiblingSnapshot
+from tboardfs.run_tree import RunTree
 from tboardfs.verified_span import _FrameValidations, _VerifiedSpan
 
 
 class _MountKeywords(MountIndexKeywords, total=False):
     """Optional mount settings supplied as keywords."""
 
+    epoch_breakdown: bool
     raw: bool
     histogram_formats: FormatList
     pr_curve_npy: bool
 
 
-def _mount_formats(scalars: FormatList, options: _MountKeywords) -> _ExportFormats:
-    """Extract export options before the remaining options go to the index."""
-    return _ExportFormats.parse(
-        scalars,
-        options.pop("histogram_formats", DEFAULT_HISTOGRAM_FORMATS),
-        options.pop("pr_curve_npy", False),
-    )
+class _RunView:
+    """Keep the mount's run projection and append policy together."""
+
+    raw: bool
+    epochs: bool
+    formats: _ExportFormats
+    _guide: dict[str, Any]
+
+    def __init__(self, scalars: FormatList, options: _MountKeywords) -> None:
+        self.raw = options.pop("raw", False)
+        self.epochs = options.pop("epoch_breakdown", False)
+        self.formats = _ExportFormats.parse(
+            scalars,
+            options.pop("histogram_formats", DEFAULT_HISTOGRAM_FORMATS),
+            options.pop("pr_curve_npy", False),
+        )
+        self._guide = {
+            "type": "bytes",
+            "data": package_files("tboardfs").joinpath("llms.txt").read_bytes(),
+            "mtime": 0.0,
+        }
+
+    def build(self, run: RunCache, step_digits: int) -> dict[str, Any]:
+        """Build the run view with the per-run help file."""
+        tree = RunTree.build(
+            run, self.formats, step_digits, raw=self.raw, epoch_breakdown=self.epochs
+        )
+        tree["children"]["llms.txt"] = self._guide
+        return tree
+
+    def append(
+        self,
+        tree: dict[str, Any],
+        run: RunCache,
+        before: EventFileCache,
+        step_digits: int,
+    ) -> dict[str, Any] | None:
+        """Rebuild lazily when a new epoch marker could move existing entries."""
+        if self.epochs or before.source_path != max(run.files, default=None):
+            return None
+        return RunTree.append(
+            tree,
+            run,
+            before,
+            run.files[before.source_path],
+            self.formats,
+            step_digits,
+            raw=self.raw,
+        )
 
 
 @dataclass

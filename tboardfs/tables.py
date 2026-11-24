@@ -413,26 +413,13 @@ class _TableMerge:
         return merged
 
     @staticmethod
-    def _file_tables(
-        tables: Mapping[str, Mapping[str, np.ndarray]], carried: float
-    ) -> dict[str, dict[str, np.ndarray]]:
-        result = {}
-        for tag, series in tables.items():
-            columns = dict(series)
-            inherits = columns.pop("_inherits_epoch")
-            if not np.isnan(carried) and inherits.any():
-                columns["epoch"] = np.where(inherits, carried, columns["epoch"])
-            result[tag] = columns
-        return result
-
-    @staticmethod
     def merge_run_tables(
         caches: Iterable[EventFileCache],
         *,
         histograms: bool = False,
         tags: set[str] | None = None,
     ) -> dict[str, dict[str, np.ndarray]]:
-        """Carry the previous file's last epoch into the next file's early rows."""
+        """Merge indexed columns without the parser's internal carry flags."""
         return _TableMerge.merge_series(
             _TableMerge._run_pieces(caches, histograms, tags)
         )
@@ -441,15 +428,18 @@ class _TableMerge:
     def _run_pieces(
         caches: Iterable[EventFileCache], histograms: bool, tags: set[str] | None
     ) -> Iterable[Mapping[str, Mapping[str, np.ndarray]]]:
-        """Yield each file's tables with its initial epoch inherited."""
-        carried = np.nan
+        """Yield each file's selected export columns."""
         for cache in caches:
             tables = cache.histograms if histograms else cache.scalars
-            if tags is not None:
-                tables = {tag: tables[tag] for tag in tags if tag in tables}
-            yield _TableMerge._file_tables(tables, carried)
-            if "epoch" in cache.scalars:
-                carried = cache.scalars["epoch"]["value"][-1]
+            yield {
+                tag: {
+                    name: values
+                    for name, values in columns.items()
+                    if name != "_inherits_epoch"
+                }
+                for tag, columns in tables.items()
+                if tags is None or tag in tags
+            }
 
     @staticmethod
     def sort_scalars(
@@ -467,37 +457,6 @@ class _TableMerge:
             else:
                 sorted_tables[tag] = series
         return sorted_tables
-
-    @staticmethod
-    def step_epochs(
-        tables: Mapping[str, Mapping[str, np.ndarray]],
-        epochs: Mapping[str, np.ndarray] | None,
-    ) -> dict[str, dict[str, np.ndarray]]:
-        """Give each row the epoch scalar written at its step, when there is one.
-
-        Loggers such as PyTorch Lightning write a metric and then the epoch
-        scalar at the same step, so the epoch carried from the events before
-        the metric is one epoch late. Rows at a step without an epoch scalar
-        keep the carried epoch. The last epoch written at a step wins.
-        """
-        if not tables:
-            return {}
-        if not epochs or not len(epochs["step"]):
-            return {tag: dict(series) for tag, series in tables.items()}
-        backward = epochs["step"][::-1]
-        known, last = np.unique(backward, return_index=True)
-        values = np.asarray(epochs["value"], dtype=np.float64)[::-1][last]
-        aligned = {}
-        for tag, series in tables.items():
-            steps = series["step"]
-            index = np.minimum(np.searchsorted(known, steps), len(known) - 1)
-            aligned[tag] = {
-                **series,
-                "epoch": np.where(
-                    known[index] == steps, values[index], series["epoch"]
-                ),
-            }
-        return aligned
 
     @staticmethod
     def merge_mtimes(
