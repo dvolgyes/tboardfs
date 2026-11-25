@@ -232,39 +232,22 @@ Each directory that directly contains an event file exposes an `llms.txt` guide.
 Multiple event files in a run contribute to the same typed tabs but retain separate directories under `raw` when that
 view is enabled.
 
-### Run Analysis Files
+### Run Catalog and Epoch Reports
 
-`catalog.json` lists each run's original tags, enabled formats, and canonical paths or directories.
+Start with `llms.txt` in the mounted run directory for field definitions and examples.
 
-- Scalar entries report observation counts, including rows without an assigned epoch.
-- Step and epoch coverage describes observed data, not the expected training schedule.
-- Epoch ranges are inclusive and leave gaps for unobserved epochs.
-- The catalog counts exported files separately from observations and distinct steps.
-- The catalog excludes raw frames, epoch aliases, nested runs, and the analysis files themselves.
+`catalog.json` lists the run's tags, canonical paths, formats, and observed coverage.
 
-When `--epoch-breakdown` produces epoch directories, `epochs.tsv` and `epochs.json` contain the same coverage rows.
+When `--epoch-breakdown` creates epoch directories, `reports.epochs` lists the run-relative paths to `epochs.json` and
+`epochs.tsv`.
 
-- The first fields are `epoch`, `scope`, `step_min`, `step_max`, and `epoch_dir`.
-- The scope is the first component of the original tag.
-- Bounds are exact recorded steps from non-marker data assigned to that epoch and scope.
-- If only markers exist for an epoch and scope, the bounds come from those markers.
-- Each `epoch_dir` is relative to the run and points to an existing epoch directory.
-- Optional fields follow in alphabetical order and appear only if the run has that type of coverage.
-- `metric_rows` counts non-marker scalar rows, including repeated observations.
-- Fields such as `image_steps` count distinct steps, not files or formats.
-- Zero means the field has coverage elsewhere in the run but not in that row.
-- Rows without a known epoch remain discoverable through the catalog and canonical exports, not the epoch tables.
+Both formats contain the same rows, and each `epoch_dir` points to an existing directory.
 
-The analysis files use indexed metadata, not rendered media.
-
-Reading or requesting the exact size of an analysis file can build its contents on demand.
-
-Use the same view options with either interface to extract the same bytes:
+Use the same view options to extract the files with `tboardfs-file`:
 
 ```bash
 tboardfs-file get logs /experiment-1/catalog.json -o -
 tboardfs-file get -E logs /experiment-1/epochs.tsv -o -
-tboardfs-file get -E logs /experiment-1/epochs.json -o -
 ```
 
 ### Tags and Steps

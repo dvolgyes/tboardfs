@@ -137,7 +137,7 @@ def test_catalog_counts_series_once_and_ignores_aliases(run_dir: Path) -> None:
     fs = TensorBoardFS(run_dir, epoch_breakdown=True, raw=True, index_workers=1)
     ordinary = TensorBoardFS(run_dir, index_workers=1)
     catalog = _catalog(fs)
-    assert catalog == _catalog(ordinary)
+    assert catalog == _catalog(ordinary) | {"reports": catalog["reports"]}
 
     loss = next(item for item in catalog["tags"] if item["tag"] == "train/loss")
     assert loss["kind"] == "scalars"
@@ -156,6 +156,9 @@ def test_catalog_counts_series_once_and_ignores_aliases(run_dir: Path) -> None:
 def test_epoch_tables_match_rows_and_global_column_schema(run_dir: Path) -> None:
     fs = TensorBoardFS(run_dir, epoch_breakdown=True, index_workers=1)
     rows, tsv_rows = _scope_rows(fs)
+    assert _catalog(fs)["reports"] == {
+        "epochs": {"json": "epochs.json", "tsv": "epochs.tsv"}
+    }
     assert tsv_rows == [{key: str(value) for key, value in row.items()} for row in rows]
 
     columns = [
@@ -199,6 +202,7 @@ def test_epoch_report_files_need_enabled_breakdown_and_epoch_dirs(
     ordinary = TensorBoardFS(run_dir, index_workers=1)
     assert "epochs.json" not in ordinary.readdir("/")
     assert "epochs.tsv" not in ordinary.readdir("/")
+    assert _catalog(ordinary)["reports"] == {}
 
     no_epochs = tmp_path / "no-epochs"
     no_epochs.mkdir()
@@ -207,6 +211,7 @@ def test_epoch_report_files_need_enabled_breakdown_and_epoch_dirs(
     assert "epoch-breakdown" not in enabled.readdir("/")
     assert "epochs.json" not in enabled.readdir("/")
     assert "epochs.tsv" not in enabled.readdir("/")
+    assert _catalog(enabled)["reports"] == {}
 
 
 def test_marker_only_epoch_reports_core_fields(tmp_path: Path) -> None:

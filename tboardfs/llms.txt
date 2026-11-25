@@ -1,69 +1,46 @@
-# tboardfs mounted logs
+# tboardfs run guide
 
-This read-only tree exposes TensorBoard event data as files for training analysis.
-This guide appears in each run directory that directly contains event files, including the mount root only when it directly contains event files.
-A nested run appears as a directory below its parent.
-Empty tabs and other empty directories are omitted.
+This read-only directory exposes the TensorBoard data for one run.
+Nested run directories have their own guide and catalog.
 
-## Run analysis files
+## Find data
 
-Read `catalog.json` to discover the original tags, canonical export paths, enabled formats, and recorded step and epoch coverage in this run.
-File counts include format variants, but observation and distinct step counts do not.
-Epoch coverage is based on recorded assignments and does not imply a complete training schedule.
+- Read [catalog.json](catalog.json) for original tags, enabled formats, canonical paths, and observed step and epoch coverage.
+- Read paths relative to this run directory.
+- Use the canonical paths for full tables and original media bytes.
+- File counts include format variants.
+- Observation and distinct step counts do not include format variants.
+- Observed epoch ranges include both endpoints and leave gaps for unobserved epochs.
 
-With a nonempty `--epoch-breakdown` view, `epochs.tsv` and `epochs.json` describe the same epoch and tag-scope coverage.
-The first fields are `epoch`, `scope`, `step_min`, `step_max`, and the run-relative `epoch_dir`.
-Optional coverage fields appear in alphabetical order only when observed.
-`metric_rows` excludes epoch markers, and `*_steps` counts distinct steps.
-To extract either table, pass `--epoch-breakdown` to `tboardfs-file get` with the virtual path from the source root.
+Scalar tables and PR curves default to JSON and TSV.
+Histogram buckets and distribution percentiles are separate tables, each with JSON, TSV, and NPZ by default.
+Use `--raw` to include the original TFRecord frames when a typed file is missing or undecodable.
+An opaque `.bin` file is not a complete event frame and does not establish that the log contains a checkpoint.
 
-## Directories
+## Find epoch data
 
-Metric tabs (`scalars`, `histograms`, `distributions`, `pr_curves`) contain training values and per-step tables; media tabs (`images`, `audio`, `videos`) contain stored media.
-`text` contains text summaries; `meshes` geometry; `tensors` tensor values; `graphs` model graphs and run metadata; `hparams` run settings; `custom_scalars/layout.json` layouts; and `plugins` other plugin data.
-`projector` and `profile` include run-directory sidecar files when available.
-The mount exposes typed files by default; start it with `-r` or `--raw` to include original records.
-Each `raw/<event-file>/<20-digit-byte-offset>.tfrecord` file contains one complete original TFRecord frame, named by byte offset in source order.
+If the catalog lists `reports.epochs`, its `json` and `tsv` paths point to two encodings of the same epoch report.
+The report is available with `--epoch-breakdown` when the run has epoch directories.
+Each row covers one epoch and scope.
+The scope is the first component of the original tag.
 
-Mount with `-E` or `--epoch-breakdown` to add a view organized by epoch at `epoch-breakdown/epoch-N/<canonical path>` relative to each run.
-For example, `images/train/input/000010.png` in epoch 2 also appears at `epoch-breakdown/epoch-2/images/train/input/000010.png`.
-Step-file aliases are regular files, not symlinks, and share the same indexed data as the canonical files.
-With the default formats, `epoch-breakdown/epoch-2/scalars/train/loss.json` and `epoch-breakdown/epoch-2/scalars/train/loss.tsv` contain only epoch 2 rows.
-Epoch slices use the formats selected by `--scalar-format`, including optional CSV and NPZ.
-Full scalar tables remain at their canonical paths.
-The mount omits empty directories from this view.
-Hyperparameters, layouts, fixed graphs, sidecars and raw frames do not appear in this view.
+- The first fields are `epoch`, `scope`, `step_min`, `step_max`, and `epoch_dir`.
+- Step bounds include both endpoints and use non-marker data when present, or marker steps otherwise.
+- The report describes recorded data, not the training schedule.
+- `metric_rows` counts scalar observations, including repeats but excluding epoch markers.
+- Fields such as `image_steps` count distinct global steps within the epoch and scope, not files or tags.
+- Optional fields appear in alphabetical order and only when the run has that type of coverage.
+- Zero means that row has no coverage for the field.
 
-Epoch assignment uses exact `int64` global steps, not steps inferred from file names.
-Use the latest `<first-tag-component>/epoch` marker at or before a given step.
-Only if no scoped marker applies, use the latest unscoped `epoch` marker at or before that step.
-At a duplicate step within either marker series, the last marker in source and producer order wins.
-A marker must be a finite integer in `[0, 2**63)`.
-An invalid applicable marker stops inheritance rather than falling back to another marker.
-Without a valid applicable marker, the epoch is unknown and the file or row appears only at its canonical path.
-The canonical scalar `epoch` column follows these rules with or without `--epoch-breakdown`.
+Follow `epoch_dir` to find scalar slices and per-step files for that epoch.
+For example, epoch 2 rows for `train/loss` are in `epoch-breakdown/epoch-2/scalars/train/loss.tsv` when TSV is enabled.
+The full table remains at `scalars/train/loss.tsv`.
 
-## Events and formats
-
-The tree reads TensorFlow 1/2, Keras, PyTorch and PyTorch Lightning, tensorboardX, and compatible TensorBoard event writers.
-It exposes scalar, histogram, distribution, PR-curve, image, audio, video, text, mesh, tensor, hyperparameter, custom-scalar, graph and plugin data.
-A typed preview may be absent for an unsupported or malformed payload; enable the raw view to read the original frame.
-
-Equivalent encodings are alternate views of the same logged values, not separate observations.
-For example, the enabled scalar formats contain the same table, and tensor `.npy` and `.json` files preview the same tensor.
-
-Scalar tables use JSON and TSV by default.
-Use `--scalar-format LIST` to select scalar formats, including optional CSV and NPZ.
-Histogram buckets and distribution percentiles are separate views, each with JSON, TSV and NPZ by default.
-Use `--histogram-format LIST` to select formats for both views, including optional CSV.
-For both options, use a comma-separated list of `json`, `tsv`, `csv` or `npz` to replace the corresponding default list.
-PR curves always have JSON and TSV files for supported payloads.
-Use `--pr-curve-npy` to add NPY files for PR curves.
-These options also work with `tboardfs-file list`, `get` and `copy-all`.
-
-Step-based files use zero-padded global steps.
-Equal-step scalar rows are kept in producer order.
-
-Media files keep the stored bytes and are not transcoded.
-Extensions indicate likely formats, not guaranteed decodability.
-`.bin` files contain opaque original tensor or field bytes, not a whole event frame; they are not, by themselves, evidence of a model checkpoint or weights.
+Epoch assignment uses exact global steps.
+Use the latest scoped marker at or before the step, such as `train/epoch` for `train/loss`.
+Use the unscoped `epoch` marker only if no scoped marker applies.
+At a duplicate step, the last marker in source and producer order wins.
+A valid marker is a finite integer in `[0, 2**63)`.
+An invalid applicable marker blocks fallback.
+Data without a known epoch remains at its canonical path.
+The canonical scalar `epoch` column uses these rules even without `--epoch-breakdown`.

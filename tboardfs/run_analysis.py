@@ -9,6 +9,8 @@ from tboardfs.epochs import _Epochs
 from tboardfs.run_catalog import _Catalog
 from tboardfs.run_inventory import _Inventory
 
+_EPOCH_FILES = (("json", "epochs.json"), ("tsv", "epochs.tsv"))
+
 
 class _RunAnalysis:
     """Render analysis from canonical metadata only when a file is accessed."""
@@ -47,8 +49,8 @@ class _RunAnalysis:
             "render": analysis.catalog,
         }
         if dirs:
-            for fmt in ("json", "tsv"):
-                children[f"epochs.{fmt}"] = {
+            for fmt, name in _EPOCH_FILES:
+                children[name] = {
                     "type": "analysis",
                     "mtime": 0.0,
                     "render": partial(analysis.epoch_table, fmt),
@@ -65,8 +67,9 @@ class _RunAnalysis:
         return _EpochReport.collect(self._inventory, self.epochs, self._dirs)
 
     def catalog(self) -> bytes:
-        """Render the run's canonical catalog."""
-        return _Catalog.render(self._inventory, self.epochs)
+        """Render the run's inventory and list its available reports."""
+        reports = {"epochs": dict(_EPOCH_FILES)} if self._dirs else {}
+        return _Catalog.render(self._inventory, self.epochs, reports)
 
     def epoch_table(self, fmt: str) -> bytes:
         """Render the scoped epoch coverage table."""

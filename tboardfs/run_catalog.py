@@ -85,8 +85,10 @@ class _Catalog:
     """Render a deterministic catalog for a single run."""
 
     @staticmethod
-    def render(inventory: "_Inventory", epochs: "_Epochs") -> bytes:
-        """Serialize catalog metadata from canonical typed leaves only."""
+    def render(
+        inventory: "_Inventory", epochs: "_Epochs", reports: dict[str, dict[str, str]]
+    ) -> bytes:
+        """List canonical typed exports and link to available run reports."""
         groups: dict[tuple[str, str, tuple[str, ...]], _TagFiles] = {}
         files: list[str] = []
         for item in inventory.items():
@@ -101,5 +103,5 @@ class _Catalog:
             group.add(item)
         tags = [groups[key].entry(key[0], key[1], epochs) for key in sorted(groups)]
         return _TableExport.json_document(
-            {"version": 1, "tags": tags, "files": sorted(files)}
+            {"version": 1, "tags": tags, "files": sorted(files), "reports": reports}
         )
