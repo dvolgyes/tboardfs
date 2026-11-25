@@ -4,7 +4,19 @@
 ci:
   skip: [deptry]
 
+default_install_hook_types: [pre-commit, pre-push]
+
 repos:
+  - repo: local
+    hooks:
+      - id: pytest
+        name: Run pytest with uv
+        entry: uv run pytest
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+
   # Source: 010_deptry.yaml [central]
   - repo: local
     hooks:
