@@ -13,7 +13,7 @@ from tboardfs.model.packed_leaf import PackedLeaf
 from tboardfs.model.packed_source import PackedSource
 from tboardfs.paths import NAME_MAP, _Paths
 from tboardfs.run_listing import RunListing, _LogicalFile
-from tboardfs.run_tree_edit import _IMPLICIT_PRODUCERS, _RunLeaf, _TreeEdits
+from tboardfs.run_tree_edit import _RunLeaf, _TreeEdits
 from tboardfs.tag_paths import TagPaths
 
 type _Path = tuple[str, ...]
@@ -104,6 +104,7 @@ class _RunFile:
             self.name,
             self.named,
             self.identity,
+            self.step,
             self.producer,
         )
 
@@ -132,12 +133,9 @@ class _RunFile:
         )
 
     def store(self, directory: dict[str, Any], name: str) -> None:
-        """Insert the original leaf, recording only non-inferable provenance."""
+        """Insert the leaf and provenance under its final published name."""
         children = _listing(directory)
-        if self.producer in _IMPLICIT_PRODUCERS:
-            children.logical.pop(name, None)
-        else:
-            children.logical[name] = self.logical()
+        children.logical[name] = self.logical()
         children.set_leaf(name, self.node)
 
 
@@ -290,7 +288,7 @@ class RunFiles:
                 node,
                 named=False,
                 producer=producer,
-                step=step if self.epoch_breakdown is not None else None,
+                step=step,
             )
         )
 
@@ -435,7 +433,7 @@ class RunFiles:
                 history is not None and not history.permits(scope, path)
             ):
                 return False
-            logical = (group.root, group.tag, name, False, "", "binary")
+            logical = (group.root, group.tag, name, False, "", None, "binary")
             if not edits.add(path, _RunLeaf(entry, logical)):
                 return False
         return True

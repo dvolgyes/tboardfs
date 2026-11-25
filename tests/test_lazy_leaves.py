@@ -89,6 +89,7 @@ def test_deep_tag_can_be_listed_and_extended(tmp_path: Path) -> None:
     assert fs.getattr(f"/images/{tag}")["st_mtime"] == 19
     assert fs.read(f"/images/{tag}/000006.png", 100, 0) == _ScaleCorpus.small_png(3)
     assert SingleEventTree(source).list_file_paths() == [
+        "/catalog.json",
         f"/images/{tag}/000005.png",
         f"/images/{tag}/000006.png",
     ]

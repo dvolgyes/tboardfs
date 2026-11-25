@@ -51,7 +51,7 @@ def test_an_image_summary_is_an_image_file(tmp_path: Path) -> None:
     """One sample is <step>.png, as a TF1 image summary is."""
     fs = _log(tmp_path, _images(1, PNG + b"a"), raw=True)
 
-    assert sorted(_files(fs)) == ["/images/img/000001.png", RAW]
+    assert sorted(_files(fs)) == ["/catalog.json", "/images/img/000001.png", RAW]
     assert fs.read("/images/img/000001.png", 100, 0) == PNG + b"a"
 
 
@@ -77,7 +77,7 @@ def test_malformed_image_keeps_packed_and_raw(
     fs = _log(tmp_path, event, raw=True)
     packed = "/plugins/images/bad/000001.json"
     healthy = "/images/img/000001.png"
-    assert set(_files(fs)) == {packed, healthy, RAW}
+    assert set(_files(fs)) == {"/catalog.json", packed, healthy, RAW}
     payload = json.loads(fs.read(packed, 65536, 0))["tensor"]
     assert payload["shape"] == shape
     assert payload.get("unknown_rank", False) == unknown_rank
@@ -102,14 +102,18 @@ def test_unusable_plugin_layout_does_not_promote_a_tensor_member(
     tensor.tensor_shape.unknown_rank = unknown_rank
     tensor.string_val.append(PNG + bytes(2048))
     fs = _log(tmp_path, event, raw=True)
-    assert set(_files(fs)) == {f"/plugins/{plugin}/broken/000001.json", RAW}
+    assert set(_files(fs)) == {
+        "/catalog.json",
+        f"/plugins/{plugin}/broken/000001.json",
+        RAW,
+    }
     assert fs.read(RAW, 65536, 0) == _frame(event)
 
 
 def test_zero_image_vector_needs_no_packed_fallback(tmp_path: Path) -> None:
     event = _images(1)
     fs = _log(tmp_path, event, raw=True)
-    assert set(_files(fs)) == {RAW}
+    assert set(_files(fs)) == {"/catalog.json", RAW}
     assert fs.read(RAW, 65536, 0) == _frame(event)
 
 
@@ -131,7 +135,7 @@ def test_gif_routes_by_summary_kind(tmp_path: Path) -> None:
         "/audio/legacy/000001.gif",
         "/audio/tensor/000001.gif",
     }
-    assert set(_files(fs)) == media | {RAW}
+    assert set(_files(fs)) == media | {"/catalog.json", RAW}
     for path in media:
         assert fs.read(path, len(gif), 0) == gif
 
@@ -205,7 +209,7 @@ def test_each_image_sample_is_a_file(tmp_path: Path) -> None:
     files = sorted(_files(fs))
 
     images = [f"/images/img/000001_{index:02d}.png" for index in range(11)]
-    assert files == [*images, RAW]
+    assert files == ["/catalog.json", *images, RAW]
     assert [fs.read(path, 100, 0) for path in images] == blobs
 
 
@@ -221,6 +225,7 @@ def test_an_audio_summary_is_an_audio_file_per_sample(tmp_path: Path) -> None:
     assert sorted(_files(fs)) == [
         "/audio/aud/000002_0.wav",
         "/audio/aud/000002_1.wav",
+        "/catalog.json",
         RAW,
     ]
     assert fs.read("/audio/aud/000002_1.wav", 100, 0) == wave + b"1"
@@ -253,6 +258,7 @@ def test_a_scalar_summary_has_only_the_scalar_table(tmp_path: Path) -> None:
     fs = _log(tmp_path, event, raw=True)
 
     assert sorted(_files(fs)) == [
+        "/catalog.json",
         RAW,
         "/scalars/loss.json",
         "/scalars/loss.tsv",
@@ -267,7 +273,7 @@ def test_a_non_scalar_scalars_record_keeps_its_json(tmp_path: Path) -> None:
     tensor.float_val.extend([0.5, 0.25])
     fs = _log(tmp_path, event, raw=True)
 
-    assert sorted(_files(fs)) == [RAW, "/scalars/loss/000001.json"]
+    assert sorted(_files(fs)) == ["/catalog.json", RAW, "/scalars/loss/000001.json"]
 
 
 def test_tensorflow_2_summaries_are_unpacked() -> None:
@@ -338,7 +344,7 @@ def test_an_empty_tf1_histogram_has_no_buckets(tmp_path: Path) -> None:
             raw=True,
         )
 
-        assert list(_files(fs)) == [RAW]
+        assert list(_files(fs)) == ["/catalog.json", RAW]
     finally:
         logger.remove(sink)
     assert warnings == []
@@ -349,7 +355,7 @@ def test_a_large_image_is_only_an_image(tmp_path: Path) -> None:
     blob = PNG + bytes(4096)
     fs = _log(tmp_path, _images(1, blob), raw=True)
 
-    assert sorted(_files(fs)) == ["/images/img/000001.png", RAW]
+    assert sorted(_files(fs)) == ["/catalog.json", "/images/img/000001.png", RAW]
     assert fs.read("/images/img/000001.png", 1 << 20, 0) == blob
 
 
@@ -361,7 +367,11 @@ def test_a_malformed_audio_tensor_is_left_packed(tmp_path: Path) -> None:
     tensor.string_val.extend([b"RIFF0", b"RIFF1", b"RIFF2"])
     fs = _log(tmp_path, event, raw=True)
 
-    assert sorted(_files(fs)) == ["/plugins/audio/aud/000001.json", RAW]
+    assert sorted(_files(fs)) == [
+        "/catalog.json",
+        "/plugins/audio/aud/000001.json",
+        RAW,
+    ]
 
 
 def test_a_malformed_histogram_tensor_is_left_packed(tmp_path: Path) -> None:
@@ -372,7 +382,7 @@ def test_a_malformed_histogram_tensor_is_left_packed(tmp_path: Path) -> None:
     tensor.tensor_content = np.asarray([0, 1, 1, 2], dtype="<f8").tobytes()
     fs = _log(tmp_path, event, raw=True)
 
-    assert sorted(_files(fs)) == ["/histograms/h/000001.json", RAW]
+    assert sorted(_files(fs)) == ["/catalog.json", "/histograms/h/000001.json", RAW]
     assert (
         "bucket_left" not in fs.read("/histograms/h/000001.json", 1 << 20, 0).decode()
     )

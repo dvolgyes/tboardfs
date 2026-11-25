@@ -45,6 +45,7 @@ def _sidecar(node: dict[str, Any]) -> bytes:
 _RENDERERS: Final[Mapping[str, Callable[[dict[str, Any]], bytes]]] = MappingProxyType(
     {
         "bytes": lambda node: bytes(node["data"]),
+        "analysis": lambda node: node["render"](),
         "obj": lambda node: str(node["data"]).encode(),
         "npy": lambda node: array_to_npy(
             node["data"] if "data" in node else _read_tensor_array(node["tensor_entry"])

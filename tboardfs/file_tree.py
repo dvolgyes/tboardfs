@@ -74,6 +74,7 @@ class SingleEventTree:
         scalar_format: FormatList = DEFAULT_SCALAR_FORMATS,
         histogram_format: FormatList = DEFAULT_HISTOGRAM_FORMATS,
         pr_curve_npy: bool = False,
+        epoch_breakdown: bool = False,
     ) -> None:
         source_path = Path(source)
         if source_path.is_dir():
@@ -83,6 +84,7 @@ class SingleEventTree:
                 scalar_formats=scalar_format,
                 histogram_formats=histogram_format,
                 pr_curve_npy=pr_curve_npy,
+                epoch_breakdown=epoch_breakdown,
                 cache_size_mb=0,
                 raw=True,
             )
@@ -96,7 +98,9 @@ class SingleEventTree:
         if cache.progress.processed_pos == 0:
             raise _NoEventError(source_path)
         run.files[source_path] = cache
-        self.tree = RunTree.build(run, formats, step_digits)
+        self.tree = RunTree.build(
+            run, formats, step_digits, epoch_breakdown=epoch_breakdown
+        )
 
     @classmethod
     def from_framing(cls, source: str | Path) -> "SingleEventTree":

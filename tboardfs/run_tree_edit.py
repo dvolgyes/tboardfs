@@ -12,8 +12,6 @@ from tboardfs.model.packed_leaf import PackedLeaf
 from tboardfs.paths import _DirectoryNode
 from tboardfs.run_listing import RunListing
 
-_IMPLICIT_PRODUCERS = frozenset(("binary", "scalar"))
-
 
 @dataclass(frozen=True, slots=True)
 class _RunLeaf:
@@ -22,23 +20,27 @@ class _RunLeaf:
     node: LeafValue
     logical: run_listing._LogicalFile
 
+    def same_producer(self, logical: run_listing._LogicalFile) -> bool:
+        """Ignore the observed step when comparing producer identities."""
+        return self.logical[-1] == logical[-1] and self.logical[:-2] == logical[:-2]
+
     def replaces(
         self, node: LeafValue, logical: run_listing._LogicalFile | None
     ) -> bool:
-        """Compare recorded provenance, or infer it from an ordinary producer."""
+        """Compare staged provenance or fall back to an indexed binary's tag."""
         if LeafSpec.kind_of(self.node) != LeafSpec.kind_of(node):
             return False
         if logical is not None:
-            return self.logical == logical
-        root, tag, name, _, _, producer = self.logical
-        if producer == "scalar":
-            if isinstance(node, LeafSpec):
-                return node.format == name
-            return isinstance(node, dict) and node.get("format") == name
+            return self.same_producer(logical)
+        root, tag, _, _, _, _, producer = self.logical
         if producer == "binary":
             entry = node.get("entry") if isinstance(node, dict) else node
             if isinstance(entry, PackedLeaf):
-                entry = entry.entry()
+                entry = (
+                    entry.source
+                    if isinstance(entry.source, BinaryEntry)
+                    else entry.source.entry_at(entry.index)
+                )
             return (
                 isinstance(entry, BinaryEntry)
                 and entry.tag == tag
@@ -66,7 +68,7 @@ class _TreeEdits:
         child = edits.children.get(path[-1])
         if child is not None and (
             isinstance(child, _TreeEdits)
-            or child.logical != leaf.logical
+            or not child.same_producer(leaf.logical)
             or LeafSpec.kind_of(child.node) != LeafSpec.kind_of(leaf.node)
         ):
             return False
@@ -211,7 +213,7 @@ def _replace_leaf(
 ) -> LeafValue | None:
     if prior is not None and not edit.replaces(prior, identities.get(name)):
         return None
-    if edit.logical[-1] not in _IMPLICIT_PRODUCERS:
+    if edit.logical[-1] != "binary":
         identities[name] = edit.logical
     return edit.node
 

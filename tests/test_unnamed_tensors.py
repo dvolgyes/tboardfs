@@ -38,6 +38,7 @@ def test_a_vector_without_plugin_name_is_a_tensor_file(tmp_path: Path) -> None:
     data = np.load(io.BytesIO(fs.read("/tensors/w/000003.npy", 1 << 20, 0)))
 
     assert sorted(_files(fs)) == [
+        "/catalog.json",
         "/raw/events.out.tfevents.host/00000000000000000000.tfrecord",
         "/tensors/w/000003.json",
         "/tensors/w/000003.npy",

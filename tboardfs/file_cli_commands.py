@@ -8,6 +8,7 @@ import click
 from loguru import logger
 
 from tboardfs.cli_options import (
+    EPOCH_BREAKDOWN,
     HISTOGRAM_FORMAT,
     PR_CURVE_NPY,
     SCALAR_FORMAT,
@@ -33,6 +34,7 @@ def register_file_cli_commands(group: click.Group) -> None:
     @SCALAR_FORMAT
     @HISTOGRAM_FORMAT
     @PR_CURVE_NPY
+    @EPOCH_BREAKDOWN
     def list_files(**params: object) -> None:
         """Print virtual file paths below PREFIX."""
         tree, view = _FileCli.open_tree(cast(str, params["source"]), params)
@@ -53,6 +55,7 @@ def register_file_cli_commands(group: click.Group) -> None:
     @SCALAR_FORMAT
     @HISTOGRAM_FORMAT
     @PR_CURVE_NPY
+    @EPOCH_BREAKDOWN
     def get_file(**params: object) -> None:
         """Write one virtual file to OUTPUT."""
         source = cast(str, params["source"])
@@ -100,6 +103,7 @@ def register_file_cli_commands(group: click.Group) -> None:
     @SCALAR_FORMAT
     @HISTOGRAM_FORMAT
     @PR_CURVE_NPY
+    @EPOCH_BREAKDOWN
     def copy_all(**params: object) -> None:
         """Copy every virtual file into OUTDIR."""
         force = cast(bool, params["force"])
@@ -135,6 +139,11 @@ class _FileCli:
     ) -> tuple[SingleEventTree, str | None]:
         """Return the tree of a source; a source without events is a CLI error."""
         framing_only = click.get_current_context().meta.get("framing_only", False)
+        epoch_breakdown = cast(bool, params["epoch_breakdown"])
+        if framing_only and epoch_breakdown:
+            raise click.UsageError(
+                "--framing-only cannot be used with --epoch-breakdown."
+            )
         view = cast(str | None, params["view"])
         if framing_only and view not in (None, "raw"):
             raise click.UsageError("--framing-only requires --view raw or no --view.")
@@ -147,6 +156,7 @@ class _FileCli:
                 scalar_format=cast(str, params["scalar_format"]),
                 histogram_format=cast(str, params["histogram_format"]),
                 pr_curve_npy=cast(bool, params["pr_curve_npy"]),
+                epoch_breakdown=epoch_breakdown,
             ), view
         except _NoEventError as error:
             raise click.ClickException(str(error)) from error

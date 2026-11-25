@@ -567,7 +567,7 @@ def test_framing_only_commands_skip_signature_classification(
         typed = "/audio/clip/000001.wav"
         result = runner.invoke(main, ["list", str(source), "--view", "both"])
         assert result.exit_code == 0, result.output
-        assert result.stdout.splitlines() == [typed, *paths]
+        assert result.stdout.splitlines() == [typed, "/catalog.json", *paths]
         detect.assert_called_with(blob)
         result = runner.invoke(main, ["get", str(source), typed, "-o", "-"])
         assert result.exit_code == 0, result.output

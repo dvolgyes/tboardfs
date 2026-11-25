@@ -18,6 +18,7 @@ from tboardfs.paths import _DirectoryNode, _Paths
 from tboardfs.plugin_files import _TypedPluginFiles, add_typed_plugin_files
 from tboardfs.raw_frames import RawFrames
 from tboardfs.restarts import _RestartPurge
+from tboardfs.run_analysis import _RunAnalysis
 from tboardfs.run_files import RunFiles
 from tboardfs.skip_failure import skip_failure
 from tboardfs.tables import _TableMerge
@@ -38,7 +39,7 @@ class RunTree:
     ) -> dict[str, Any]:
         """Build a complete run tree, including sidecars when present."""
         run_node = _DirectoryNode()
-        _Projection.add_run_files(
+        epochs = _Projection.add_run_files(
             run_node,
             run,
             formats,
@@ -47,6 +48,8 @@ class RunTree:
             epoch_breakdown=epoch_breakdown,
         )
         FileTimes.stamp_dirs(run_node)
+        if run.files:
+            _RunAnalysis.install(run_node, lambda: epochs)
         return run_node
 
     @staticmethod
@@ -102,7 +105,11 @@ class RunTree:
             if raw
             else None
         )
-        return files.patch(tree, run, raw=raw_tab)
+        updated = files.patch(tree, run, raw=raw_tab)
+        if updated is not None and typed_change:
+            caches = tuple(run.files[path] for path in sorted(run.files))
+            _RunAnalysis.install(updated, partial(_Epochs.from_caches, caches))
+        return updated
 
 
 class _Projection:
@@ -231,8 +238,8 @@ class _Projection:
         *,
         raw: bool,
         epoch_breakdown: bool = False,
-    ) -> None:
-        """Populate one run directory with indexed virtual files."""
+    ) -> _Epochs:
+        """Populate a run directory and return its marker resolver."""
         caches = _Projection.sorted_file_caches(run)
         epochs = _Epochs.from_caches(caches)
         breakdown = (
@@ -259,6 +266,7 @@ class _Projection:
         files.fill(run_node, run)
         if breakdown is not None:
             breakdown.project(run_node)
+        return epochs
 
     @staticmethod
     def add_scalar_files(

@@ -55,6 +55,12 @@ PR_CURVE_NPY = click.option(
     is_flag=True,
     help="Add NPY files for PR curves. JSON and TSV are always available.",
 )
+EPOCH_BREAKDOWN = click.option(
+    "-E",
+    "--epoch-breakdown",
+    is_flag=True,
+    help="Group eligible step files and scalar rows by recorded epoch markers.",
+)
 LOGLEVEL = click.option(
     "--loglevel",
     type=click.Choice(LOG_LEVELS, case_sensitive=False),

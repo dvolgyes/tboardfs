@@ -5,6 +5,18 @@ This guide appears in each run directory that directly contains event files, inc
 A nested run appears as a directory below its parent.
 Empty tabs and other empty directories are omitted.
 
+## Run analysis files
+
+Read `catalog.json` to discover the original tags, canonical export paths, enabled formats, and recorded step and epoch coverage in this run.
+File counts include format variants, but observation and distinct step counts do not.
+Epoch coverage is based on recorded assignments and does not imply a complete training schedule.
+
+With a nonempty `--epoch-breakdown` view, `epochs.tsv` and `epochs.json` describe the same epoch and tag-scope coverage.
+The first fields are `epoch`, `scope`, `step_min`, `step_max`, and the run-relative `epoch_dir`.
+Optional coverage fields appear in alphabetical order only when observed.
+`metric_rows` excludes epoch markers, and `*_steps` counts distinct steps.
+To extract either table, pass `--epoch-breakdown` to `tboardfs-file get` with the virtual path from the source root.
+
 ## Directories
 
 Metric tabs (`scalars`, `histograms`, `distributions`, `pr_curves`) contain training values and per-step tables; media tabs (`images`, `audio`, `videos`) contain stored media.

@@ -77,6 +77,24 @@ class _Epochs:
                     return value if value >= 0 else None
         return None
 
+    def ids(self, tag: str, steps: np.ndarray) -> np.ndarray:
+        """Return the exact epoch IDs for steps, with -1 for unknown."""
+        return self._ids(steps, *self._series(tag))
+
+    @staticmethod
+    def _ids(
+        steps: np.ndarray, scoped: _Markers | None, flat: _Markers | None
+    ) -> np.ndarray:
+        ids = np.full(steps.shape, -1, dtype=np.int64)
+        if steps.dtype == np.int64:
+            for series in (flat, scoped):
+                if series is not None:
+                    known, values = series
+                    index = np.searchsorted(known, steps, side="right") - 1
+                    applicable = index >= 0
+                    ids[applicable] = values[index[applicable]]
+        return ids
+
     def align(
         self,
         tables: dict[str, dict[str, np.ndarray]],
@@ -91,13 +109,7 @@ class _Epochs:
             if steps.dtype != np.int64 or (scoped is None and flat is None):
                 aligned[tag] = {**columns, "epoch": np.full(steps.shape, np.nan)}
                 continue
-            ids = np.full(steps.shape, -1, dtype=np.int64)
-            for series in (flat, scoped):
-                if series is not None:
-                    known, values = series
-                    index = np.searchsorted(known, steps, side="right") - 1
-                    applicable = index >= 0
-                    ids[applicable] = values[index[applicable]]
+            ids = self._ids(steps, scoped, flat)
             unknown = ids < 0
             epoch = ids.astype(np.float64)
             epoch[unknown] = np.nan

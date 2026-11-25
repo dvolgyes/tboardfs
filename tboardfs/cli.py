@@ -9,6 +9,7 @@ from loguru import logger
 
 from tboardfs._mount_session import mount
 from tboardfs.cli_options import (
+    EPOCH_BREAKDOWN,
     HISTOGRAM_FORMAT,
     LOGLEVEL,
     PR_CURVE_NPY,
@@ -82,12 +83,7 @@ from tboardfs.stdlib_logging import StdlibToLoguru
     help="Disk budget for persistent indexes (requires --disk-index).",
 )
 @click.option("-r", "--raw", is_flag=True, help="Expose exact event frames under raw/.")
-@click.option(
-    "-E",
-    "--epoch-breakdown",
-    is_flag=True,
-    help="Group eligible step files and scalar rows by recorded epoch markers.",
-)
+@EPOCH_BREAKDOWN
 @click.option("--foreground/--background", default=False, show_default=True)
 @click.option(
     "--root-owner/--user-owner",

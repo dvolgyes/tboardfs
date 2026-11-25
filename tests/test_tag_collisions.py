@@ -263,7 +263,7 @@ def test_unusual_tags_list_read_and_copy_without_loss(tmp_path: Path) -> None:
     tree = SingleEventTree(tmp_path / "events.out.tfevents.host", scalar_format="json")
     fs = TensorBoardFS(tmp_path, scalar_formats="json")
     paths = [f"/scalars/{name}.json" for name in tags.values()]
-    assert tree.list_file_paths() == sorted(paths)
+    assert tree.list_file_paths() == sorted(["/catalog.json", *paths])
     destination = tmp_path / "out"
     tree.copy_all(destination)
     for path in paths:

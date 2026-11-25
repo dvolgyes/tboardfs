@@ -130,7 +130,7 @@ def test_mount_lists_only_populated_directories(mounted: tuple[Path, Path]) -> N
     root = run.parent
     assert {p.name for p in root.iterdir()} == {"group", "run_a"}
     assert {p.name for p in (root / "group").iterdir()} == {"nested"}
-    assert {p.name for p in run.iterdir()} == {"llms.txt", "scalars"}
+    assert {p.name for p in run.iterdir()} == {"catalog.json", "llms.txt", "scalars"}
     assert not (root / "empty").exists()
     assert not (run / "custom_scalars").exists()
     assert not (run / "raw").exists()

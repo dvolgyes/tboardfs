@@ -115,7 +115,7 @@ The mount indexes other event files when you access their run's contents.
 | `--scalar-format LIST` | `json,tsv` | Select the formats for scalar tables only. |
 | `--histogram-format LIST` | `json,tsv,npz` | Select the formats for both histogram bucket tables and distribution percentile tables. |
 | `--pr-curve-npy` | off | Add NPY files for PR curves alongside JSON and TSV. |
-| `-E`, `--epoch-breakdown` | off | Add a read-only `epoch-breakdown/` view of eligible step files and scalar slices grouped by recorded epoch markers. |
+| `-E`, `--epoch-breakdown` | off | Add epoch directories and coverage tables for recorded epochs. |
 | `--step-digits N` | `6` | Zero-padding width of step file names, from 1 to 20. |
 | `--refresh-age-seconds S` | `150` | Minimum interval between local searches for new files and directories (`0` to search on each access, `inf` to freeze each directory after its first scan). |
 | `--source-check-seconds S` | `120` | Minimum interval between status checks of known event files in an accessed run. Accepts finite, nonnegative seconds; `0` checks on every access. |
@@ -164,8 +164,8 @@ SOURCE is one event file, a run directory, or a log directory.
 | `get SOURCE VPATH -o OUTPUT` | Write one virtual file to OUTPUT. `-o -` writes it to stdout. |
 | `copy-all SOURCE OUTDIR` | Copy the selected view into OUTDIR. |
 
-`list`, `get` and `copy-all` accept `--scalar-format`, `--histogram-format`, `--pr-curve-npy` and `--step-digits` with
-the same defaults and behavior as in filesystem mode.
+`list`, `get` and `copy-all` accept `--epoch-breakdown`, `--scalar-format`, `--histogram-format`, `--pr-curve-npy` and
+`--step-digits` with the same defaults and behavior as in filesystem mode.
 
 `list` and `copy-all` default to typed files.
 
@@ -213,6 +213,7 @@ A run is a directory that directly contains one or more event files. Each run's 
 MOUNTPOINT/
 ├── experiment-1/                  a run
 │   ├── llms.txt                   guide to this run's exports
+│   ├── catalog.json               inventory of this run's typed exports
 │   ├── scalars/train/loss.json    the tag train/loss
 │   ├── images/sample/000010.png   the tag sample at step 10
 │   ├── ...                        the other tabs
@@ -230,6 +231,41 @@ Each directory that directly contains an event file exposes an `llms.txt` guide.
 
 Multiple event files in a run contribute to the same typed tabs but retain separate directories under `raw` when that
 view is enabled.
+
+### Run Analysis Files
+
+`catalog.json` lists each run's original tags, enabled formats, and canonical paths or directories.
+
+- Scalar entries report observation counts, including rows without an assigned epoch.
+- Step and epoch coverage describes observed data, not the expected training schedule.
+- Epoch ranges are inclusive and leave gaps for unobserved epochs.
+- The catalog counts exported files separately from observations and distinct steps.
+- The catalog excludes raw frames, epoch aliases, nested runs, and the analysis files themselves.
+
+When `--epoch-breakdown` produces epoch directories, `epochs.tsv` and `epochs.json` contain the same coverage rows.
+
+- The first fields are `epoch`, `scope`, `step_min`, `step_max`, and `epoch_dir`.
+- The scope is the first component of the original tag.
+- Bounds are exact recorded steps from non-marker data assigned to that epoch and scope.
+- If only markers exist for an epoch and scope, the bounds come from those markers.
+- Each `epoch_dir` is relative to the run and points to an existing epoch directory.
+- Optional fields follow in alphabetical order and appear only if the run has that type of coverage.
+- `metric_rows` counts non-marker scalar rows, including repeated observations.
+- Fields such as `image_steps` count distinct steps, not files or formats.
+- Zero means the field has coverage elsewhere in the run but not in that row.
+- Rows without a known epoch remain discoverable through the catalog and canonical exports, not the epoch tables.
+
+The analysis files use indexed metadata, not rendered media.
+
+Reading or requesting the exact size of an analysis file can build its contents on demand.
+
+Use the same view options with either interface to extract the same bytes:
+
+```bash
+tboardfs-file get logs /experiment-1/catalog.json -o -
+tboardfs-file get -E logs /experiment-1/epochs.tsv -o -
+tboardfs-file get -E logs /experiment-1/epochs.json -o -
+```
 
 ### Tags and Steps
 
